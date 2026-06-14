@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.webm binary
