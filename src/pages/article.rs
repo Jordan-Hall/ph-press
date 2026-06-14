@@ -44,7 +44,7 @@ pub fn Article(slug: String) -> Element {
                     p { class: "eyebrow rise d1", "Not found" }
                     h1 { class: "rise d2", "That story " span { class: "grad-text", "isn't here." } }
                     p { class: "lede rise d3", "The link may be old or mistyped." }
-                    div { class: "hero-actions rise d4", style: "margin-top:28px;",
+                    div { class: "rise d4", style: "margin-top:28px; display:flex; gap:12px; flex-wrap:wrap;",
                         Link { class: "btn btn-primary", to: Route::News {}, "Back to the newsroom" }
                     }
                 }

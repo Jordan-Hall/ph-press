@@ -74,7 +74,7 @@ pub fn Standards() -> Element {
             div { class: "wrap",
                 div { class: "sec-head", span { class: "sec-index", "Who we are" } h2 { "Transparency." } }
                 div { class: "prose reveal",
-                    p { "Predator Hunters is an independent, self-funded child-protection and journalism team, founded in 2017 and led by Jordan Upton. We are not owned by, and do not act for, any police force or political party." }
+                    p { "Predator Hunters is an independent, self-funded local newsroom, reporting since 2022 and led by Jordan Hall. We cover local news and investigations, report from the courts, and offer rewards for information on serious crimes. We are not owned by, and do not act for, any police force or political party." }
                     p { "We are working towards registration with IMPRESS. Until that is complete we hold ourselves to the standards above and operate the same complaints and corrections process. We will publish our regulator details and trustmark here once registration is in place." }
                 }
             }
