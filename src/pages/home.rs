@@ -5,6 +5,7 @@
 use dioxus::prelude::*;
 
 use crate::app::Route;
+use crate::content::ARTICLES;
 use crate::icons::svg;
 
 /// (icon, title, description, route-label)
@@ -85,6 +86,39 @@ pub fn Home() -> Element {
                     div { dt { "We name anyone" } dd { "After charge" } }
                     div { dt { "We report" } dd { "Post-conviction" } }
                     div { dt { "We work with" } dd { "The police" } }
+                }
+            }
+        }
+
+        // ---------- LATEST NEWS ----------
+        section { class: "section",
+            div { class: "wrap",
+                div { class: "sec-head",
+                    span { class: "sec-index", "Latest" }
+                    h2 { "From the newsroom." }
+                    p { class: "lede", "Court reporting, investigations and explainers, checked against the public record." }
+                }
+                div { class: "research-list",
+                    for a in ARTICLES.iter() {
+                        Link { key: "{a.slug}", class: "r-row reveal", to: Route::Article { slug: a.slug.to_string() },
+                            span { class: "r-num", "{a.kind}" }
+                            div { class: "r-title",
+                                span { class: "r-ic", dangerous_inner_html: svg("doc") }
+                                h3 { "{a.title}" }
+                            }
+                            p { class: "r-desc", "{a.summary}" }
+                            div { style: "display:flex; align-items:center; gap:14px; justify-content:flex-end;",
+                                span { style: "font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);", "{a.date}" }
+                                span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
+                            }
+                        }
+                    }
+                }
+                div { style: "margin-top:24px;",
+                    Link { class: "btn btn-ghost", to: Route::News {},
+                        "All news"
+                        span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+                    }
                 }
             }
         }
