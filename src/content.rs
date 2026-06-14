@@ -97,7 +97,7 @@ pub const ARTICLES: &[Article] = &[
     Article {
         slug: "ben-fass-confronted-nuneaton",
         title: "Convicted child sex offender Ben Fass confronted after relocating to Nuneaton",
-        summary: "We tracked down a convicted child sex offender who had relocated to the Nuneaton area, and confronted him about his life since release. Our report is below.",
+        summary: "We tracked down a convicted child sex offender who had relocated to the Nuneaton area and put it to him about his life since release.",
         byline: "Jordan Upton",
         date: "June 2026",
         iso_date: "2026-06-09",
