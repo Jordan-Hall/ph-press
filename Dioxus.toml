@@ -1,0 +1,6 @@
+[application]
+name = "Predator Hunters"
+
+[web.app]
+title = "Predator Hunters — exposing predators, protecting children"
+base_path = "/"

@@ -1,0 +1,24 @@
+[package]
+name = "ph-press"
+version = "0.0.0"
+edition = "2021"
+description = "Predator Hunters — the main public site: court-reporting journalism, the public conviction database, and the editorial system. All-Rust Dioxus 0.8 (web SSG + native)."
+publish = false
+
+# One Dioxus 0.8 codebase, no webviews. The `web` build is wasm + SSG (the
+# crawlable, shareable public site — the primary surface). `desktop`/`mobile`
+# render the same RSX via dioxus-native (Blitz) for the cross-platform apps.
+[features]
+default = ["web"]
+web = ["dioxus/web"]
+server = ["dioxus/server"]
+# native targets (experimental — Blitz is alpha): wired in WS4
+# desktop = ["dioxus/desktop"]
+# mobile  = ["dioxus/mobile"]
+
+[dependencies]
+dioxus = { version = "0.8.0-alpha.0", features = ["router", "fullstack"] }
+
+# Standalone repo (PH Press) — owns its tree. Backend crates (ph-cms,
+# ph-offender, ph-audit) become workspace members as WS2/WS3 land.
+[workspace]
