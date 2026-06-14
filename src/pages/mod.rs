@@ -1,6 +1,7 @@
 //! Routed pages. Each is a top-level `#[component]` mounted by `app::Route`.
 
 mod about;
+mod article;
 mod cases;
 mod contact;
 mod database;
@@ -13,6 +14,7 @@ mod standards;
 mod watch;
 
 pub use about::About;
+pub use article::Article;
 pub use cases::Cases;
 pub use contact::Contact;
 pub use database::Database;

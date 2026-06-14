@@ -8,7 +8,8 @@ use crate::assets::{FAVICON, PH_LOGO};
 use crate::components::{ClosingCta, SiteFooter};
 use crate::icons::svg;
 use crate::pages::{
-    About, Cases, Contact, Database, Home, News, NotFound, Podcast, Privacy, Standards, Watch,
+    About, Article, Cases, Contact, Database, Home, News, NotFound, Podcast, Privacy, Standards,
+    Watch,
 };
 
 #[derive(Routable, Clone, PartialEq)]
@@ -18,6 +19,8 @@ pub enum Route {
     Home {},
     #[route("/news")]
     News {},
+    #[route("/news/:slug")]
+    Article { slug: String },
     #[route("/database")]
     Database {},
     #[route("/cases")]
@@ -42,7 +45,15 @@ pub enum Route {
 /// path it returns, so crawlers / link bots / no-JS clients get full HTML.
 #[server(endpoint = "static_routes")]
 async fn static_routes() -> Result<Vec<String>, ServerFnError> {
-    Ok(Route::static_routes().iter().map(ToString::to_string).collect())
+    // Non-dynamic routes from the enum, PLUS each published article so the
+    // /news/:slug pages pre-render to real HTML (crawlable — essential for a
+    // newsroom). The catch-all NotFound is dynamic and skipped automatically.
+    let mut routes: Vec<String> =
+        Route::static_routes().iter().map(ToString::to_string).collect();
+    for a in crate::content::ARTICLES {
+        routes.push(format!("/news/{}", a.slug));
+    }
+    Ok(routes)
 }
 
 #[component]

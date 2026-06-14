@@ -1,0 +1,145 @@
+//! Article page (/news/:slug) — editorial reading layout + self-hosted video
+//! player + the full social-share head (og:video / twitter:player) so a shared
+//! link plays the video on Facebook and elsewhere. NewsArticle (+ VideoObject)
+//! JSON-LD. Renders its own head (not the shared Seo) so og:type is "article"
+//! and the video tags are conditional.
+
+use dioxus::prelude::*;
+
+use crate::app::Route;
+use crate::content::{by_slug, Article as Art};
+use crate::icons::svg;
+
+const BASE: &str = "https://predatorhunters.co.uk";
+
+fn json_esc(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn news_jsonld(a: &Art) -> String {
+    let img = format!("{BASE}{}", a.og_image());
+    let video = a
+        .video
+        .as_ref()
+        .map(|v| {
+            format!(
+                ",\"video\":{{\"@type\":\"VideoObject\",\"name\":\"{}\",\"thumbnailUrl\":\"{BASE}{}\",\"contentUrl\":\"{BASE}{}\",\"uploadDate\":\"{}\"}}",
+                json_esc(a.title), v.poster, v.mp4, a.iso_date
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"datePublished\":\"{}\",\"image\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}{}}}",
+        json_esc(a.title), json_esc(a.summary), a.iso_date, img, json_esc(a.byline), video
+    )
+}
+
+#[component]
+pub fn Article(slug: String) -> Element {
+    let Some(a) = by_slug(&slug) else {
+        return rsx! {
+            dioxus::document::Meta { name: "robots", content: "noindex, follow" }
+            header { class: "page-head",
+                div { class: "wrap",
+                    p { class: "eyebrow rise d1", "Not found" }
+                    h1 { class: "rise d2", "That story " span { class: "grad-text", "isn't here." } }
+                    p { class: "lede rise d3", "The link may be old or mistyped." }
+                    div { class: "hero-actions rise d4", style: "margin-top:28px;",
+                        Link { class: "btn btn-primary", to: Route::News {}, "Back to the newsroom" }
+                    }
+                }
+            }
+        };
+    };
+
+    let url = format!("{BASE}/news/{}", a.slug);
+    let img = format!("{BASE}{}", a.og_image());
+    // Precompute video fields (rsx can't hold `let` bindings inside conditionals).
+    let has_video = a.video.is_some();
+    let mp4_abs = a.video.as_ref().map(|v| format!("{BASE}{}", v.mp4)).unwrap_or_default();
+    let mp4_path = a.video.as_ref().map(|v| v.mp4).unwrap_or("");
+    let poster = a.video.as_ref().map(|v| v.poster).unwrap_or("");
+    let vw = a.video.as_ref().map(|v| v.width).unwrap_or(0);
+    let vh = a.video.as_ref().map(|v| v.height).unwrap_or(0);
+
+    rsx! {
+        // ---- head: per-article SEO + social-share (incl. video) ----
+        dioxus::document::Title { "{a.title} | Predator Hunters" }
+        dioxus::document::Meta { name: "description", content: "{a.summary}" }
+        dioxus::document::Link { rel: "canonical", href: "{url}" }
+        dioxus::document::Meta { property: "og:type", content: "article" }
+        dioxus::document::Meta { property: "og:title", content: "{a.title}" }
+        dioxus::document::Meta { property: "og:description", content: "{a.summary}" }
+        dioxus::document::Meta { property: "og:url", content: "{url}" }
+        dioxus::document::Meta { property: "og:image", content: "{img}" }
+        dioxus::document::Meta { property: "article:published_time", content: "{a.iso_date}" }
+        if has_video {
+            // Video share card — a shared link plays the video inline on Facebook etc.
+            dioxus::document::Meta { property: "og:video", content: "{mp4_abs}" }
+            dioxus::document::Meta { property: "og:video:secure_url", content: "{mp4_abs}" }
+            dioxus::document::Meta { property: "og:video:type", content: "video/mp4" }
+            dioxus::document::Meta { property: "og:video:width", content: "{vw}" }
+            dioxus::document::Meta { property: "og:video:height", content: "{vh}" }
+            dioxus::document::Meta { name: "twitter:card", content: "player" }
+            dioxus::document::Meta { name: "twitter:player:stream", content: "{mp4_abs}" }
+            dioxus::document::Meta { name: "twitter:player:stream:content_type", content: "video/mp4" }
+            dioxus::document::Meta { name: "twitter:player:width", content: "{vw}" }
+            dioxus::document::Meta { name: "twitter:player:height", content: "{vh}" }
+        } else {
+            dioxus::document::Meta { name: "twitter:card", content: "summary_large_image" }
+        }
+        dioxus::document::Meta { name: "twitter:title", content: "{a.title}" }
+        dioxus::document::Meta { name: "twitter:description", content: "{a.summary}" }
+        dioxus::document::Meta { name: "twitter:image", content: "{img}" }
+        script { r#type: "application/ld+json", dangerous_inner_html: news_jsonld(a) }
+
+        // ---- editorial layout ----
+        article {
+            header { class: "page-head",
+                div { class: "wrap", style: "max-width:760px;",
+                    p { class: "eyebrow rise d1", "{a.kind}" }
+                    h1 { class: "rise d2", "{a.title}" }
+                    p { class: "lede rise d3", "{a.summary}" }
+                    div { class: "rise d4", style: "margin-top:18px; display:flex; gap:14px; align-items:center; font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);",
+                        span { "By {a.byline}" }
+                        span { "·" }
+                        time { datetime: "{a.iso_date}", "{a.date}" }
+                    }
+                }
+            }
+            section { class: "section", style: "padding-top:clamp(16px,3vh,32px);",
+                div { class: "wrap", style: "max-width:760px;",
+                    if has_video {
+                        div { class: "reveal", style: "margin-bottom:28px; border:1px solid var(--hair-strong); border-radius:var(--r-lg); overflow:hidden; background:#000;",
+                            video {
+                                controls: true,
+                                preload: "none",
+                                poster: "{poster}",
+                                width: "{vw}",
+                                height: "{vh}",
+                                style: "width:100%; height:auto; display:block;",
+                                source { src: "{mp4_path}", r#type: "video/mp4" }
+                                "Your browser does not support the video tag."
+                            }
+                        }
+                    }
+                    div { class: "prose reveal",
+                        for para in a.body.iter() {
+                            p { "{para}" }
+                        }
+                    }
+                    div { style: "margin-top:32px; padding-top:20px; border-top:1px solid var(--hair); display:flex; gap:12px; flex-wrap:wrap;",
+                        Link { class: "btn btn-ghost", to: Route::News {},
+                            span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+                            "More from the newsroom"
+                        }
+                        Link { class: "btn btn-ghost", to: Route::Standards {},
+                            span { class: "ic", dangerous_inner_html: svg("scale") }
+                            "Our standards"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,9 +1,10 @@
-//! News — the newsroom index. Article list lands with the editorial CMS (WS2);
-//! this is the framed shell + the standards link.
+//! News — the newsroom index. Lists published articles (from content::ARTICLES)
+//! as cards linking to /news/:slug. Real CMS-backed data lands in WS2.
 
 use dioxus::prelude::*;
 
 use crate::app::Route;
+use crate::content::ARTICLES;
 use crate::icons::svg;
 
 #[component]
@@ -11,7 +12,7 @@ pub fn News() -> Element {
     rsx! {
         crate::components::Seo {
             title: "News | Predator Hunters",
-            description: "Court reporting and investigations from Predator Hunters. We report on cases once they have been to court, from the public record.",
+            description: "Court reporting, investigations and explainers from Predator Hunters. We report on cases once they have been to court, from the public record.",
             path: "/news",
             image: "/og.png",
         }
@@ -19,24 +20,34 @@ pub fn News() -> Element {
             div { class: "wrap",
                 p { class: "eyebrow rise d1", "Newsroom" }
                 h1 { class: "rise d2",
-                    "Court reporting, "
+                    "Reporting, "
                     span { class: "grad-text", "from the public record." }
                 }
                 p { class: "lede rise d3",
-                    "We report on cases once they have concluded in court. Every story is checked against the court record, and nothing names anyone before they are charged."
+                    "Court reports, investigations and explainers. Every story is checked against the court record, and nothing names anyone before they are charged."
                 }
             }
         }
         section { class: "section", style: "padding-top:clamp(20px,4vh,48px);",
             div { class: "wrap",
-                div { class: "card reveal", style: "max-width:680px;",
-                    div { class: "card-ic", dangerous_inner_html: svg("doc") }
-                    h3 { "The newsroom is launching" }
-                    p { "Our first reports are in editorial review and will publish here shortly, each one fact-checked against the court record and signed off by an editor before it goes live." }
-                    div { style: "margin-top:14px; display:flex; gap:12px; flex-wrap:wrap;",
-                        Link { class: "btn btn-ghost btn-sm", to: Route::Cases {}, "Browse cases" }
-                        Link { class: "btn btn-ghost btn-sm", to: Route::Standards {}, "Our standards" }
+                div { class: "research-list",
+                    for a in ARTICLES.iter() {
+                        Link { key: "{a.slug}", class: "r-row reveal", to: Route::Article { slug: a.slug.to_string() },
+                            span { class: "r-num", "{a.kind}" }
+                            div { class: "r-title",
+                                span { class: "r-ic", dangerous_inner_html: svg("doc") }
+                                h3 { "{a.title}" }
+                            }
+                            p { class: "r-desc", "{a.summary}" }
+                            div { style: "display:flex; align-items:center; gap:14px; justify-content:flex-end;",
+                                span { style: "font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);", "{a.date}" }
+                                span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
+                            }
+                        }
                     }
+                }
+                p { class: "prose", style: "margin-top:28px; color:var(--muted); font-size:.9rem;",
+                    "Court reports of concluded cases publish here as they clear editorial and legal review."
                 }
             }
         }

@@ -1,18 +1,17 @@
-//! Predator Hunters Research — the public site for an independent child-safety
-//! AI lab. All-Rust Dioxus 0.8 web app with fullstack SSG: every static route is
-//! pre-rendered to real HTML at build time (`dx build --platform web --ssg`),
-//! then the wasm hydrates on the client. Crawlers, link-preview bots, no-JS
-//! clients and assistive tech get the full body; users still get the SPA.
+//! Predator Hunters — the main public site (journalism + court reporting + the
+//! public conviction database). All-Rust Dioxus 0.8 with fullstack SSG: every
+//! static route + article is pre-rendered to real HTML (`dx build --ssg`), then
+//! the wasm hydrates. Crawlers / link-preview bots / no-JS get the full body.
 //!
-//! EDITORIAL VOICE (load-bearing — see docs/FRAMING.md): independent research +
-//! journalism. We report only on matters concluded in court (convictions /
-//! public record), never pre-trial, and claim no law-enforcement partnership.
-//! The models run on-device; an optional filtering VPN routes through our own or
-//! a self-hosted server, never a third party; nothing raw is stored.
+//! EDITORIAL VOICE (load-bearing): independent court-reporting journalism. We
+//! run online decoy operations and hand evidence to the police; we never name
+//! anyone before they are charged, and we report only on cases concluded in
+//! court, from the public record. No public face-recognition.
 
 mod app;
 mod assets;
 mod components;
+mod content;
 mod icons;
 mod pages;
 
