@@ -100,5 +100,26 @@ pub fn About() -> Element {
                 }
             }
         }
+
+        // ---------- THE TEAM ----------
+        section { class: "section",
+            div { class: "wrap",
+                div { class: "sec-head", span { class: "sec-index", "The team" } h2 { "Who runs the newsroom." } }
+                div { class: "grid-2",
+                    div { class: "card reveal",
+                        div { style: "width:76px; height:76px; border-radius:999px; background:var(--red) center/cover; background-image:url('/team/jordan-upton.jpg'); margin-bottom:16px; box-shadow:0 8px 20px -10px rgba(0,0,0,.5);" }
+                        h3 { "Jordan Upton" }
+                        p { style: "font-family:var(--mono); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--red); margin:4px 0 10px;", "Editor-in-chief" }
+                        p { "Jordan leads our frontline work and our reporting, shares editorial control, and self-funds most of the newsroom." }
+                    }
+                    div { class: "card reveal",
+                        div { style: "width:76px; height:76px; border-radius:999px; background:var(--red); display:grid; place-items:center; font-family:var(--serif); font-size:1.6rem; color:var(--on-red); margin-bottom:16px; box-shadow:0 8px 20px -10px rgba(0,0,0,.5);", "ST" }
+                        h3 { "Scott Taylor" }
+                        p { style: "font-family:var(--mono); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--red); margin:4px 0 10px;", "Editor-in-chief" }
+                        p { "Scott shares editorial control and works mainly on the press side, on reporting and standards, stepping in where it is needed." }
+                    }
+                }
+            }
+        }
     }
 }
