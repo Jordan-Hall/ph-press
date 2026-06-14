@@ -2,7 +2,6 @@
 
 mod about;
 mod article;
-mod cases;
 mod contact;
 mod database;
 mod home;
@@ -15,7 +14,6 @@ mod watch;
 
 pub use about::About;
 pub use article::Article;
-pub use cases::Cases;
 pub use contact::Contact;
 pub use database::Database;
 pub use home::Home;

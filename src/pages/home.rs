@@ -1,6 +1,7 @@
-//! Home — the front door of the main site. Mission + what we do + the database,
-//! news, and media. Plain, human copy (no em-dashes), framed like the research
-//! About page: frontline decoy work + court reporting, post-conviction.
+//! Home — the newsroom front page. A lead story, a secondary story grid, a
+//! "Latest" rail, then what the newsroom does. Headline-led, not a marketing
+//! hero. Positioning: independent LOCAL news + investigations + court reporting
+//! + reward appeals + source protection + a public conviction database.
 
 use dioxus::prelude::*;
 
@@ -8,116 +9,90 @@ use crate::app::Route;
 use crate::content::ARTICLES;
 use crate::icons::svg;
 
-/// (icon, title, description, route-label)
-const PILLARS: [(&str, &str, &str); 3] = [
-    (
-        "scan",
-        "We catch them",
-        "We run online decoy operations, posing as children to find the adults who go looking for them. When it is safe, we confront them and hold them for the police with everything we have gathered.",
-    ),
+/// (icon, title, description) — what the newsroom does.
+const STRANDS: [(&str, &str, &str); 4] = [
     (
         "doc",
-        "We report it",
-        "Once a case has been to court, we report it from the public record. We never name anyone before they are charged, and we hold footage back until there is a conviction.",
+        "Local news",
+        "We break local stories that matter to the communities we cover, not only the headline crimes.",
     ),
     (
         "scale",
-        "We keep the record",
-        "Our public database lets you look up convicted offenders by name, area and offence, drawn from the court record, so a community can see what the courts have decided.",
+        "Court reporting",
+        "We report concluded cases from the public court record, and name people only after a conviction.",
+    ),
+    (
+        "shield",
+        "Reward appeals",
+        "We offer rewards for information that helps catch killers, rapists and abusers, and bring them to court.",
+    ),
+    (
+        "scan",
+        "Conviction database",
+        "A public, searchable record of convicted offenders, drawn from the courts and open to correction.",
     ),
 ];
 
 #[component]
 pub fn Home() -> Element {
+    let lead = &ARTICLES[0];
+    let rest = &ARTICLES[1..];
     rsx! {
         crate::components::Seo {
-            title: "Predator Hunters — exposing predators, protecting children",
-            description: "Independent child-protection and court-reporting journalism since 2017. Online decoy operations, court reporting, and a public database of convicted offenders drawn from the public record.",
+            title: "Predator Hunters — independent local news, investigations & court reporting",
+            description: "An independent local newsroom: local news and investigations, court reporting from the public record, reward appeals for information on serious crimes, protected sources, and a public conviction database.",
             path: "/",
             image: "/og.png",
         }
 
-        // ---------- HERO ----------
-        header { class: "hero",
-            div { class: "wrap",
-                div { class: "hero-grid",
-                    div {
-                        div { class: "hero-eyebrow rise d1",
-                            span { class: "dot" }
-                            span { "On the front line since 2017" }
-                        }
-                        h1 { class: "rise d2",
-                            "We catch predators. "
-                            span { class: "grad-text", "We protect children." }
-                        }
-                        p { class: "hero-lede rise d3",
-                            "Predator Hunters is an independent team that finds the adults who prey on children, hands the evidence to the police, and reports the cases once they have been to court. Nothing is named before a charge."
-                        }
-                        div { class: "hero-actions rise d4",
-                            Link { class: "btn btn-primary", to: Route::News {},
-                                "Latest news"
-                                span { dangerous_inner_html: svg("arrow-right") }
-                            }
-                            Link { class: "btn btn-ghost", to: Route::Database {},
-                                span { class: "ic", dangerous_inner_html: svg("scale") }
-                                "Search the database"
-                            }
+        // ---------- FRONT PAGE ----------
+        section { style: "padding:clamp(20px,3vh,40px) 0;",
+            div { class: "wrap front",
+                // main column
+                div {
+                    Link { class: "lead", to: Route::Article { slug: lead.slug.to_string() },
+                        span { class: "kicker", "{lead.kind}" }
+                        h1 { class: "hl", "{lead.title}" }
+                        p { class: "standfirst", "{lead.summary}" }
+                        div { class: "byline",
+                            span { "By {lead.byline}" }
+                            span { class: "sep", "·" }
+                            span { "{lead.date}" }
                         }
                     }
-                    div { class: "rise d4",
-                        div { class: "readout",
-                            div { class: "ro-scan" }
-                            div { class: "readout-bar",
-                                span { class: "tl", i {} i {} i {} }
-                                b { "public record · court-sourced" }
-                            }
-                            div { class: "readout-body",
-                                div { class: "ro-row", span { class: "ro-k", "decoy operations" } span { class: "ro-v good", span { class: "live" } "active" } }
-                                div { class: "ro-row", span { class: "ro-k", "named before charge" } span { class: "ro-v", "never" } }
-                                div { class: "ro-row", span { class: "ro-k", "footage before conviction" } span { class: "ro-v", "never" } }
-                                div { class: "ro-row", span { class: "ro-k", "works with" } span { class: "ro-v", "the police" } }
-                                div { class: "ro-row", span { class: "ro-k", "reporting" } span { class: "ro-v", "post-conviction" } }
+                    div { class: "front-grid",
+                        for a in rest {
+                            Link { key: "{a.slug}", class: "story", to: Route::Article { slug: a.slug.to_string() },
+                                span { class: "kicker", "{a.kind}" }
+                                h3 { class: "hl", "{a.title}" }
+                                p { "{a.summary}" }
+                                div { class: "byline", "By {a.byline} · {a.date}" }
                             }
                         }
                     }
                 }
-                dl { class: "hero-meta rise d5",
-                    div { dt { "On the front line since" } dd { "2017" } }
-                    div { dt { "We name anyone" } dd { "After charge" } }
-                    div { dt { "We report" } dd { "Post-conviction" } }
-                    div { dt { "We work with" } dd { "The police" } }
-                }
-            }
-        }
-
-        // ---------- LATEST NEWS ----------
-        section { class: "section",
-            div { class: "wrap",
-                div { class: "sec-head",
-                    span { class: "sec-index", "Latest" }
-                    h2 { "From the newsroom." }
-                    p { class: "lede", "Court reporting, investigations and explainers, checked against the public record." }
-                }
-                div { class: "research-list",
-                    for a in ARTICLES.iter() {
-                        Link { key: "{a.slug}", class: "r-row reveal", to: Route::Article { slug: a.slug.to_string() },
-                            span { class: "r-num", "{a.kind}" }
-                            div { class: "r-title",
-                                span { class: "r-ic", dangerous_inner_html: svg("doc") }
-                                h3 { "{a.title}" }
-                            }
-                            p { class: "r-desc", "{a.summary}" }
-                            div { style: "display:flex; align-items:center; gap:14px; justify-content:flex-end;",
-                                span { style: "font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);", "{a.date}" }
-                                span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
+                // rail
+                aside {
+                    div { class: "rail",
+                        ul { class: "rail-list",
+                            for (i , a) in ARTICLES.iter().enumerate() {
+                                li { key: "{a.slug}", class: "rail-item",
+                                    span { class: "n", "{i + 1}" }
+                                    Link { to: Route::Article { slug: a.slug.to_string() },
+                                        h3 { class: "hl", "{a.title}" }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                div { style: "margin-top:24px;",
-                    Link { class: "btn btn-ghost", to: Route::News {},
-                        "All news"
-                        span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+                    div { class: "rail",
+                        div { class: "rail-note",
+                            h4 { "The newsroom" }
+                            p { "Independent local journalism since 2022. We protect our sources, report from the public record, and never name anyone before a charge." }
+                            div { style: "margin-top:14px;",
+                                Link { class: "btn btn-ghost btn-sm", to: Route::About {}, "About us" }
+                            }
+                        }
                     }
                 }
             }
@@ -126,12 +101,9 @@ pub fn Home() -> Element {
         // ---------- WHAT WE DO ----------
         section { class: "section",
             div { class: "wrap",
-                div { class: "sec-head",
-                    span { class: "sec-index", "What we do" }
-                    h2 { "Catch, report, and keep the record." }
-                }
-                div { class: "grid-3",
-                    for (icon , title , desc) in PILLARS {
+                div { class: "section-label", span { class: "sec-index", "What we do" } }
+                div { class: "grid-4",
+                    for (icon , title , desc) in STRANDS {
                         div { key: "{title}", class: "card reveal",
                             div { class: "card-ic", dangerous_inner_html: svg(icon) }
                             h3 { "{title}" }
@@ -165,14 +137,10 @@ pub fn Home() -> Element {
             }
         }
 
-        // ---------- MEDIA ----------
+        // ---------- WATCH + LISTEN ----------
         section { class: "section",
             div { class: "wrap",
-                div { class: "sec-head",
-                    span { class: "sec-index", "Watch + listen" }
-                    h2 { "See the work for yourself." }
-                    p { class: "lede", "Investigations, court reports and conversations, on video and on the podcast." }
-                }
+                div { class: "section-label", span { class: "sec-index", "Watch + listen" } }
                 div { class: "grid-2",
                     Link { class: "card reveal", to: Route::Watch {},
                         div { class: "card-ic", dangerous_inner_html: svg("camera") }

@@ -45,11 +45,11 @@ pub fn ClosingCta() -> Element {
                     div { class: "cta-inner",
                         p { class: "eyebrow", style: "margin-bottom:18px;", "Seen something? Want to help?" }
                         h2 {
-                            "Help us protect children and "
-                            span { class: "grad-text", "report the truth." }
+                            "Got a story? "
+                            span { class: "grad-text", "Sources protected." }
                         }
                         p { class: "lede",
-                            "We are an independent team that has worked on the front line since 2017. If you have information, want to support the work, or are a journalist or safeguarding partner, get in touch."
+                            "We are an independent local newsroom. We keep our sources anonymous and act only on what we can cross-reference, we offer rewards for information on serious crimes, and we report from the public record. If you have a story or information, get in touch."
                         }
                         div { class: "cta-actions",
                             Link { class: "btn btn-primary", to: Route::Contact {},
@@ -80,14 +80,13 @@ pub fn SiteFooter() -> Element {
                             span { class: "brand-tag", "Predator Hunters" }
                         }
                         p { class: "footer-blurb",
-                            "Independent child-protection and court-reporting journalism since 2017. We run online decoy operations, work with the police, and report on cases once they have been to court."
+                            "Independent local journalism. Local news and investigations, court reporting from the public record, reward appeals for information on serious crimes, and a public conviction database. Reporting since 2022."
                         }
                     }
                     div {
                         h4 { "Read" }
                         ul {
                             li { Link { to: Route::News {}, "News" } }
-                            li { Link { to: Route::Cases {}, "Cases" } }
                             li { Link { to: Route::Database {}, "Conviction database" } }
                             li { Link { to: Route::Watch {}, "Watch" } }
                             li { Link { to: Route::Podcast {}, "Podcast" } }
@@ -119,7 +118,7 @@ pub fn SiteFooter() -> Element {
                 div { class: "footer-bottom",
                     p { "© 2026 Predator Hunters. All rights reserved." }
                     p { class: "legal",
-                        "Independent journalism. We run online decoy operations and hand evidence to the police; we never name anyone before they are charged, and we hold footage back until there is a conviction. We report on cases that have concluded in court, from the public record, and we work independently of any police force. Complaints: see our Standards page."
+                        "Independent journalism. We keep our sources anonymous and act only on what we can cross-reference and verify. We offer rewards for information on serious crimes. We report from the public record, and on concluded court cases we name only after conviction. We work independently of any police force. Complaints: see our Standards page."
                     }
                 }
             }
