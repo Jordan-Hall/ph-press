@@ -8,7 +8,7 @@ use crate::icons::svg;
 const POLICY: [(&str, &str); 6] = [
     ("This website", "We keep one thing in your browser: whether you chose light or dark mode. No tracking cookies, no advertising, and no analytics that identify you."),
     ("When you contact us", "If you email us a tip, a press query or a complaint, we keep that message so we can act on it and keep a record, and nothing more. We do not sell it or use it to build a profile."),
-    ("Court reporting", "Our reporting uses only what is already on the public court record, after a case has concluded. We never name anyone before they are charged, and we never publish a child's private data."),
+    ("Court reporting", "Our reporting uses what is on the public court record, after a case has concluded. As a rule we do not name anyone before they are charged, and we never publish a child's private data."),
     ("The conviction database", "Entries are drawn from the public court record, post-conviction only. We handle criminal-conviction data under UK GDPR with a documented lawful basis, and you can ask us to check, correct or review an entry."),
     ("Your data and your rights", "We follow UK GDPR and the ICO's guidance. You can ask what we hold, ask us to correct it, or raise a concern, and a person will answer."),
     ("Embeds", "Some pages embed video or audio from third parties (for example YouTube). When you play them, those providers may set their own cookies. We use privacy-respecting embeds where we can."),

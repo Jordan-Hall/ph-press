@@ -126,7 +126,7 @@ pub const ARTICLES: &[Article] = &[
             "Since then it has grown. We have offered rewards for information that helps catch the people behind serious crimes, work we have done since 2020. We have built relationships across the communities we cover, and we have kept every source who came to us anonymous.",
             "Today we are opening our newsroom properly.",
             "From here we will break local news of all kinds, not only the headline crimes. We will report concluded cases from the public court record. We are building a public database so a community can look up offenders who have been convicted, by name, area and offence. And where information can help bring someone to justice, we will keep appealing for it, with a reward.",
-            "Some lines do not move. We protect our sources: we keep them anonymous, and we act only on what we can cross-reference and verify. We do not name anyone before they are charged. On the cases we cover, we report from the record.",
+            "Some lines do not move. We protect our sources: we keep them anonymous, and we act only on what we can cross-reference and verify. As a rule we do not name anyone before they are charged, unless there is a strong public interest and we can confirm it. On the cases we cover, we report from the record.",
             "We were limited in what we could do in 2025. In 2026 this became a core part of who we are. We are independent and self-funded, we work alongside the police rather than in their place, and we are working towards registration with IMPRESS, the UK's approved press regulator, so you can hold us to a published standard. If you have a story, information, or want to support the work, get in touch. If a child is in immediate danger, call 999.",
         ],
         video: None,
@@ -144,7 +144,7 @@ pub const ARTICLES: &[Article] = &[
         body: &[
             "People ask us, fairly, how a group known for confronting offenders can also be a publisher people trust. The answer is in how we work, so here it is in plain words.",
             "We do the frontline work, and we report, but we keep the two apart. What we choose to publish is a separate decision, made later, to a different standard.",
-            "We never name anyone before they are charged. Not on the site, not in a video, not in a caption. Before a charge, an accusation can wreck an innocent life and collapse a real case, so we do not make one.",
+            "As a rule we do not name anyone before they are charged. Before a charge, an accusation can wreck an innocent life and collapse a real case, so we hold back unless there is a strong public interest and we can confirm the facts, such as a named suspect in a murder or other serious crime, or a confirmed arrest.",
             "We hold footage back until there is a conviction. When we do publish it, we censor what needs censoring, and we only run it when it teaches people something real. We are not in it for a show.",
             "We report from the public court record, after a case has concluded, and we check what we write against that record. If we get something significantly wrong, we correct it promptly and with the same prominence as the original, and we keep both on the record.",
             "We are working towards registration with IMPRESS so these are not just our promises but a standard you can hold us to, with a complaints process that goes beyond us if you are not satisfied.",

@@ -51,7 +51,7 @@ pub fn About() -> Element {
                     p {
                         "Some lines do not move. We "
                         strong { "protect our sources" }
-                        ". We keep them anonymous, and we act only on what we can cross-reference and verify. We never name anyone before they are charged. On the cases we cover, we report from the record."
+                        ". We keep them anonymous, and we act only on what we can cross-reference and verify. As a rule we do not name anyone before they are charged. On the cases we cover, we report from the record."
                     }
                 }
             }
@@ -85,7 +85,7 @@ pub fn About() -> Element {
                     div { class: "card reveal",
                         div { class: "card-ic", dangerous_inner_html: svg("eye-off") }
                         h3 { "What we are not" }
-                        p { "We are not the police, not a surveillance company, and not in it for a show. We never name anyone before they are charged. We act only on what we can verify, and we work alongside the police, not in their place." }
+                        p { "We are not the police, not a surveillance company, and not in it for a show. As a rule we do not name anyone before they are charged. We act only on what we can verify, and we work alongside the police, not in their place." }
                     }
                 }
                 div { style: "margin-top:28px; display:flex; gap:12px; flex-wrap:wrap;",

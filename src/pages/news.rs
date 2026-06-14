@@ -24,7 +24,7 @@ pub fn News() -> Element {
                     span { class: "grad-text", "from the public record." }
                 }
                 p { class: "lede rise d3",
-                    "Court reports, investigations and explainers. Every story is checked against the court record, and nothing names anyone before they are charged."
+                    "Court reports, investigations and explainers. Every story is checked against the court record, and as a rule we do not name anyone before they are charged."
                 }
             }
         }

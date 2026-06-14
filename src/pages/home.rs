@@ -94,7 +94,7 @@ pub fn Home() -> Element {
                     div { class: "rail",
                         div { class: "rail-note",
                             h4 { "The newsroom" }
-                            p { "Independent local journalism since 2022. We protect our sources, report from the public record, and never name anyone before a charge." }
+                            p { "Independent local journalism since 2022. We protect our sources, report from the public record, and as a rule do not name anyone before a charge." }
                             div { style: "margin-top:14px;",
                                 Link { class: "btn btn-ghost btn-sm", to: Route::About {}, "About us" }
                             }
