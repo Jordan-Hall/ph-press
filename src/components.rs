@@ -87,6 +87,7 @@ pub fn SiteFooter() -> Element {
                         h4 { "Read" }
                         ul {
                             li { Link { to: Route::News {}, "News" } }
+                            li { Link { to: Route::Database {}, "Conviction database" } }
                             li { Link { to: Route::Watch {}, "Watch" } }
                             li { Link { to: Route::Podcast {}, "Podcast" } }
                         }

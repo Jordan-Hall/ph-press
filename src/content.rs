@@ -177,3 +177,74 @@ pub const ARTICLES: &[Article] = &[
 pub fn by_slug(slug: &str) -> Option<&'static Article> {
     ARTICLES.iter().find(|a| a.slug == slug)
 }
+
+/// A public conviction-database entry. Drawn from a concluded court case and
+/// linked to the news report. `lat`/`lng` are 0.0 when the court did not state a
+/// place (those entries simply carry no map pin). This is the news<->database
+/// crossover: every entry here is also a published court report.
+#[derive(Clone, PartialEq)]
+pub struct Conviction {
+    pub name: &'static str,
+    pub area: &'static str, // town/city, or "" if not stated in court
+    pub offence: &'static str,
+    pub outcome: &'static str, // sentence summary
+    pub date: &'static str,
+    pub iso_date: &'static str,
+    pub article: &'static str, // slug of the linked news report
+    pub lat: f64,
+    pub lng: f64,
+}
+
+impl Conviction {
+    pub fn located(&self) -> bool {
+        self.lat != 0.0 || self.lng != 0.0
+    }
+}
+
+/// Convictions we have reported, drawn from the public court record. Newest first.
+pub const CONVICTIONS: &[Conviction] = &[
+    Conviction {
+        name: "Kieron Willans",
+        area: "Leicester",
+        offence: "Making indecent photographs of a child",
+        outcome: "18 weeks in prison suspended for 18 months, a 250-hour community order, and a 5-year Sexual Harm Prevention Order",
+        date: "May 2026",
+        iso_date: "2026-05-21",
+        article: "kieron-willans-guilty",
+        lat: 52.6369,
+        lng: -1.1398,
+    },
+    Conviction {
+        name: "Jamie Wallace",
+        area: "",
+        offence: "Possessing 122 Category A indecent images of children",
+        outcome: "Pleaded guilty; awaiting sentence",
+        date: "April 2026",
+        iso_date: "2026-04-08",
+        article: "jamie-wallace-guilty",
+        lat: 0.0,
+        lng: 0.0,
+    },
+    Conviction {
+        name: "David Coote",
+        area: "",
+        offence: "Making a Category A indecent image of a child",
+        outcome: "9 months suspended for 2 years, 150 hours unpaid work, a 10-year Sexual Harm Prevention Order, and the sex offenders register for 10 years",
+        date: "January 2026",
+        iso_date: "2026-01-08",
+        article: "david-coote-convicted",
+        lat: 0.0,
+        lng: 0.0,
+    },
+    Conviction {
+        name: "Ben Fass",
+        area: "Nuneaton",
+        offence: "Child sex offences",
+        outcome: "Convicted; subject to ongoing reporting requirements",
+        date: "December 2025",
+        iso_date: "2025-12-20",
+        article: "ben-fass-confronted-nuneaton",
+        lat: 52.5230,
+        lng: -1.4659,
+    },
+];
