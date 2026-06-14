@@ -4,11 +4,13 @@ name: site
 # to GHCR, then have the EC2 box docker-PULL + run it via AWS SSM (same no-SSH
 # pattern as the research site). The box only RUNS the prebuilt image.
 #
-# This container serves the SSG site over PLAIN HTTP on a loopback-only port
-# (127.0.0.1:8090). TLS for the apex is terminated by the shared EDGE Caddy (the
-# research-site container, which owns :443 + the Let's Encrypt cert and
-# reverse-proxies predatorhunters.co.uk to 127.0.0.1:8090). So this deploy needs
-# no Cloudflare token and opens no new firewall port.
+# This container serves the SSG site over PLAIN HTTP on :8090. It joins the
+# shared user-defined Docker network `ph-net`; TLS for the apex is terminated by
+# the shared EDGE Caddy (the research-site container, also on `ph-net`, which owns
+# :443 + the Let's Encrypt cert and reverse-proxies predatorhunters.co.uk to
+# `ph-press:8090` over that network — NOT 127.0.0.1, which inside a bridge-mode
+# container is the container itself). So this deploy needs no Cloudflare token and
+# opens no new firewall port (the loopback publish is only for the healthz probe).
 #
 # Gated on the GitHub Environment `production`. Reuses the same deploy secrets/vars
 # as the bulwark server + research site:
@@ -107,8 +109,9 @@ jobs:
             "echo '${GHCR_TOKEN}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin",
             "docker pull '${REF}'",
             "mkdir -p /var/lib/ph-press && chmod 700 /var/lib/ph-press",
+            "docker network create ph-net 2>/dev/null || true",
             "docker rm -f ph-press || true",
-            "docker run -d --name ph-press --restart unless-stopped -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data '${REF}'",
+            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data '${REF}'",
             "sleep 8",
             "docker ps --filter name=ph-press --format '{{.Status}}' | grep -q Up || { docker logs --tail 80 ph-press; exit 1; }",
             "curl -fsS http://127.0.0.1:8090/healthz || { docker logs --tail 80 ph-press; exit 1; }",
