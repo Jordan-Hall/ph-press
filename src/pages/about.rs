@@ -116,7 +116,7 @@ pub fn About() -> Element {
                         div { style: "width:76px; height:76px; border-radius:999px; background:var(--red); display:grid; place-items:center; font-family:var(--serif); font-size:1.6rem; color:var(--on-red); margin-bottom:16px; box-shadow:0 8px 20px -10px rgba(0,0,0,.5);", "ST" }
                         h3 { "Scott Taylor" }
                         p { style: "font-family:var(--mono); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--red); margin:4px 0 10px;", "Editor-in-chief" }
-                        p { "Scott shares editorial control and works mainly on the press side, on reporting and standards, stepping in where it is needed." }
+                        p { "Scott shares editorial control, works on the frontline alongside Jordan, and leads on the press side, from reporting to standards." }
                     }
                 }
             }
