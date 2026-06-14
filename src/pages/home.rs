@@ -39,7 +39,7 @@ pub fn Home() -> Element {
     let rest = &ARTICLES[1..];
     rsx! {
         crate::components::Seo {
-            title: "Predator Hunters — independent local news, investigations & court reporting",
+            title: "Predator Hunters: independent local news, investigations and court reporting",
             description: "An independent local newsroom: local news and investigations, court reporting from the public record, reward appeals for information on serious crimes, protected sources, and a public conviction database.",
             path: "/",
             image: "/og.png",
