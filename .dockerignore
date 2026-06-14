@@ -1,0 +1,12 @@
+# The image does a fresh `dx build` inside the builder stage — never copy the
+# host build artifacts (huge; and target/ holds the live `dx serve` debug build
+# with files Windows may have locked). Keep the build context to source only.
+target/
+.git/
+.github/
+node_modules/
+dist/
+.dx/
+**/*.log
+*.md
+content/seed-articles/

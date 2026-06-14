@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+# Staff editorial console + internal investigative tools are never public and
+# must never be indexed (they 403 unauthenticated; this is belt-and-braces).
+Disallow: /admin
+Disallow: /staff
+Disallow: /internal
+Sitemap: https://predatorhunters.co.uk/sitemap.xml

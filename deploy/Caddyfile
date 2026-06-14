@@ -1,0 +1,68 @@
+# Backend Caddy for predatorhunters.co.uk — serves the pre-rendered SSG site on
+# PLAIN HTTP :8090 and reverse-proxies /api/* to the Dioxus fullstack server.
+#
+# TLS is terminated by the shared EDGE Caddy (the research-site container, which
+# owns :443 and holds the Let's Encrypt cert for the apex); it reverse-proxies
+# the apex here over the host loopback (127.0.0.1:8090, not exposed to the
+# network). So auto_https is OFF and there is no cert state here.
+#
+# This block owns the app's security headers (incl. the CSP). The edge passes
+# these response headers through unchanged and adds HSTS for the TLS connection.
+
+{
+	admin off
+	auto_https off
+}
+
+:8090 {
+	encode zstd gzip
+
+	# Liveness probe (the deploy + edge can check this).
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Server functions (e.g. the SSG static-routes hook, future CMS/contact
+	# endpoints) go to the fullstack server beside Caddy. If it is down this
+	# 502s and the static site is unaffected.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# Everything else: pre-rendered per-route HTML (SSG), falling back to the SPA
+	# shell. `{path}/index.html` serves the pre-rendered page for a route (e.g.
+	# /news/slug → /news/slug/index.html); unknown paths hit /index.html and the
+	# wasm router renders the 404 page.
+	handle {
+		root * /srv
+		try_files {path} {path}/index.html /index.html
+		file_server
+
+		# Long-cache the immutable, content-hashed bundle assets + self-hosted
+		# media (uploaded videos are content-addressed under /media)…
+		@assets path *.wasm *.js *.css *.woff *.woff2 *.png *.jpg *.jpeg *.svg *.webp *.mp4 *.webm
+		header @assets Cache-Control "public, max-age=604800"
+		# …but never cache the HTML (so a redeploy is picked up immediately).
+		@html not path *.wasm *.js *.css *.woff *.woff2 *.png *.jpg *.jpeg *.svg *.webp *.xml *.txt *.ico *.mp4 *.webm
+		header @html Cache-Control "no-cache"
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		# CSP. script-src needs 'unsafe-eval' because Dioxus-web's renderer
+		# (sledgehammer_bindgen) builds its DOM-op function with `new Function`,
+		# which CSP treats as eval — without it the wasm app fails to render after
+		# hydration (client-side navigation silently breaks). 'unsafe-inline' is
+		# for the first-party inline scripts (flash-free theme-init + the Dioxus
+		# wasm-bootstrap blocks); 'wasm-unsafe-eval' for wasm compilation. Fonts
+		# are self-hosted (/fonts/*.woff2 → font-src 'self'). frame-src allows the
+		# privacy-respecting youtube-nocookie player on /watch; img-src allows its
+		# thumbnails. media-src 'self' blob: for self-hosted video playback.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com; media-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+}

@@ -1,0 +1,8 @@
+# Security policy for predatorhunters.co.uk
+# https://predatorhunters.co.uk/standards
+
+Contact: mailto:security@predatorhunters.co.uk
+Canonical: https://predatorhunters.co.uk/.well-known/security.txt
+Policy: https://predatorhunters.co.uk/standards
+Preferred-Languages: en
+Expires: 2027-06-14T00:00:00.000Z
