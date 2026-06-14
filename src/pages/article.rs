@@ -61,6 +61,11 @@ pub fn Article(slug: String) -> Element {
     let poster = a.video.as_ref().map(|v| v.poster).unwrap_or("");
     let vw = a.video.as_ref().map(|v| v.width).unwrap_or(0);
     let vh = a.video.as_ref().map(|v| v.height).unwrap_or(0);
+    // YouTube embed + hero image.
+    let has_youtube = a.youtube.is_some();
+    let yt_id = a.youtube.unwrap_or("");
+    let hero = a.image.unwrap_or("");
+    let has_hero = a.image.is_some() && !has_youtube && !has_video;
 
     rsx! {
         // ---- head: per-article SEO + social-share (incl. video) ----
@@ -109,7 +114,19 @@ pub fn Article(slug: String) -> Element {
             }
             section { class: "section", style: "padding-top:clamp(16px,3vh,32px);",
                 div { class: "wrap", style: "max-width:760px;",
-                    if has_video {
+                    if has_youtube {
+                        div { class: "lead-media reveal",
+                            iframe {
+                                src: "https://www.youtube-nocookie.com/embed/{yt_id}",
+                                title: "{a.title}",
+                                style: "width:100%; aspect-ratio:16/9; height:auto; border:0; border-radius:4px; display:block; background:#000;",
+                                "loading": "lazy",
+                                "referrerpolicy": "strict-origin-when-cross-origin",
+                                "allow": "accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+                                "allowfullscreen": "true",
+                            }
+                        }
+                    } else if has_video {
                         div { class: "reveal", style: "margin-bottom:28px; border:1px solid var(--hair-strong); border-radius:var(--r-lg); overflow:hidden; background:#000;",
                             video {
                                 controls: true,
@@ -122,6 +139,8 @@ pub fn Article(slug: String) -> Element {
                                 "Your browser does not support the video tag."
                             }
                         }
+                    } else if has_hero {
+                        img { class: "media lead-media reveal", src: "{hero}", alt: "{a.title}", loading: "lazy" }
                     }
                     div { class: "prose reveal",
                         for para in a.body.iter() {

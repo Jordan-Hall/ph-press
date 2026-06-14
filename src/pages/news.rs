@@ -32,15 +32,20 @@ pub fn News() -> Element {
             div { class: "wrap",
                 div { class: "research-list",
                     for a in ARTICLES.iter() {
-                        Link { key: "{a.slug}", class: "r-row reveal", to: Route::Article { slug: a.slug.to_string() },
-                            span { class: "r-num", "{a.kind}" }
-                            div { class: "r-title",
-                                span { class: "r-ic", dangerous_inner_html: svg("doc") }
-                                h3 { "{a.title}" }
+                        Link {
+                            key: "{a.slug}",
+                            class: if a.image.is_some() { "r-row has-img reveal" } else { "r-row reveal" },
+                            to: Route::Article { slug: a.slug.to_string() },
+                            if a.image.is_some() {
+                                img { class: "r-thumb", src: a.image.unwrap_or(""), alt: "{a.title}", loading: "lazy" }
                             }
-                            p { class: "r-desc", "{a.summary}" }
-                            div { style: "display:flex; align-items:center; gap:14px; justify-content:flex-end;",
-                                span { style: "font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);", "{a.date}" }
+                            div {
+                                span { class: "r-num", "{a.kind}" }
+                                h3 { class: "hl", "{a.title}" }
+                                p { class: "r-desc", "{a.summary}" }
+                            }
+                            div { class: "r-meta",
+                                span { class: "byline", "{a.date}" }
                                 span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
                             }
                         }

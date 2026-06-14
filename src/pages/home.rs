@@ -27,9 +27,9 @@ const STRANDS: [(&str, &str, &str); 4] = [
         "We offer rewards for information that helps catch killers, rapists and abusers, and bring them to court.",
     ),
     (
-        "scan",
-        "Conviction database",
-        "A public, searchable record of convicted offenders, drawn from the courts and open to correction.",
+        "lock",
+        "Protected sources",
+        "We keep our sources anonymous and act only on what we can cross-reference and verify.",
     ),
 ];
 
@@ -51,6 +51,9 @@ pub fn Home() -> Element {
                 // main column
                 div {
                     Link { class: "lead", to: Route::Article { slug: lead.slug.to_string() },
+                        if lead.image.is_some() {
+                            img { class: "media lead-media", src: lead.image.unwrap_or(""), alt: "{lead.title}", loading: "lazy" }
+                        }
                         span { class: "kicker", "{lead.kind}" }
                         h1 { class: "hl", "{lead.title}" }
                         p { class: "standfirst", "{lead.summary}" }
@@ -63,6 +66,9 @@ pub fn Home() -> Element {
                     div { class: "front-grid",
                         for a in rest {
                             Link { key: "{a.slug}", class: "story", to: Route::Article { slug: a.slug.to_string() },
+                                if a.image.is_some() {
+                                    img { class: "media story-media", src: a.image.unwrap_or(""), alt: "{a.title}", loading: "lazy" }
+                                }
                                 span { class: "kicker", "{a.kind}" }
                                 h3 { class: "hl", "{a.title}" }
                                 p { "{a.summary}" }
@@ -108,29 +114,6 @@ pub fn Home() -> Element {
                             div { class: "card-ic", dangerous_inner_html: svg(icon) }
                             h3 { "{title}" }
                             p { "{desc}" }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ---------- DATABASE TEASER ----------
-        section { class: "section",
-            div { class: "wrap",
-                div { class: "statement-grid",
-                    h2 { class: "statement reveal",
-                        "A public record, "
-                        span { class: "grad-text", "drawn from the courts." }
-                    }
-                    div { class: "statement-aside reveal",
-                        p {
-                            "Our conviction database lets anyone look up offenders who have been through the courts, by name, area or offence. Every entry comes from the public court record, only after a conviction, and can be corrected."
-                        }
-                        div { style: "margin-top:18px;",
-                            Link { class: "btn btn-ghost", to: Route::Database {},
-                                span { class: "ic", dangerous_inner_html: svg("scale") }
-                                "Open the database"
-                            }
                         }
                     }
                 }

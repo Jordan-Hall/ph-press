@@ -107,7 +107,6 @@ fn Masthead() -> Element {
                 }
                 nav { class: "mh-nav", "aria-label": "Sections",
                     Link { class: mh_class(&route, &Route::News {}), "aria-current": mh_aria(&route, &Route::News {}), to: Route::News {}, "News" }
-                    Link { class: mh_class(&route, &Route::Database {}), "aria-current": mh_aria(&route, &Route::Database {}), to: Route::Database {}, "Database" }
                     Link { class: mh_class(&route, &Route::Watch {}), "aria-current": mh_aria(&route, &Route::Watch {}), to: Route::Watch {}, "Watch" }
                     Link { class: mh_class(&route, &Route::Podcast {}), "aria-current": mh_aria(&route, &Route::Podcast {}), to: Route::Podcast {}, "Podcast" }
                     Link { class: mh_class(&route, &Route::About {}), "aria-current": mh_aria(&route, &Route::About {}), to: Route::About {}, "About" }

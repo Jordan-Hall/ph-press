@@ -56,9 +56,9 @@ pub fn ClosingCta() -> Element {
                                 "Get in touch"
                                 span { dangerous_inner_html: svg("arrow-right") }
                             }
-                            Link { class: "btn btn-ghost", to: Route::Database {},
-                                span { class: "ic", dangerous_inner_html: svg("scale") }
-                                "Search the database"
+                            Link { class: "btn btn-ghost", to: Route::News {},
+                                span { class: "ic", dangerous_inner_html: svg("doc") }
+                                "Read the latest"
                             }
                         }
                     }
@@ -87,7 +87,6 @@ pub fn SiteFooter() -> Element {
                         h4 { "Read" }
                         ul {
                             li { Link { to: Route::News {}, "News" } }
-                            li { Link { to: Route::Database {}, "Conviction database" } }
                             li { Link { to: Route::Watch {}, "Watch" } }
                             li { Link { to: Route::Podcast {}, "Podcast" } }
                         }
