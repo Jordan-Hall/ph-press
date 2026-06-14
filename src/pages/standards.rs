@@ -58,22 +58,56 @@ pub fn Standards() -> Element {
             }
         }
 
+        // ---------- COMPLAINTS PROCEDURE ----------
         section { class: "section",
             div { class: "wrap",
+                div { class: "sec-head", span { class: "sec-index", "Complaints" } h2 { "If we get it wrong, hold us to it." } }
+                div { class: "prose reveal",
+                    p { "If you think we have fallen short of the standards above, tell us and we will look into it. You do not need a lawyer, and it does not cost anything." }
+                }
+                dl { class: "deflist reveal", style: "margin-top:18px;",
+                    div { class: "def", dt { "How to complain" } dd { "Email complaints@predatorhunters.co.uk with the article or video, the date, and what you believe is inaccurate or unfair." } }
+                    div { class: "def", dt { "Who handles it" } dd { "One of our editors-in-chief, Jordan Upton or Scott Taylor, and where possible not the person responsible for the item." } }
+                    div { class: "def", dt { "How long it takes" } dd { "We acknowledge your complaint within 7 days and aim to give you a decision within 21 days. If it needs longer, we will tell you why." } }
+                    div { class: "def", dt { "If we got it wrong" } dd { "We correct or clarify it quickly, with prominence equal to the original, and we keep both versions on the record." } }
+                    div { class: "def", dt { "If you are not satisfied" } dd { "You can take your complaint to our independent press regulator. We keep a record of every complaint we receive." } }
+                }
+                a { class: "btn btn-primary", style: "margin-top:24px;", href: "mailto:complaints@predatorhunters.co.uk?subject=Complaint",
+                    span { dangerous_inner_html: svg("mail") }
+                    "Make a complaint"
+                }
+            }
+        }
+
+        // ---------- CORRECTIONS ARCHIVE ----------
+        section { class: "section",
+            div { class: "wrap",
+                div { class: "sec-head", span { class: "sec-index", "Corrections" } h2 { "Our corrections, in the open." } }
+                div { class: "prose reveal",
+                    p { "When we get something significantly wrong we correct it quickly, with prominence equal to the original, and we keep both the correction and what we first published on the record. Every correction we make is listed here." }
+                }
+                div { class: "card reveal", style: "margin-top:18px; max-width:680px;",
+                    div { class: "card-ic", dangerous_inner_html: svg("check") }
+                    h3 { "No corrections yet" }
+                    p { "We have not had to publish a correction so far. When we do, it will appear here with the date and what changed." }
+                }
+            }
+        }
+
+        // ---------- WHISTLEBLOWING + CONSCIENCE ----------
+        section { class: "section",
+            div { class: "wrap",
+                div { class: "sec-head", span { class: "sec-index", "Speaking up" } h2 { "Whistleblowing and conscience." } }
                 div { class: "grid-2",
                     div { class: "card reveal",
-                        div { class: "card-ic", dangerous_inner_html: svg("mail") }
-                        h3 { "Complaints" }
-                        p { "If you think we have fallen short of these standards, tell us. Email a complaint to complaints@predatorhunters.co.uk with the article and what is wrong. We aim to respond within a few days, we keep a record of every complaint, and if you are not satisfied you can escalate to our regulator." }
-                        a { class: "btn btn-ghost btn-sm", style: "margin-top:14px;", href: "mailto:complaints@predatorhunters.co.uk?subject=Complaint",
-                            span { class: "ic", dangerous_inner_html: svg("mail") }
-                            "complaints@predatorhunters.co.uk"
-                        }
+                        div { class: "card-ic", dangerous_inner_html: svg("shield") }
+                        h3 { "Whistleblowing" }
+                        p { "Anyone who works with us can raise a concern about wrongdoing, including anything that falls short of these standards, safely and in confidence. Email confidential@predatorhunters.co.uk and we will protect your identity." }
                     }
                     div { class: "card reveal",
-                        div { class: "card-ic", dangerous_inner_html: svg("doc") }
-                        h3 { "Corrections" }
-                        p { "When we get something significantly wrong we correct it promptly, with prominence equal to the original, and we keep both the correction and the original on the record. Our corrections are logged and published here as they happen." }
+                        div { class: "card-ic", dangerous_inner_html: svg("check") }
+                        h3 { "Conscience clause" }
+                        p { "No one who works with us will be made to act against this code or against their own conscience, and no one will be penalised for refusing to." }
                     }
                 }
             }
