@@ -122,8 +122,8 @@ pub const ARTICLES: &[Article] = &[
         iso_date: "2026-06-14",
         kind: "Announcement",
         body: &[
-            "Predator Hunters began with a single local story. In 2022 we reported that a social club in Derbyshire was selling alcohol to children. People came to us because they trusted us to protect them, and that is where this work started.",
-            "Since then it has grown. We have offered rewards for information that helps catch the people behind serious crimes, work we have done since 2020. We have built relationships across the communities we cover, and we have kept every source who came to us anonymous.",
+            "Our first major story was a murder. We published details the police had not, and afterwards officers came to us asking for our sources. We protected them, as we always will. That is the principle this newsroom is built on.",
+            "More followed. In 2022 we reported that a social club in Derbyshire was selling alcohol to children. We have covered bailiffs and arrests at a local hospital, and decisions by a local council that left residents without homes. We break serious local news of all kinds, and since 2020 we have offered rewards for information that helps catch the people behind serious crimes.",
             "Today we are opening our newsroom properly.",
             "From here we will break local news of all kinds, not only the headline crimes. We will report concluded cases from the public court record. We are building a public database so a community can look up offenders who have been convicted, by name, area and offence. And where information can help bring someone to justice, we will keep appealing for it, with a reward.",
             "Some lines do not move. We protect our sources: we keep them anonymous, and we act only on what we can cross-reference and verify. As a rule we do not name anyone before they are charged, unless there is a strong public interest and we can confirm it. On the cases we cover, we report from the record.",
