@@ -107,7 +107,7 @@ pub fn About() -> Element {
                 div { class: "sec-head", span { class: "sec-index", "The team" } h2 { "Who runs the newsroom." } }
                 div { class: "grid-2",
                     div { class: "card reveal",
-                        div { style: "width:76px; height:76px; border-radius:999px; background:var(--red) center/cover; background-image:url('/team/jordan-upton.jpg'); margin-bottom:16px; box-shadow:0 8px 20px -10px rgba(0,0,0,.5);" }
+                        div { style: "width:76px; height:76px; border-radius:999px; background:var(--red); display:grid; place-items:center; font-family:var(--serif); font-size:1.6rem; color:var(--on-red); margin-bottom:16px; box-shadow:0 8px 20px -10px rgba(0,0,0,.5);", "JU" }
                         h3 { "Jordan Upton" }
                         p { style: "font-family:var(--mono); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--red); margin:4px 0 10px;", "Editor-in-chief" }
                         p { "Jordan leads our frontline work and our reporting, shares editorial control, and self-funds most of the newsroom." }
