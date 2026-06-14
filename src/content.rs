@@ -46,7 +46,7 @@ pub const ARTICLES: &[Article] = &[
     Article {
         slug: "david-coote-convicted",
         title: "Former Premier League referee David Coote convicted of child abuse image",
-        summary: "David Coote, the former Premier League referee, has been convicted of making a Category A indecent image of a child and given a suspended sentence. We questioned him; our report is below.",
+        summary: "David Coote, the former Premier League referee, has been convicted of making a Category A indecent image of a child and given a suspended sentence. We put it to him on camera.",
         byline: "Jordan Upton",
         date: "June 2026",
         iso_date: "2026-06-14",
@@ -65,7 +65,7 @@ pub const ARTICLES: &[Article] = &[
     Article {
         slug: "jamie-wallace-guilty",
         title: "Jamie Wallace pleads guilty to 122 Category A child abuse images",
-        summary: "Jamie Wallace has pleaded guilty to possessing 122 Category A indecent images of children, the most serious category. We questioned him; our report is below.",
+        summary: "Jamie Wallace has pleaded guilty to possessing 122 Category A indecent images of children, the most serious type. We put it to him.",
         byline: "Jordan Upton",
         date: "June 2026",
         iso_date: "2026-06-13",
@@ -81,7 +81,7 @@ pub const ARTICLES: &[Article] = &[
     Article {
         slug: "kieron-willans-guilty",
         title: "Leicester man Kieron Willans guilty of 50+ indecent images of children",
-        summary: "Kieron Willans, of Leicester, has been found guilty of being caught with more than 50 indecent images of children. Our report from the case is below.",
+        summary: "Kieron Willans, from Leicester, has been found guilty after he was caught with more than 50 indecent images of children.",
         byline: "Jordan Upton",
         date: "June 2026",
         iso_date: "2026-06-11",
