@@ -94,9 +94,9 @@ html,body{width:${w}px;height:${h}px;}
 const cards = [
   {
     out: "deploy/static/og.png",
-    eyebrow: "Independent Press · est. 2017",
-    headline: "We catch predators. We protect children.",
-    gradTail: "We protect children.",
+    eyebrow: "Independent local newsroom · since 2022",
+    headline: "Local news, investigations, and the courts.",
+    gradTail: "and the courts.",
   },
   ...articles.map((a) => ({
     out: `deploy/static/og/news/${a.slug}.png`,
@@ -109,9 +109,9 @@ const cards = [
     w: 1280,
     h: 640,
     big: true,
-    eyebrow: "Independent Press · est. 2017",
+    eyebrow: "Independent local newsroom · since 2022",
     headline: "Predator Hunters",
-    sub: "Court reporting from the public record, a public conviction database, and the standards you can hold us to.",
+    sub: "Local news and investigations, court reporting from the public record, reward appeals for information on serious crimes, and a public conviction database.",
     footer: "predatorhunters.co.uk",
   },
   {
