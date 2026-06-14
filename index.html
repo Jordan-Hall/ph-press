@@ -162,6 +162,30 @@ html[data-theme="light"] .theme-toggle .ic-moon{display:inline-flex;}
 .rail-note h4{font-family:var(--mono);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:var(--red);margin-bottom:10px;}
 .rail-note p{font-size:.92rem;line-height:1.6;color:var(--ink-2);}
 
+/* ===== NEWS FRONT: hero lead + image card grid ===== */
+.hero-lead{display:grid;grid-template-columns:1.55fr 1fr;gap:clamp(20px,3vw,44px);align-items:center;
+  padding:clamp(18px,3vh,34px) 0 clamp(26px,4vh,44px);border-bottom:2px solid var(--ink);margin-bottom:clamp(26px,4vh,44px);}
+.hero-lead .media{aspect-ratio:16/10;margin:0;}
+.hero-lead .hl{font-size:clamp(1.9rem,3.7vw,3.3rem);line-height:1.03;margin:14px 0 0;}
+.hero-lead .standfirst{margin-top:14px;}
+.hero-lead .byline{margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+.hero-lead .byline .sep{color:var(--red);}
+.hero-lead:hover .hl{color:var(--red);}
+@media(max-width:840px){.hero-lead{grid-template-columns:1fr;gap:18px;}}
+
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(18px,2.2vw,28px);}
+.ncard{display:flex;flex-direction:column;border:1px solid var(--rule);border-radius:6px;overflow:hidden;
+  background:var(--paper-2);transition:transform .15s,border-color .15s,box-shadow .15s;}
+.ncard:hover{transform:translateY(-3px);border-color:var(--rule-2);box-shadow:0 22px 44px -30px rgba(0,0,0,.55);}
+.ncard:hover .hl{color:var(--red);}
+.ncard .media{aspect-ratio:16/9;border-radius:0;border:0;border-bottom:1px solid var(--rule);}
+.ncard .ncard-body{padding:15px 18px 20px;display:flex;flex-direction:column;gap:8px;flex:1;}
+.ncard .hl{font-size:1.2rem;line-height:1.16;}
+.ncard p{font-size:.93rem;line-height:1.5;color:var(--ink-2);}
+.ncard .byline{margin-top:auto;padding-top:4px;}
+@media(max-width:840px){.cards{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:560px){.cards{grid-template-columns:1fr;}}
+
 /* ===== HEADLINE LIST (news index, latest) ===== */
 .research-list{border-top:2px solid var(--ink);}
 .r-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:clamp(16px,3vw,44px);

@@ -46,14 +46,14 @@ pub fn Home() -> Element {
         }
 
         // ---------- FRONT PAGE ----------
-        section { style: "padding:clamp(20px,3vh,40px) 0;",
-            div { class: "wrap front",
-                // main column
-                div {
-                    Link { class: "lead", to: Route::Article { slug: lead.slug.to_string() },
-                        if lead.image.is_some() {
-                            img { class: "media lead-media", src: lead.image.unwrap_or(""), alt: "{lead.title}", loading: "lazy" }
-                        }
+        section { class: "section", style: "padding-top:clamp(14px,2.5vh,28px);",
+            div { class: "wrap",
+                // lead story
+                Link { class: "hero-lead", to: Route::Article { slug: lead.slug.to_string() },
+                    if lead.image.is_some() {
+                        img { class: "media", src: lead.image.unwrap_or(""), alt: "{lead.title}", loading: "lazy" }
+                    }
+                    div {
                         span { class: "kicker", "{lead.kind}" }
                         h1 { class: "hl", "{lead.title}" }
                         p { class: "standfirst", "{lead.summary}" }
@@ -63,12 +63,16 @@ pub fn Home() -> Element {
                             span { "{lead.date}" }
                         }
                     }
-                    div { class: "front-grid",
-                        for a in rest {
-                            Link { key: "{a.slug}", class: "story", to: Route::Article { slug: a.slug.to_string() },
-                                if a.image.is_some() {
-                                    img { class: "media story-media", src: a.image.unwrap_or(""), alt: "{a.title}", loading: "lazy" }
-                                }
+                }
+                // latest grid
+                div { class: "section-label", span { class: "sec-index", "Latest" } }
+                div { class: "cards",
+                    for a in rest {
+                        Link { key: "{a.slug}", class: "ncard", to: Route::Article { slug: a.slug.to_string() },
+                            if a.image.is_some() {
+                                img { class: "media", src: a.image.unwrap_or(""), alt: "{a.title}", loading: "lazy" }
+                            }
+                            div { class: "ncard-body",
                                 span { class: "kicker", "{a.kind}" }
                                 h3 { class: "hl", "{a.title}" }
                                 p { "{a.summary}" }
@@ -77,28 +81,10 @@ pub fn Home() -> Element {
                         }
                     }
                 }
-                // rail
-                aside {
-                    div { class: "rail",
-                        ul { class: "rail-list",
-                            for (i , a) in ARTICLES.iter().enumerate() {
-                                li { key: "{a.slug}", class: "rail-item",
-                                    span { class: "n", "{i + 1}" }
-                                    Link { to: Route::Article { slug: a.slug.to_string() },
-                                        h3 { class: "hl", "{a.title}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "rail",
-                        div { class: "rail-note",
-                            h4 { "The newsroom" }
-                            p { "Independent local journalism since 2022. We protect our sources, report from the public record, and as a rule do not name anyone before a charge." }
-                            div { style: "margin-top:14px;",
-                                Link { class: "btn btn-ghost btn-sm", to: Route::About {}, "About us" }
-                            }
-                        }
+                div { style: "margin-top:26px;",
+                    Link { class: "btn btn-ghost", to: Route::News {},
+                        "All news"
+                        span { class: "ic", dangerous_inner_html: svg("arrow-right") }
                     }
                 }
             }
