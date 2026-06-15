@@ -1080,6 +1080,26 @@ fn EditorForm(
         "Save changes"
     };
 
+    // Newsroom writing meters (like a big-CMS editor): headline SEO length,
+    // standfirst length, body word count + reading time.
+    let title_len = title().chars().count();
+    let sum_len = summary().chars().count();
+    let words = body().split_whitespace().count();
+    let mins = words.div_ceil(200).max(1);
+    // SEO sweet spot for a headline is ~20–65 chars.
+    let title_state = if title_len == 0 {
+        "meter"
+    } else if (20..=65).contains(&title_len) {
+        "meter ok"
+    } else {
+        "meter warn"
+    };
+    let sum_state = if sum_len == 0 || (80..=200).contains(&sum_len) {
+        "meter"
+    } else {
+        "meter warn"
+    };
+
     rsx! {
         form { class: "editor", onsubmit: submit,
             input {
@@ -1145,6 +1165,11 @@ fn EditorForm(
                         div { key: "{i}", dangerous_inner_html: crate::md::block_html(para) }
                     }
                 }
+            }
+            div { class: "editor-meters",
+                span { class: title_state, "Headline " b { "{title_len}" } " / ~65" }
+                span { class: sum_state, "Standfirst " b { "{sum_len}" } }
+                span { class: "meter", "Body " b { "{words}" } " words · {mins} min read" }
             }
             if let Some(e) = err() {
                 p { class: "desk-error", "{e}" }
