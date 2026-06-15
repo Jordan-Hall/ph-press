@@ -121,6 +121,35 @@ pub async fn public_article(slug: &str) -> Result<Option<ph_cms::Article>, Strin
         .map_err(|e| e.to_string())
 }
 
+/// All staff users (for the admin Staff tab + the public team page).
+pub async fn list_staff() -> Result<Vec<ph_cms::StaffUser>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::list_staff(pool).await.map_err(|e| e.to_string())
+}
+
+/// Create a staff user at the given role. (API layer gates this to admins.)
+pub async fn create_staff(
+    username: &str,
+    display_name: &str,
+    role: &str,
+    password: &str,
+) -> Result<i64, String> {
+    if username.trim().is_empty() || display_name.trim().is_empty() {
+        return Err("username and display name are required".to_string());
+    }
+    if password.chars().count() < 8 {
+        return Err("the password must be at least 8 characters".to_string());
+    }
+    let role = ph_cms::Role::parse(role).map_err(|_| "unknown role".to_string())?;
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::create_user(pool, username.trim(), display_name.trim(), role, password)
+        .await
+        .map_err(|e| match e {
+            ph_cms::CmsError::Db(_) => "that username is already taken".to_string(),
+            other => other.to_string(),
+        })
+}
+
 /// Any article by id, ANY state — for an authenticated staff draft preview.
 pub async fn preview_article(id: i64) -> Result<Option<ph_cms::Article>, String> {
     let pool = db().await.map_err(|e| e.to_string())?;

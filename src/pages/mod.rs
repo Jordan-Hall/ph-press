@@ -11,6 +11,7 @@ mod notfound;
 mod podcast;
 mod privacy;
 mod standards;
+mod team;
 mod watch;
 
 pub use about::About;
@@ -24,4 +25,5 @@ pub use notfound::NotFound;
 pub use podcast::Podcast;
 pub use privacy::Privacy;
 pub use standards::Standards;
+pub use team::Team;
 pub use watch::Watch;

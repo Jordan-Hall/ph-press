@@ -7,10 +7,10 @@
 use dioxus::prelude::*;
 
 use crate::api::{
-    desk_add_correction, desk_articles, desk_complaint_status, desk_complaints, desk_corrections,
-    desk_create, desk_log_complaint, desk_preview, desk_transition, desk_update,
-    staff_change_password, staff_login, staff_logout, staff_me, DeskArticle, DeskComplaint,
-    DeskCorrection, DeskSession, PreviewArticle,
+    desk_add_correction, desk_add_staff, desk_articles, desk_complaint_status, desk_complaints,
+    desk_corrections, desk_create, desk_log_complaint, desk_preview, desk_staff, desk_transition,
+    desk_update, staff_change_password, staff_login, staff_logout, staff_me, DeskArticle,
+    DeskComplaint, DeskCorrection, DeskSession, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 
@@ -107,6 +107,7 @@ enum Tab {
     Articles,
     Complaints,
     Corrections,
+    Staff,
     Settings,
 }
 
@@ -145,6 +146,9 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 button { class: tab_class(Tab::Articles), onclick: move |_| tab.set(Tab::Articles), "Articles" }
                 button { class: tab_class(Tab::Complaints), onclick: move |_| tab.set(Tab::Complaints), "Complaints" }
                 button { class: tab_class(Tab::Corrections), onclick: move |_| tab.set(Tab::Corrections), "Corrections" }
+                if user.role == "admin" {
+                    button { class: tab_class(Tab::Staff), onclick: move |_| tab.set(Tab::Staff), "Staff" }
+                }
                 button { class: tab_class(Tab::Settings), onclick: move |_| tab.set(Tab::Settings), "Settings" }
             }
         }
@@ -153,6 +157,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 Tab::Articles => rsx! { ArticlesPanel {} },
                 Tab::Complaints => rsx! { ComplaintsPanel {} },
                 Tab::Corrections => rsx! { CorrectionsPanel {} },
+                Tab::Staff => rsx! { StaffPanel {} },
                 Tab::Settings => rsx! { SettingsPanel {} },
             }
         }
@@ -454,6 +459,109 @@ fn CorrectionsPanel() -> Element {
                                     td { class: "desk-wrap", "{c.corrected}" }
                                     td { class: "desk-wrap desk-muted", "{c.reason}" }
                                     td { class: "desk-muted", "{ymd(c.ts)}" }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn StaffPanel() -> Element {
+    let mut staff = use_signal(|| Option::<Vec<StaffMember>>::None);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_new = use_signal(|| false);
+    let mut username = use_signal(String::new);
+    let mut display = use_signal(String::new);
+    let mut role = use_signal(|| "writer".to_string());
+    let mut password = use_signal(String::new);
+
+    use_resource(move || async move {
+        match desk_staff().await {
+            Ok(v) => staff.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            match desk_add_staff(username(), display(), role(), password()).await {
+                Ok(v) => {
+                    staff.set(Some(v));
+                    username.set(String::new());
+                    display.set(String::new());
+                    password.set(String::new());
+                    show_new.set(false);
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    let rows = staff.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Staff" }
+                button {
+                    class: "desk-btn sm",
+                    onclick: move |_| {
+                        let open = show_new();
+                        show_new.set(!open);
+                    },
+                    if show_new() { "Close" } else { "Add staff" }
+                }
+            }
+            if show_new() {
+                form { class: "desk-new", onsubmit: submit,
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Username (login)", value: "{username}", oninput: move |e| username.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Display name (byline)", value: "{display}", oninput: move |e| display.set(e.value()) }
+                    }
+                    div { class: "desk-new-row",
+                        select { class: "desk-in", value: "{role}", onchange: move |e| role.set(e.value()),
+                            option { value: "writer", "Writer" }
+                            option { value: "sub_editor", "Sub-editor" }
+                            option { value: "editor", "Editor" }
+                            option { value: "legal", "Legal reviewer" }
+                            option { value: "admin", "Admin" }
+                        }
+                        input { class: "desk-in", r#type: "password", autocomplete: "new-password", placeholder: "Temp password (8+ chars)", value: "{password}", oninput: move |e| password.set(e.value()) }
+                    }
+                    if let Some(e) = err() {
+                        p { class: "desk-error", "{e}" }
+                    }
+                    div { class: "editor-actions",
+                        span { class: "editor-hint", "They can change their password in Settings after signing in." }
+                        button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Add staff" }
+                    }
+                }
+            }
+            if !show_new() {
+                if let Some(e) = err() {
+                    p { class: "desk-error pad", "{e}" }
+                }
+            }
+            match rows {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some(v) if v.is_empty() => rsx! { p { class: "desk-muted pad", "No staff yet." } },
+                Some(v) => rsx! {
+                    table { class: "desk-table",
+                        thead { tr { th { "Name" } th { "Username" } th { "Role" } } }
+                        tbody {
+                            for m in v {
+                                tr { key: "{m.username}",
+                                    td { span { class: "desk-row-title", "{m.display_name}" } }
+                                    td { class: "desk-muted", "{m.username}" }
+                                    td { span { class: "desk-role", "{role_label(&m.role)}" } }
                                 }
                             }
                         }

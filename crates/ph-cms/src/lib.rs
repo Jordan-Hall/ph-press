@@ -342,6 +342,16 @@ pub async fn find_user(pool: &SqlitePool, username: &str) -> Result<Option<Staff
     )
 }
 
+/// All staff users, oldest first — for the admin Staff tab + the public team page.
+/// Callers strip the password hash / TOTP secret before returning to the client.
+pub async fn list_staff(pool: &SqlitePool) -> Result<Vec<StaffUser>> {
+    Ok(
+        sqlx::query_as::<_, StaffUser>("SELECT * FROM staff_user ORDER BY id")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 /// Verify a username + password. (TOTP 2FA is checked separately at the API layer.)
 pub async fn authenticate(pool: &SqlitePool, username: &str, password: &str) -> Result<StaffUser> {
     let user = find_user(pool, username).await?.ok_or(CmsError::Auth)?;

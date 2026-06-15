@@ -99,6 +99,7 @@ pub fn SiteFooter() -> Element {
                         h4 { "Organisation" }
                         ul {
                             li { Link { to: Route::About {}, "About us" } }
+                            li { Link { to: Route::Team {}, "Our team" } }
                             li { Link { to: Route::Standards {}, "Standards & complaints" } }
                             li { Link { to: Route::Contact {}, "Contact" } }
                             li { Link { to: Route::Privacy {}, "Privacy" } }

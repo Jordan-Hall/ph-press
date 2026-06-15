@@ -95,6 +95,21 @@ pub struct PublicArticle {
     pub iso_date: String,
 }
 
+/// A staff member as the admin Staff tab sees them (no secrets).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaffMember {
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+}
+
+/// A staff member as the PUBLIC team page sees them — name + role only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub display_name: String,
+    pub role: String,
+}
+
 /// An article in ANY state, for an authenticated staff draft preview (carries the
 /// lifecycle state so the preview can banner "Draft — not yet published").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -218,6 +233,27 @@ async fn require_session() -> Result<ph_cms::Session, ServerFnError> {
         .await
         .map_err(ServerFnError::new)?
         .ok_or_else(|| ServerFnError::new("not authenticated"))
+}
+
+/// Require a valid session whose role is admin (for staff management).
+#[cfg(feature = "server")]
+async fn require_admin() -> Result<ph_cms::Session, ServerFnError> {
+    let s = require_session().await?;
+    if s.role != "admin" {
+        return Err(ServerFnError::new("only an admin may manage staff"));
+    }
+    Ok(s)
+}
+
+#[cfg(feature = "server")]
+fn to_staff(v: Vec<ph_cms::StaffUser>) -> Vec<StaffMember> {
+    v.into_iter()
+        .map(|u| StaffMember {
+            username: u.username,
+            display_name: u.display_name,
+            role: u.role,
+        })
+        .collect()
 }
 
 /// Unix seconds → "YYYY-MM-DD" (civil_from_days; no chrono).
@@ -577,6 +613,72 @@ pub async fn published_feed() -> Result<Vec<FeedItem>, ServerFnError> {
                     byline: a.byline,
                     iso_date,
                 }
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+// ---- staff management (admin) + public team -------------------------------
+
+/// List staff (admin only).
+#[server(endpoint = "desk_staff")]
+pub async fn desk_staff() -> Result<Vec<StaffMember>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_admin().await?;
+        Ok(to_staff(
+            crate::cms::list_staff().await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Create a staff member at a role (admin only), then return the refreshed list.
+#[server(endpoint = "desk_add_staff")]
+pub async fn desk_add_staff(
+    username: String,
+    display_name: String,
+    role: String,
+    password: String,
+) -> Result<Vec<StaffMember>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_admin().await?;
+        crate::cms::create_staff(&username, &display_name, &role, &password)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_staff(
+            crate::cms::list_staff().await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (username, display_name, role, password);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// The public editorial team — display name + role only, excluding the system
+/// bootstrap admin account. Public (no session).
+#[server(endpoint = "public_team")]
+pub async fn public_team() -> Result<Vec<TeamMember>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let admin_user = std::env::var("PH_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
+        let staff = crate::cms::list_staff().await.map_err(ServerFnError::new)?;
+        Ok(staff
+            .into_iter()
+            .filter(|u| u.username != admin_user)
+            .map(|u| TeamMember {
+                display_name: u.display_name,
+                role: u.role,
             })
             .collect())
     }
