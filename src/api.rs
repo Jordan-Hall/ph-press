@@ -369,6 +369,7 @@ pub async fn desk_create(
     summary: String,
     kind: String,
     section: String,
+    body: String,
 ) -> Result<Vec<DeskArticle>, ServerFnError> {
     #[cfg(feature = "server")]
     {
@@ -380,6 +381,7 @@ pub async fn desk_create(
             &summary,
             &kind,
             &section,
+            &body,
         )
         .await
         .map_err(ServerFnError::new)?;
@@ -387,7 +389,7 @@ pub async fn desk_create(
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (title, summary, kind, section);
+        let _ = (title, summary, kind, section, body);
         Err(ServerFnError::new("server only"))
     }
 }

@@ -581,6 +581,15 @@ fn DeskRow(
             td { class: "desk-muted", "{a.byline}" }
             td { class: "desk-muted", "{ymd(a.updated_at)}" }
             td { class: "desk-actions",
+                if a.state == "published" || a.state == "corrected" {
+                    a {
+                        class: "desk-act",
+                        href: "/news/{a.slug}",
+                        target: "_blank",
+                        rel: "noopener",
+                        "View ↗"
+                    }
+                }
                 if a.actions.is_empty() {
                     span { class: "desk-muted", "—" }
                 }
@@ -616,6 +625,7 @@ fn DeskRow(
 fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal<bool>) -> Element {
     let mut title = use_signal(String::new);
     let mut summary = use_signal(String::new);
+    let mut body = use_signal(String::new);
     let mut kind = use_signal(|| "Court report".to_string());
     let mut section = use_signal(|| "Crime".to_string());
     let mut err = use_signal(|| Option::<String>::None);
@@ -625,11 +635,12 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
         spawn(async move {
             busy.set(true);
             err.set(None);
-            match desk_create(title(), summary(), kind(), section()).await {
+            match desk_create(title(), summary(), kind(), section(), body()).await {
                 Ok(list) => {
                     articles.set(Some(list));
                     title.set(String::new());
                     summary.set(String::new());
+                    body.set(String::new());
                 }
                 Err(e) => err.set(Some(e.to_string())),
             }
@@ -637,47 +648,60 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
         });
     };
 
+    // Writer-first editor: a calm, focused writing surface (Ghost/Medium feel) —
+    // big headline, a light meta row, the standfirst, then a roomy body.
     rsx! {
-        form { class: "desk-new", onsubmit: submit,
-            div { class: "desk-new-row",
-                input {
-                    class: "desk-in",
-                    r#type: "text",
-                    placeholder: "Headline",
-                    value: "{title}",
-                    oninput: move |e| title.set(e.value()),
+        form { class: "editor", onsubmit: submit,
+            input {
+                class: "editor-title",
+                r#type: "text",
+                placeholder: "Headline",
+                value: "{title}",
+                oninput: move |e| title.set(e.value()),
+                autofocus: true,
+            }
+            div { class: "editor-meta",
+                label {
+                    span { "Section" }
+                    select { value: "{section}", onchange: move |e| section.set(e.value()),
+                        option { value: "Crime", "Crime" }
+                        option { value: "Courts", "Courts" }
+                        option { value: "Local", "Local" }
+                        option { value: "Community", "Community" }
+                    }
                 }
-                select {
-                    class: "desk-in",
-                    value: "{section}",
-                    onchange: move |e| section.set(e.value()),
-                    option { value: "Crime", "Crime" }
-                    option { value: "Courts", "Courts" }
-                    option { value: "Local", "Local" }
-                    option { value: "Community", "Community" }
-                }
-                select {
-                    class: "desk-in",
-                    value: "{kind}",
-                    onchange: move |e| kind.set(e.value()),
-                    option { value: "Court report", "Court report" }
-                    option { value: "Investigation", "Investigation" }
-                    option { value: "Explainer", "Explainer" }
-                    option { value: "Announcement", "Announcement" }
-                    option { value: "News", "News" }
+                label {
+                    span { "Format" }
+                    select { value: "{kind}", onchange: move |e| kind.set(e.value()),
+                        option { value: "Court report", "Court report" }
+                        option { value: "Investigation", "Investigation" }
+                        option { value: "Explainer", "Explainer" }
+                        option { value: "Announcement", "Announcement" }
+                        option { value: "News", "News" }
+                    }
                 }
             }
             input {
-                class: "desk-in full",
+                class: "editor-sub",
                 r#type: "text",
-                placeholder: "One-line summary",
+                placeholder: "Standfirst — the one-line summary readers see first",
                 value: "{summary}",
                 oninput: move |e| summary.set(e.value()),
+            }
+            textarea {
+                class: "editor-body",
+                rows: "14",
+                placeholder: "Write the story. Leave a blank line — or a new line — between paragraphs.",
+                value: "{body}",
+                oninput: move |e| body.set(e.value()),
             }
             if let Some(e) = err() {
                 p { class: "desk-error", "{e}" }
             }
-            button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Create draft" }
+            div { class: "editor-actions",
+                span { class: "editor-hint", "Saved as a draft \u{2014} it goes live only after editorial + legal review." }
+                button { class: "desk-btn", r#type: "submit", disabled: busy(), "Create draft" }
+            }
         }
     }
 }

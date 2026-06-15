@@ -145,16 +145,25 @@ pub async fn create_draft(
     summary: &str,
     kind: &str,
     section: &str,
+    body_text: &str,
 ) -> Result<i64, String> {
     if title.trim().is_empty() {
         return Err("a title is required".to_string());
     }
+    // Each non-empty line of the editor becomes one body paragraph (the shape the
+    // public renderer reads). Stored as a JSON array of strings.
+    let paras: Vec<&str> = body_text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let body_json = serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string());
     let pool = db().await.map_err(|e| e.to_string())?;
     ph_cms::create_draft(
         pool,
         title.trim(),
         summary.trim(),
-        "[]",
+        &body_json,
         byline,
         kind,
         section,
