@@ -7,20 +7,63 @@
 use dioxus::prelude::*;
 
 use crate::app::Route;
-use crate::content::CONVICTIONS;
+use crate::content::{by_slug, CONVICTIONS};
 use crate::icons::svg;
 
-// Leaflet init: poll until the library + map div exist, then drop pins for the
-// located convictions. Guarded so SPA navigation never double-inits.
-const MAP_JS: &str = r#"(function init(){
+/// Escape a string for embedding inside a single-quoted JS string literal.
+fn js1(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ")
+}
+
+/// Truncate a summary to a tidy one-line snippet for the map popup.
+fn snippet(s: &str, max: usize) -> String {
+    if s.chars().count() > max {
+        format!("{}\u{2026}", s.chars().take(max).collect::<String>().trim_end())
+    } else {
+        s.to_string()
+    }
+}
+
+// Leaflet init: poll until the library + map div exist, then drop a pin for each
+// LOCATED conviction with a rich popup — the linked article's hero image, a short
+// snapshot, and a link through to the full report. Guarded against SPA re-init.
+fn map_js() -> String {
+    let mut markers = String::new();
+    for c in CONVICTIONS.iter().filter(|c| c.located()) {
+        let art = by_slug(c.article);
+        let img = art.map(|a| a.og_image()).unwrap_or_default();
+        let summary = art.map(|a| a.summary).unwrap_or("");
+        let area = if c.area.is_empty() {
+            String::new()
+        } else {
+            format!("<span class=\"mappop-a\">{}</span>", c.area)
+        };
+        let popup = format!(
+            "<div class=\"mappop\"><img src=\"{img}\" alt=\"\" loading=\"lazy\"/><div class=\"mappop-b\"><span class=\"mappop-k\">{off}</span><strong>{name}</strong>{area}<p>{snip}</p><a class=\"mappop-link\" href=\"/news/{slug}\">Read the full report \u{2192}</a></div></div>",
+            img = img,
+            off = c.offence,
+            name = c.name,
+            area = area,
+            snip = snippet(summary, 96),
+            slug = c.article,
+        );
+        markers.push_str(&format!(
+            "L.marker([{lat},{lng}],{{icon:ic}}).addTo(m).bindPopup('{popup}',{{maxWidth:260,className:'mappop-wrap'}});",
+            lat = c.lat,
+            lng = c.lng,
+            popup = js1(&popup),
+        ));
+    }
+    let head = r#"(function init(){
   if(!window.L||!document.getElementById('phmap')){return setTimeout(init,150);}
   if(window.__phmap){return;} window.__phmap=true;
   var m=L.map('phmap',{scrollWheelZoom:false}).setView([52.55,-1.30],8);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'(c) OpenStreetMap contributors'}).addTo(m);
   var ic=L.icon({iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',iconSize:[25,41],iconAnchor:[12,41],popupAnchor:[1,-34],shadowSize:[41,41]});
-  L.marker([52.6369,-1.1398],{icon:ic}).addTo(m).bindPopup('Kieron Willans, Leicester');
-  L.marker([52.5230,-1.4659],{icon:ic}).addTo(m).bindPopup('Ben Fass, Nuneaton');
-})();"#;
+  "#;
+    let tail = "\n})();";
+    format!("{head}{markers}{tail}")
+}
 
 #[component]
 pub fn Database() -> Element {
@@ -88,11 +131,13 @@ pub fn Database() -> Element {
                 }
                 p { style: "font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 18px;", "{result_note}" }
 
-                // map
-                div { class: "card", style: "padding:0; overflow:hidden; margin-bottom:24px;",
+                // map — isolation:isolate confines Leaflet's internal z-indexes
+                // (panes/controls/popups go up to ~1000) so they never paint over
+                // the sticky masthead (which sits in its own z-index:50 layer).
+                div { class: "card", style: "padding:0; overflow:hidden; margin-bottom:24px; position:relative; z-index:0; isolation:isolate;",
                     div { id: "phmap", style: "height:360px; width:100%; background:var(--sunk);" }
                 }
-                script { dangerous_inner_html: MAP_JS }
+                script { dangerous_inner_html: map_js() }
 
                 // entries
                 div { class: "research-list",
