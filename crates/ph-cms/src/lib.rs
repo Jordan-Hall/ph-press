@@ -541,9 +541,9 @@ pub async fn create_draft(
     Ok(id)
 }
 
-/// Update an editable (pre-publish) article's content, audited. Published,
-/// corrected and retracted articles are NOT editable here — published changes go
-/// through the corrections flow (equal prominence). State is unchanged.
+/// Update an article's content, audited; state is unchanged. Any story EXCEPT a
+/// retracted one is editable (live stories included, like a national desk) — a
+/// formal equal-prominence Correction still uses the corrections flow.
 pub async fn update_article(
     pool: &SqlitePool,
     id: i64,
@@ -557,12 +557,12 @@ pub async fn update_article(
     let article = get_article(pool, id)
         .await?
         .ok_or_else(|| CmsError::Bad(format!("no article {id}")))?;
-    if matches!(
-        article.state()?,
-        State::Published | State::Corrected | State::Retracted
-    ) {
+    // Live stories CAN be edited (like a national desk) — every edit is audited.
+    // A formal, equal-prominence Correction still uses the corrections flow. Only a
+    // retracted (pulled) story is locked.
+    if article.state()? == State::Retracted {
         return Err(CmsError::Forbidden(
-            "a published article is changed through a correction, not edited here".into(),
+            "a retracted story can't be edited".into(),
         ));
     }
     sqlx::query(

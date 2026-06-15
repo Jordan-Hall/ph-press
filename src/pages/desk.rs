@@ -924,7 +924,7 @@ fn DeskRow(
                         "Preview ↗"
                     }
                 }
-                if a.state != "published" && a.state != "corrected" && a.state != "retracted" {
+                if a.state != "retracted" {
                     Link { class: "desk-act", to: Route::WriteArticle { id: a.id }, "Edit ✎" }
                 }
                 if a.actions.is_empty() {
@@ -1211,7 +1211,7 @@ pub fn DeskPreview(id: i64) -> Element {
 
 #[component]
 fn PreviewBody(a: PreviewArticle, id: i64) -> Element {
-    let editable = a.state != "published" && a.state != "corrected" && a.state != "retracted";
+    let editable = a.state != "retracted";
     rsx! {
         div { class: "preview-banner",
             span { class: "preview-tag", "Preview" }
