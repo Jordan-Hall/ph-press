@@ -23,4 +23,4 @@ dioxus = { version = "0.8.0-alpha.0", features = ["router", "fullstack"] }
 # ph-offender) join as members as WS2/WS3 land. These are server-side only and
 # are NOT pulled into the wasm/web build (kept off the default feature path).
 [workspace]
-members = ["crates/ph-audit"]
+members = ["crates/ph-audit", "crates/ph-cms"]

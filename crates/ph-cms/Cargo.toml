@@ -1,0 +1,20 @@
+[package]
+name = "ph-cms"
+version = "0.1.0"
+edition = "2021"
+description = "Editorial CMS core for PH Press: SQLite store, staff auth, article lifecycle, IMPRESS workflow gates."
+publish = false
+
+# SERVER-ONLY. Never depended on by the wasm/web target (sqlx does not compile to
+# wasm); ph-press pulls this behind its `server` feature only.
+
+[dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+argon2 = { version = "0.5", features = ["std"] }
+thiserror = "2"
+ph-audit = { path = "../ph-audit" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
