@@ -18,6 +18,7 @@ mod components;
 mod config;
 mod content;
 mod icons;
+mod md;
 mod pages;
 
 fn main() {

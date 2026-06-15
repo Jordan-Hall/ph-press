@@ -150,7 +150,7 @@ pub fn Article(slug: String) -> Element {
                     }
                     div { class: "prose reveal",
                         for para in a.body.iter() {
-                            p { "{para}" }
+                            div { dangerous_inner_html: crate::md::block_html(para) }
                         }
                     }
                     div { style: "margin-top:32px; padding-top:20px; border-top:1px solid var(--hair); display:flex; gap:12px; flex-wrap:wrap;",
@@ -242,7 +242,7 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
                 div { class: "wrap", style: "max-width:760px;",
                     div { class: "prose reveal",
                         for para in a.body.iter() {
-                            p { "{para}" }
+                            div { dangerous_inner_html: crate::md::block_html(para) }
                         }
                     }
                     div { style: "margin-top:32px; padding-top:20px; border-top:1px solid var(--hair); display:flex; gap:12px; flex-wrap:wrap;",

@@ -706,21 +706,29 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
                 value: "{summary}",
                 oninput: move |e| summary.set(e.value()),
             }
+            div { class: "editor-toolbar",
+                button { r#type: "button", class: "tb b", title: "Bold", onclick: move |_| { let _ = document::eval(&wrap_js("**", "**", "bold")); }, "B" }
+                button { r#type: "button", class: "tb i", title: "Italic", onclick: move |_| { let _ = document::eval(&wrap_js("*", "*", "italic")); }, "i" }
+                button { r#type: "button", class: "tb", title: "Link", onclick: move |_| { let _ = document::eval(&wrap_js("[", "](https://)", "link text")); }, "Link" }
+                button { r#type: "button", class: "tb", title: "Heading", onclick: move |_| { let _ = document::eval(&wrap_js("## ", "", "Heading")); }, "H" }
+                span { class: "editor-hint2", "Markdown: **bold**, *italic*, [text](url), ## heading, - bullet" }
+            }
             div { class: "editor-split",
                 textarea {
+                    id: "ed-body",
                     class: "editor-body",
                     rows: "16",
                     placeholder: "Write the story. Leave a blank line — or a new line — between paragraphs.",
                     value: "{body}",
                     oninput: move |e| body.set(e.value()),
                 }
-                div { class: "editor-preview",
+                div { class: "editor-preview prose",
                     span { class: "editor-prev-label", "Live preview" }
                     if preview_paras.is_empty() {
                         p { class: "editor-prev-empty", "Your article will appear here as you write." }
                     }
                     for (i , para) in preview_paras.iter().enumerate() {
-                        p { key: "{i}", "{para}" }
+                        div { key: "{i}", dangerous_inner_html: crate::md::block_html(para) }
                     }
                 }
             }
@@ -788,13 +796,23 @@ fn PreviewBody(a: PreviewArticle) -> Element {
                     }
                     div { class: "prose",
                         for para in a.body.iter() {
-                            p { "{para}" }
+                            div { dangerous_inner_html: crate::md::block_html(para) }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// JS that wraps the current selection in the `#ed-body` textarea with markdown
+/// markers (or inserts a placeholder), then fires `input` so the Dioxus signal +
+/// live preview update. Fire-and-forget via document::eval.
+fn wrap_js(prefix: &str, suffix: &str, placeholder: &str) -> String {
+    let p = prefix.len();
+    format!(
+        "(function(){{var t=document.getElementById('ed-body');if(!t)return;var s=t.selectionStart,e=t.selectionEnd,v=t.value;var sel=v.slice(s,e)||'{placeholder}';t.value=v.slice(0,s)+'{prefix}'+sel+'{suffix}'+v.slice(e);t.dispatchEvent(new Event('input',{{bubbles:true}}));t.focus();var c=s+{p}+sel.length;t.selectionStart=c;t.selectionEnd=c;}})();"
+    )
 }
 
 fn role_label(role: &str) -> &'static str {
