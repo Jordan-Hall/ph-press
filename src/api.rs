@@ -12,7 +12,8 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// Name of the HttpOnly session cookie.
+/// Name of the HttpOnly session cookie (used only by the server-side helpers).
+#[cfg(feature = "server")]
 pub const SESSION_COOKIE: &str = "ph_session";
 
 /// The authenticated staff member, as the `/desk` UI sees them.
@@ -44,6 +45,28 @@ pub struct DeskArticle {
 pub struct DeskAction {
     pub to: String,
     pub label: String,
+}
+
+/// A logged reader complaint (the staff inbox view).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskComplaint {
+    pub id: i64,
+    pub article_slug: String,
+    pub complainant: String,
+    pub body: String,
+    pub status: String,
+    pub ts: i64,
+}
+
+/// A published correction (both versions kept, IMPRESS equal-prominence).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskCorrection {
+    pub id: i64,
+    pub article_id: i64,
+    pub original: String,
+    pub corrected: String,
+    pub reason: String,
+    pub ts: i64,
 }
 
 // ---- server-only cookie helpers ---------------------------------------------
@@ -303,6 +326,150 @@ pub async fn desk_create(
     #[cfg(not(feature = "server"))]
     {
         let _ = (title, summary, kind);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+// ---- complaints + corrections (IMPRESS) ------------------------------------
+
+#[cfg(feature = "server")]
+fn to_complaints(v: Vec<ph_cms::Complaint>) -> Vec<DeskComplaint> {
+    v.into_iter()
+        .map(|c| DeskComplaint {
+            id: c.id,
+            article_slug: c.article_slug,
+            complainant: c.complainant,
+            body: c.body,
+            status: c.status,
+            ts: c.ts,
+        })
+        .collect()
+}
+
+#[cfg(feature = "server")]
+fn to_corrections(v: Vec<ph_cms::Correction>) -> Vec<DeskCorrection> {
+    v.into_iter()
+        .map(|c| DeskCorrection {
+            id: c.id,
+            article_id: c.article_id,
+            original: c.original,
+            corrected: c.corrected,
+            reason: c.reason,
+            ts: c.ts,
+        })
+        .collect()
+}
+
+/// The complaints inbox.
+#[server(endpoint = "desk_complaints")]
+pub async fn desk_complaints() -> Result<Vec<DeskComplaint>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(to_complaints(
+            crate::cms::complaints().await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Record a complaint received by any means, then return the refreshed inbox.
+#[server(endpoint = "desk_log_complaint")]
+pub async fn desk_log_complaint(
+    article_slug: String,
+    complainant: String,
+    body: String,
+) -> Result<Vec<DeskComplaint>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        crate::cms::log_complaint(&article_slug, &complainant, &body)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_complaints(
+            crate::cms::complaints().await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (article_slug, complainant, body);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Advance a complaint's status, then return the refreshed inbox.
+#[server(endpoint = "desk_complaint_status")]
+pub async fn desk_complaint_status(
+    id: i64,
+    status: String,
+) -> Result<Vec<DeskComplaint>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::set_complaint_status(&session.username, id, &status)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_complaints(
+            crate::cms::complaints().await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, status);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// The corrections archive.
+#[server(endpoint = "desk_corrections")]
+pub async fn desk_corrections() -> Result<Vec<DeskCorrection>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(to_corrections(
+            crate::cms::corrections()
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Record a correction against an article, then return the refreshed archive.
+#[server(endpoint = "desk_add_correction")]
+pub async fn desk_add_correction(
+    article_id: i64,
+    original: String,
+    corrected: String,
+    reason: String,
+) -> Result<Vec<DeskCorrection>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::add_correction(
+            &session.username,
+            article_id,
+            &original,
+            &corrected,
+            &reason,
+        )
+        .await
+        .map_err(ServerFnError::new)?;
+        Ok(to_corrections(
+            crate::cms::corrections()
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (article_id, original, corrected, reason);
         Err(ServerFnError::new("server only"))
     }
 }

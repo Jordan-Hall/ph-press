@@ -677,14 +677,28 @@ pub async fn search_articles(pool: &SqlitePool, q: &str) -> Result<Vec<Article>>
     .await?)
 }
 
-/// Record a published correction (both versions kept) + audit it.
+/// Record a published correction (both versions kept) + audit it under the actor.
+/// Publishing a correction is an editorial act, gated to Editor/Admin (mirrors the
+/// `Published -> Corrected` authority). On a live article it also moves the article
+/// to Corrected — kept public, and logged in the review trail like any other
+/// lifecycle move (equal-prominence, IMPRESS Clause).
 pub async fn add_correction(
     pool: &SqlitePool,
     article_id: i64,
     original: &str,
     corrected: &str,
     reason: &str,
+    actor: &StaffUser,
 ) -> Result<i64> {
+    let article = get_article(pool, article_id)
+        .await?
+        .ok_or_else(|| CmsError::Bad(format!("no article {article_id}")))?;
+    if !matches!(actor.role()?, Role::Editor | Role::Admin) {
+        return Err(CmsError::Forbidden(
+            "only an editor or admin may publish a correction".into(),
+        ));
+    }
+    let t = now();
     let res = sqlx::query(
         "INSERT INTO correction (article_id, original, corrected, reason, ts) VALUES (?,?,?,?,?)",
     )
@@ -692,14 +706,31 @@ pub async fn add_correction(
     .bind(original)
     .bind(corrected)
     .bind(reason)
-    .bind(now())
+    .bind(t)
     .execute(pool)
     .await?;
+    // A correction on a live article marks it Corrected (kept public) + review-logged.
+    if article.state()? == State::Published {
+        sqlx::query("UPDATE article SET state = 'corrected', updated_at = ? WHERE id = ?")
+            .bind(t)
+            .bind(article_id)
+            .execute(pool)
+            .await?;
+        sqlx::query("INSERT INTO review_log (article_id, from_state, to_state, actor, note, ts) VALUES (?,?,?,?,?,?)")
+            .bind(article_id)
+            .bind("published")
+            .bind("corrected")
+            .bind(&actor.username)
+            .bind(reason)
+            .bind(t)
+            .execute(pool)
+            .await?;
+    }
     append_audit(
         pool,
-        "system",
+        &actor.username,
         "article.correction",
-        &article_id.to_string(),
+        &article.slug,
         reason,
     )
     .await?;
@@ -715,7 +746,8 @@ pub async fn list_corrections(pool: &SqlitePool) -> Result<Vec<Correction>> {
     )
 }
 
-/// Log a reader complaint (kept on record) + audit it.
+/// Log a reader complaint (kept on record) + audit it. Recorded by staff however
+/// the complaint arrived (the public route is currently email).
 pub async fn log_complaint(
     pool: &SqlitePool,
     article_slug: &str,
@@ -733,6 +765,40 @@ pub async fn log_complaint(
     .await?;
     append_audit(pool, "system", "complaint.received", article_slug, "").await?;
     Ok(res.last_insert_rowid())
+}
+
+/// Every logged complaint, newest first (the staff inbox).
+pub async fn list_complaints(pool: &SqlitePool) -> Result<Vec<Complaint>> {
+    Ok(
+        sqlx::query_as::<_, Complaint>("SELECT * FROM complaint ORDER BY ts DESC")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// Valid complaint statuses (a simple documented workflow for IMPRESS).
+pub const COMPLAINT_STATUSES: [&str; 4] = ["received", "under_review", "upheld", "rejected"];
+
+/// Update a complaint's status, audited under `actor`. Returns true if a row changed.
+pub async fn set_complaint_status(
+    pool: &SqlitePool,
+    id: i64,
+    status: &str,
+    actor: &str,
+) -> Result<bool> {
+    if !COMPLAINT_STATUSES.contains(&status) {
+        return Err(CmsError::Bad(format!("complaint status: {status}")));
+    }
+    let res = sqlx::query("UPDATE complaint SET status=? WHERE id=?")
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    let changed = res.rows_affected() > 0;
+    if changed {
+        append_audit(pool, actor, "complaint.status", &id.to_string(), status).await?;
+    }
+    Ok(changed)
 }
 
 /// First-run setup. If there are no staff users yet, create the first admin
@@ -936,13 +1002,21 @@ mod tests {
         assert!(chain.verify().is_ok());
 
         // corrections archive, complaints, public listing + search
-        add_correction(&pool, id, "old text", "new text", "fixed a detail")
+        add_correction(&pool, id, "old text", "new text", "fixed a detail", &editor)
             .await
             .unwrap();
         assert_eq!(list_corrections(&pool).await.unwrap().len(), 1);
         log_complaint(&pool, "test-case", "anon", "you got X wrong")
             .await
             .unwrap();
+        assert_eq!(list_complaints(&pool).await.unwrap().len(), 1);
+        let cid = list_complaints(&pool).await.unwrap()[0].id;
+        assert!(set_complaint_status(&pool, cid, "under_review", "editor")
+            .await
+            .unwrap());
+        assert!(set_complaint_status(&pool, cid, "bogus", "editor")
+            .await
+            .is_err());
         assert_eq!(published_articles(&pool).await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "Test").await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "zzznomatch").await.unwrap().len(), 0);

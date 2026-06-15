@@ -7,8 +7,9 @@
 use dioxus::prelude::*;
 
 use crate::api::{
-    desk_articles, desk_create, desk_transition, staff_login, staff_logout, staff_me, DeskArticle,
-    DeskSession,
+    desk_add_correction, desk_articles, desk_complaint_status, desk_complaints, desk_corrections,
+    desk_create, desk_log_complaint, desk_transition, staff_login, staff_logout, staff_me,
+    DeskArticle, DeskComplaint, DeskCorrection, DeskSession,
 };
 
 /// Auth state for the console shell.
@@ -99,19 +100,16 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Tab {
+    Articles,
+    Complaints,
+    Corrections,
+}
+
 #[component]
 fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
-    let mut articles = use_signal(|| Option::<Vec<DeskArticle>>::None);
-    let busy = use_signal(|| false);
-    let mut err = use_signal(|| Option::<String>::None);
-    let mut show_new = use_signal(|| false);
-
-    use_resource(move || async move {
-        match desk_articles().await {
-            Ok(list) => articles.set(Some(list)),
-            Err(e) => err.set(Some(e.to_string())),
-        }
-    });
+    let mut tab = use_signal(|| Tab::Articles);
 
     let logout = move |_| {
         spawn(async move {
@@ -120,8 +118,14 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
         });
     };
 
-    let rows = articles.read().clone();
-    let count = rows.as_ref().map(|v| v.len());
+    let active = *tab.read();
+    let tab_class = |t: Tab| {
+        if active == t {
+            "desk-tab on"
+        } else {
+            "desk-tab"
+        }
+    };
     rsx! {
         header { class: "desk-top",
             div { class: "desk-top-in",
@@ -134,58 +138,345 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                     button { class: "desk-btn ghost", onclick: logout, "Sign out" }
                 }
             }
+            nav { class: "desk-tabs", "aria-label": "Sections",
+                button { class: tab_class(Tab::Articles), onclick: move |_| tab.set(Tab::Articles), "Articles" }
+                button { class: tab_class(Tab::Complaints), onclick: move |_| tab.set(Tab::Complaints), "Complaints" }
+                button { class: tab_class(Tab::Corrections), onclick: move |_| tab.set(Tab::Corrections), "Corrections" }
+            }
         }
         main { class: "desk-main",
-            section { class: "desk-panel",
-                div { class: "desk-panel-head",
-                    h2 { "Articles" }
-                    div { class: "desk-head-right",
-                        if let Some(n) = count {
-                            span { class: "desk-count", "{n} total" }
+            match active {
+                Tab::Articles => rsx! { ArticlesPanel {} },
+                Tab::Complaints => rsx! { ComplaintsPanel {} },
+                Tab::Corrections => rsx! { CorrectionsPanel {} },
+            }
+        }
+    }
+}
+
+#[component]
+fn ArticlesPanel() -> Element {
+    let mut articles = use_signal(|| Option::<Vec<DeskArticle>>::None);
+    let busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_new = use_signal(|| false);
+
+    use_resource(move || async move {
+        match desk_articles().await {
+            Ok(list) => articles.set(Some(list)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let rows = articles.read().clone();
+    let count = rows.as_ref().map(|v| v.len());
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Articles" }
+                div { class: "desk-head-right",
+                    if let Some(n) = count {
+                        span { class: "desk-count", "{n} total" }
+                    }
+                    button {
+                        class: "desk-btn sm",
+                        onclick: move |_| {
+                            let open = show_new();
+                            show_new.set(!open);
+                        },
+                        if show_new() { "Close" } else { "New draft" }
+                    }
+                }
+            }
+            if show_new() {
+                NewDraftForm { articles, busy }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match rows {
+                None => rsx! { p { class: "desk-muted pad", "Loading articles…" } },
+                Some(v) if v.is_empty() => rsx! {
+                    p { class: "desk-muted pad", "No articles yet. Create the first draft." }
+                },
+                Some(v) => rsx! {
+                    table { class: "desk-table",
+                        thead {
+                            tr {
+                                th { "Title" }
+                                th { "State" }
+                                th { "Kind" }
+                                th { "Byline" }
+                                th { "Updated" }
+                                th { "Actions" }
+                            }
                         }
+                        tbody {
+                            for a in v {
+                                DeskRow { key: "{a.id}", a, articles, busy, err }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn ComplaintsPanel() -> Element {
+    let mut items = use_signal(|| Option::<Vec<DeskComplaint>>::None);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_new = use_signal(|| false);
+    let mut slug = use_signal(String::new);
+    let mut who = use_signal(String::new);
+    let mut body = use_signal(String::new);
+
+    use_resource(move || async move {
+        match desk_complaints().await {
+            Ok(v) => items.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            match desk_log_complaint(slug(), who(), body()).await {
+                Ok(v) => {
+                    items.set(Some(v));
+                    slug.set(String::new());
+                    who.set(String::new());
+                    body.set(String::new());
+                    show_new.set(false);
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    let rows = items.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Complaints" }
+                button {
+                    class: "desk-btn sm",
+                    onclick: move |_| {
+                        let open = show_new();
+                        show_new.set(!open);
+                    },
+                    if show_new() { "Close" } else { "Log a complaint" }
+                }
+            }
+            if show_new() {
+                form { class: "desk-new", onsubmit: submit,
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Article slug (optional)", value: "{slug}", oninput: move |e| slug.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Complainant (optional)", value: "{who}", oninput: move |e| who.set(e.value()) }
+                    }
+                    textarea { class: "desk-in full", rows: "3", placeholder: "What is the complaint?", value: "{body}", oninput: move |e| body.set(e.value()) }
+                    button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Record complaint" }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match rows {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some(v) if v.is_empty() => rsx! { p { class: "desk-muted pad", "No complaints on record." } },
+                Some(v) => rsx! {
+                    table { class: "desk-table",
+                        thead { tr { th { "Complaint" } th { "Re" } th { "From" } th { "Status" } th { "Logged" } } }
+                        tbody {
+                            for c in v {
+                                ComplaintRow { key: "{c.id}", c, items, busy, err }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn ComplaintRow(
+    c: DeskComplaint,
+    mut items: Signal<Option<Vec<DeskComplaint>>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+) -> Element {
+    let id = c.id;
+    // The next statuses an editor can move this complaint to.
+    let nexts: Vec<(&str, &str)> = match c.status.as_str() {
+        "received" => vec![("under_review", "Review")],
+        "under_review" => vec![("upheld", "Uphold"), ("rejected", "Reject")],
+        _ => vec![],
+    };
+    let re = if c.article_slug.is_empty() {
+        "—".to_string()
+    } else {
+        c.article_slug.clone()
+    };
+    let from = if c.complainant.is_empty() {
+        "—".to_string()
+    } else {
+        c.complainant.clone()
+    };
+    rsx! {
+        tr {
+            td { class: "desk-wrap", "{c.body}" }
+            td { class: "desk-muted", "{re}" }
+            td { class: "desk-muted", "{from}" }
+            td {
+                span { class: "desk-state s-c-{c.status}", "{complaint_label(&c.status)}" }
+            }
+            td { class: "desk-muted",
+                div { "{ymd(c.ts)}" }
+                div { class: "desk-actions",
+                    for (to, label) in nexts {
                         button {
-                            class: "desk-btn sm",
+                            key: "{to}",
+                            class: "desk-act",
+                            disabled: busy(),
                             onclick: move |_| {
-                                let open = show_new();
-                                show_new.set(!open);
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_complaint_status(id, to.to_string()).await {
+                                        Ok(v) => items.set(Some(v)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
                             },
-                            if show_new() { "Close" } else { "New draft" }
+                            "{label}"
                         }
                     }
                 }
-                if show_new() {
-                    NewDraftForm { articles, busy }
+            }
+        }
+    }
+}
+
+#[component]
+fn CorrectionsPanel() -> Element {
+    let mut items = use_signal(|| Option::<Vec<DeskCorrection>>::None);
+    let mut articles = use_signal(Vec::<DeskArticle>::new);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_new = use_signal(|| false);
+    let mut article_id = use_signal(|| 0i64);
+    let mut original = use_signal(String::new);
+    let mut corrected = use_signal(String::new);
+    let mut reason = use_signal(String::new);
+
+    use_resource(move || async move {
+        match desk_corrections().await {
+            Ok(v) => items.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+        if let Ok(list) = desk_articles().await {
+            articles.set(list);
+        }
+    });
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            if article_id() == 0 {
+                err.set(Some("choose the article to correct".to_string()));
+                busy.set(false);
+                return;
+            }
+            match desk_add_correction(article_id(), original(), corrected(), reason()).await {
+                Ok(v) => {
+                    items.set(Some(v));
+                    original.set(String::new());
+                    corrected.set(String::new());
+                    reason.set(String::new());
+                    show_new.set(false);
                 }
-                if let Some(e) = err() {
-                    p { class: "desk-error pad", "{e}" }
-                }
-                match rows {
-                    None => rsx! { p { class: "desk-muted pad", "Loading articles…" } },
-                    Some(v) if v.is_empty() => rsx! {
-                        p { class: "desk-muted pad", "No articles yet. Create the first draft." }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    let rows = items.read().clone();
+    let arts = articles.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Corrections" }
+                button {
+                    class: "desk-btn sm",
+                    onclick: move |_| {
+                        let open = show_new();
+                        show_new.set(!open);
                     },
-                    Some(v) => rsx! {
-                        table { class: "desk-table",
-                            thead {
-                                tr {
-                                    th { "Title" }
-                                    th { "State" }
-                                    th { "Kind" }
-                                    th { "Byline" }
-                                    th { "Updated" }
-                                    th { "Actions" }
-                                }
-                            }
-                            tbody {
-                                for a in v {
-                                    DeskRow { key: "{a.id}", a, articles, busy, err }
+                    if show_new() { "Close" } else { "Add correction" }
+                }
+            }
+            if show_new() {
+                form { class: "desk-new", onsubmit: submit,
+                    select {
+                        class: "desk-in full",
+                        value: "{article_id}",
+                        onchange: move |e| article_id.set(e.value().parse().unwrap_or(0)),
+                        option { value: "0", "— choose article —" }
+                        for a in arts {
+                            option { key: "{a.id}", value: "{a.id}", "{a.title}" }
+                        }
+                    }
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Original wording", value: "{original}", oninput: move |e| original.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Corrected wording", value: "{corrected}", oninput: move |e| corrected.set(e.value()) }
+                    }
+                    input { class: "desk-in full", r#type: "text", placeholder: "Reason / what was wrong", value: "{reason}", oninput: move |e| reason.set(e.value()) }
+                    button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Publish correction" }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match rows {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some(v) if v.is_empty() => rsx! { p { class: "desk-muted pad", "No corrections published." } },
+                Some(v) => rsx! {
+                    table { class: "desk-table",
+                        thead { tr { th { "Was" } th { "Now" } th { "Reason" } th { "Date" } } }
+                        tbody {
+                            for c in v {
+                                tr { key: "{c.id}",
+                                    td { class: "desk-wrap desk-muted", "{c.original}" }
+                                    td { class: "desk-wrap", "{c.corrected}" }
+                                    td { class: "desk-wrap desk-muted", "{c.reason}" }
+                                    td { class: "desk-muted", "{ymd(c.ts)}" }
                                 }
                             }
                         }
-                    },
-                }
+                    }
+                },
             }
         }
+    }
+}
+
+fn complaint_label(status: &str) -> &str {
+    match status {
+        "received" => "Received",
+        "under_review" => "Under review",
+        "upheld" => "Upheld",
+        "rejected" => "Rejected",
+        _ => status,
     }
 }
 

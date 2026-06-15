@@ -136,6 +136,76 @@ pub async fn create_draft(
     .map_err(|e| e.to_string())
 }
 
+/// The published corrections archive (newest first).
+pub async fn corrections() -> Result<Vec<ph_cms::Correction>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::list_corrections(pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Record a correction against an article (both versions kept), audited as `actor`.
+/// The engine gates this to Editor/Admin and review-logs the Published→Corrected flip.
+pub async fn add_correction(
+    actor: &str,
+    article_id: i64,
+    original: &str,
+    corrected: &str,
+    reason: &str,
+) -> Result<i64, String> {
+    if corrected.trim().is_empty() {
+        return Err("the corrected text is required".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = ph_cms::find_user(pool, actor)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "user not found".to_string())?;
+    ph_cms::add_correction(
+        pool,
+        article_id,
+        original.trim(),
+        corrected.trim(),
+        reason.trim(),
+        &user,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// The complaints inbox (newest first).
+pub async fn complaints() -> Result<Vec<ph_cms::Complaint>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::list_complaints(pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Record a complaint received by any means (currently the public route is email
+/// to complaints@predatorhunters.co.uk; staff log it here).
+pub async fn log_complaint(
+    article_slug: &str,
+    complainant: &str,
+    body: &str,
+) -> Result<i64, String> {
+    if body.trim().is_empty() {
+        return Err("the complaint details are required".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::log_complaint(pool, article_slug.trim(), complainant.trim(), body.trim())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Advance a complaint's status (received → under_review → upheld/rejected), audited.
+pub async fn set_complaint_status(actor: &str, id: i64, status: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::set_complaint_status(pool, id, status, actor)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 struct OwnedSeed {
     slug: &'static str,
     title: &'static str,
