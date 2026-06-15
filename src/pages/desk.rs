@@ -888,7 +888,8 @@ fn EditorForm(
                 button { r#type: "button", class: "tb i", title: "Italic", onclick: move |_| { let _ = document::eval(&wrap_js("*", "*", "italic")); }, "i" }
                 button { r#type: "button", class: "tb", title: "Link", onclick: move |_| { let _ = document::eval(&wrap_js("[", "](https://)", "link text")); }, "Link" }
                 button { r#type: "button", class: "tb", title: "Heading", onclick: move |_| { let _ = document::eval(&wrap_js("## ", "", "Heading")); }, "H" }
-                span { class: "editor-hint2", "Markdown: **bold**, *italic*, [text](url), ## heading, - bullet" }
+                button { r#type: "button", class: "tb", title: "Image (paste a URL)", onclick: move |_| { let _ = document::eval(&wrap_js("![", "](https://)", "image caption")); }, "Image" }
+                span { class: "editor-hint2", "Markdown: **bold**, *italic*, [text](url), ![caption](image-url), ## heading, - bullet" }
             }
             div { class: "editor-split",
                 textarea {

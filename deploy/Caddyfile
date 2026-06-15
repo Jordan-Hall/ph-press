@@ -62,7 +62,7 @@
 		# are self-hosted (/fonts/*.woff2 → font-src 'self'). frame-src allows the
 		# privacy-respecting youtube-nocookie player on /watch; img-src allows its
 		# thumbnails. media-src 'self' blob: for self-hosted video playback.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://i.ytimg.com https://unpkg.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; media-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https: https://i.ytimg.com https://unpkg.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; media-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		-Server
 	}
 }

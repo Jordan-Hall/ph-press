@@ -2,7 +2,8 @@
 //! line) renders to one HTML element. The text is HTML-ESCAPED first and only our
 //! own tags are added afterwards, so author input can never inject markup; link
 //! URLs are validated to http(s) or site-relative. Supports: `#`/`##` headings,
-//! `- ` bullets, `**bold**`, `*italic*`, `[text](url)`. Used by every body
+//! `- ` bullets, `**bold**`, `*italic*`, `[text](url)`, and a standalone image
+//! block `![caption](url)`. Used by every body
 //! renderer (public article, staff preview, editor live preview) so what an editor
 //! types is what readers see.
 
@@ -71,9 +72,30 @@ fn inline(s: &str) -> String {
     toggle(&out, "*", "<em>", "</em>")
 }
 
+/// A block that is exactly an image `![alt](url)` → a figure. URL validated; alt
+/// + url escaped. Returns None if the block isn't a standalone image.
+fn image_html(b: &str) -> Option<String> {
+    let rest = b.strip_prefix("![")?;
+    let close = rest.find("](")?;
+    let alt = &rest[..close];
+    let url = rest[close + 2..].strip_suffix(')')?;
+    if valid_url(url) && !alt.contains('[') {
+        Some(format!(
+            "<figure class=\"md-figure\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"/></figure>",
+            esc(url),
+            esc(alt)
+        ))
+    } else {
+        None
+    }
+}
+
 /// Render one body block to safe HTML.
 pub fn block_html(block: &str) -> String {
     let b = block.trim();
+    if let Some(img) = image_html(b) {
+        return img;
+    }
     if let Some(h) = b.strip_prefix("## ") {
         format!("<h2>{}</h2>", inline(h))
     } else if let Some(h) = b.strip_prefix("# ") {
@@ -101,5 +123,10 @@ mod tests {
         assert!(!block_html("[no](javascript:alert(1))").contains("<a "));
         // unbalanced marker stays literal
         assert_eq!(block_html("a * b"), "<p>a * b</p>");
+        // a standalone image renders; a javascript: image src does not
+        assert!(
+            block_html("![cat](https://x.com/c.jpg)").contains("<img src=\"https://x.com/c.jpg\"")
+        );
+        assert!(!block_html("![x](javascript:alert(1))").contains("<img"));
     }
 }
