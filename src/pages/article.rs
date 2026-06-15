@@ -35,6 +35,14 @@ fn news_jsonld(a: &Art) -> String {
     )
 }
 
+/// BreadcrumbList JSON-LD (Home › News › this story) for breadcrumb rich results.
+fn breadcrumb_ld(title: &str) -> String {
+    format!(
+        "{{\"@context\":\"https://schema.org\",\"@type\":\"BreadcrumbList\",\"itemListElement\":[{{\"@type\":\"ListItem\",\"position\":1,\"name\":\"Home\",\"item\":\"{BASE}/\"}},{{\"@type\":\"ListItem\",\"position\":2,\"name\":\"News\",\"item\":\"{BASE}/news\"}},{{\"@type\":\"ListItem\",\"position\":3,\"name\":\"{}\"}}]}}",
+        json_esc(title)
+    )
+}
+
 #[component]
 pub fn Article(slug: String) -> Element {
     // Compile-time seed? Render the full editorial layout below. Otherwise it may
@@ -94,6 +102,7 @@ pub fn Article(slug: String) -> Element {
         dioxus::document::Meta { name: "twitter:description", content: "{a.summary}" }
         dioxus::document::Meta { name: "twitter:image", content: "{img}" }
         script { r#type: "application/ld+json", dangerous_inner_html: news_jsonld(a) }
+        script { r#type: "application/ld+json", dangerous_inner_html: breadcrumb_ld(a.title) }
 
         // ---- editorial layout ----
         article {
@@ -214,6 +223,7 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
         dioxus::document::Meta { property: "article:published_time", content: "{a.iso_date}" }
         dioxus::document::Meta { name: "twitter:card", content: "summary_large_image" }
         script { r#type: "application/ld+json", dangerous_inner_html: jsonld }
+        script { r#type: "application/ld+json", dangerous_inner_html: breadcrumb_ld(&a.title) }
 
         article {
             header { class: "page-head",
