@@ -20,5 +20,7 @@ server = ["dioxus/server"]
 dioxus = { version = "0.8.0-alpha.0", features = ["router", "fullstack"] }
 
 # Standalone repo (PH Press) — owns its tree. Backend crates (ph-cms,
-# ph-offender, ph-audit) become workspace members as WS2/WS3 land.
+# ph-offender) join as members as WS2/WS3 land. These are server-side only and
+# are NOT pulled into the wasm/web build (kept off the default feature path).
 [workspace]
+members = ["crates/ph-audit"]
