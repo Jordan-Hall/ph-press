@@ -6,3 +6,4 @@ dist/
 # scratch build logs
 _ssg_build.txt
 _review_*.txt
+_deploy_watch.txt

@@ -8,11 +8,16 @@ use crate::assets::{FAVICON, PH_LOGO};
 use crate::components::{ClosingCta, SiteFooter};
 use crate::icons::svg;
 use crate::pages::{
-    About, Article, Contact, Database, Home, News, NotFound, Podcast, Privacy, Standards, Watch,
+    About, Article, Contact, Database, Desk, Home, News, NotFound, Podcast, Privacy, Standards,
+    Watch,
 };
 
 #[derive(Routable, Clone, PartialEq)]
 pub enum Route {
+    // Staff editorial console — declared BEFORE the public Shell layout so it
+    // renders with its own chrome (no public masthead/footer). noindex + unlinked.
+    #[route("/desk")]
+    Desk {},
     #[layout(Shell)]
     #[route("/")]
     Home {},
@@ -42,8 +47,10 @@ pub enum Route {
 /// link bots / no-JS clients get full HTML — essential for a newsroom.
 #[server(endpoint = "static_routes")]
 async fn static_routes() -> Result<Vec<String>, ServerFnError> {
-    let mut routes: Vec<String> =
-        Route::static_routes().iter().map(ToString::to_string).collect();
+    let mut routes: Vec<String> = Route::static_routes()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
     for a in crate::content::ARTICLES {
         routes.push(format!("/news/{}", a.slug));
     }
@@ -72,11 +79,19 @@ fn Shell() -> Element {
 }
 
 fn mh_class(current: &Route, target: &Route) -> &'static str {
-    if current == target { "mh-link on" } else { "mh-link" }
+    if current == target {
+        "mh-link on"
+    } else {
+        "mh-link"
+    }
 }
 
 fn mh_aria(current: &Route, target: &Route) -> Option<&'static str> {
-    if current == target { Some("page") } else { None }
+    if current == target {
+        Some("page")
+    } else {
+        None
+    }
 }
 
 #[component]

@@ -50,10 +50,12 @@ impl Entry {
 
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// An append-only chain of [`Entry`]s.
@@ -64,7 +66,9 @@ pub struct AuditChain {
 
 impl AuditChain {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     /// Rebuild a chain from persisted entries (e.g. read back from SQLite),
@@ -81,7 +85,10 @@ impl AuditChain {
 
     /// Hash of the latest entry, or GENESIS if empty.
     pub fn tip(&self) -> &str {
-        self.entries.last().map(|e| e.hash.as_str()).unwrap_or(GENESIS)
+        self.entries
+            .last()
+            .map(|e| e.hash.as_str())
+            .unwrap_or(GENESIS)
     }
 
     /// Append a new record and return it.
@@ -157,7 +164,13 @@ mod tests {
     fn appends_and_verifies() {
         let mut c = AuditChain::new();
         c.append(1, "jordan", "article.submit", "david-coote-convicted", "");
-        c.append(2, "scott", "article.legal_signoff", "david-coote-convicted", "ok");
+        c.append(
+            2,
+            "scott",
+            "article.legal_signoff",
+            "david-coote-convicted",
+            "ok",
+        );
         c.append(3, "scott", "article.publish", "david-coote-convicted", "");
         assert_eq!(c.entries().len(), 3);
         assert!(c.verify().is_ok());

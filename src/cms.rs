@@ -36,7 +36,15 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
             .unwrap_or(false);
         let owned = seed_data();
         let seeds: Vec<ArticleSeed> = owned.iter().map(OwnedSeed::as_seed).collect();
-        ph_cms::open_and_setup(&url, &admin_user, "Administrator", &admin_pass, reset, &seeds).await
+        ph_cms::open_and_setup(
+            &url,
+            &admin_user,
+            "Administrator",
+            &admin_pass,
+            reset,
+            &seeds,
+        )
+        .await
     })
     .await
 }
@@ -49,6 +57,42 @@ pub async fn published_count() -> Result<i64, String> {
         .await
         .map(|v| v.len() as i64)
         .map_err(|e| e.to_string())
+}
+
+/// Authenticate a staff member + mint a session. Returns the RAW token, which the
+/// API layer puts in an HttpOnly cookie. A login is recorded in the audit chain.
+pub async fn login(username: &str, password: &str) -> Result<String, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = ph_cms::authenticate(pool, username, password)
+        .await
+        .map_err(|_| "invalid username or password".to_string())?;
+    let token = ph_cms::create_session(pool, &user, ph_cms::SESSION_TTL_SECS)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = ph_cms::append_audit(pool, &user.username, "staff.login", &user.username, "").await;
+    Ok(token)
+}
+
+/// Resolve a raw session token to a validated session (None if absent/expired).
+pub async fn session_for(token: &str) -> Result<Option<ph_cms::Session>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::validate_session(pool, token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Destroy a session (logout). Idempotent.
+pub async fn logout(token: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::destroy_session(pool, token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Every article regardless of state — the editorial dashboard listing.
+pub async fn all_articles() -> Result<Vec<ph_cms::Article>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::all_articles(pool).await.map_err(|e| e.to_string())
 }
 
 struct OwnedSeed {

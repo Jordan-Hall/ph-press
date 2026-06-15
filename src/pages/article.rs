@@ -56,7 +56,11 @@ pub fn Article(slug: String) -> Element {
     let img = format!("{BASE}{}", a.og_image());
     // Precompute video fields (rsx can't hold `let` bindings inside conditionals).
     let has_video = a.video.is_some();
-    let mp4_abs = a.video.as_ref().map(|v| format!("{BASE}{}", v.mp4)).unwrap_or_default();
+    let mp4_abs = a
+        .video
+        .as_ref()
+        .map(|v| format!("{BASE}{}", v.mp4))
+        .unwrap_or_default();
     let mp4_path = a.video.as_ref().map(|v| v.mp4).unwrap_or("");
     let poster = a.video.as_ref().map(|v| v.poster).unwrap_or("");
     let vw = a.video.as_ref().map(|v| v.width).unwrap_or(0);

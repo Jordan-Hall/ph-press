@@ -19,6 +19,10 @@ server = ["dioxus/server", "dep:ph-cms", "dep:tokio", "dep:serde_json"]
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["router", "fullstack"] }
+# serde derive for the #[server] DTOs (DeskSession/DeskArticle) — needed on BOTH
+# targets (the client deserializes the responses), so it is a direct, non-optional
+# dep. serde itself is tiny on wasm; only sqlx/CMS stays server-gated.
+serde = { version = "1", features = ["derive"] }
 # Editorial CMS (SQLite). Optional + only enabled by the `server` feature, so the
 # wasm/web build never tries to compile sqlx.
 ph-cms = { path = "crates/ph-cms", optional = true }

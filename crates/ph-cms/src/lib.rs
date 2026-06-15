@@ -19,7 +19,11 @@ pub enum CmsError {
     #[error("authentication failed")]
     Auth,
     #[error("invalid lifecycle transition: {from} -> {to} (role {role})")]
-    Transition { from: String, to: String, role: String },
+    Transition {
+        from: String,
+        to: String,
+        role: String,
+    },
     #[error("forbidden: {0}")]
     Forbidden(String),
     #[error("bad value: {0}")]
@@ -153,7 +157,11 @@ pub mod auth {
     }
     pub fn verify_password(hash: &str, pw: &str) -> bool {
         PasswordHash::new(hash)
-            .map(|parsed| Argon2::default().verify_password(pw.as_bytes(), &parsed).is_ok())
+            .map(|parsed| {
+                Argon2::default()
+                    .verify_password(pw.as_bytes(), &parsed)
+                    .is_ok()
+            })
             .unwrap_or(false)
     }
 }
@@ -198,7 +206,10 @@ impl Article {
 
 // ===================== database =====================
 pub async fn connect(url: &str) -> Result<SqlitePool> {
-    Ok(SqlitePoolOptions::new().max_connections(5).connect(url).await?)
+    Ok(SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(url)
+        .await?)
 }
 
 /// Apply pending schema migrations (versioned in ./migrations, tracked in
@@ -223,15 +234,24 @@ pub async fn reset_password(pool: &SqlitePool, username: &str, new_password: &st
         .await?;
     let changed = res.rows_affected() > 0;
     if changed {
-        append_audit(pool, "system", "admin.password_reset", username, "via deploy").await?;
+        append_audit(
+            pool,
+            "system",
+            "admin.password_reset",
+            username,
+            "via deploy",
+        )
+        .await?;
     }
     Ok(changed)
 }
 
 pub async fn count_users(pool: &SqlitePool) -> Result<i64> {
-    Ok(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM staff_user")
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM staff_user")
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 /// Create a staff user. The very first user must be an admin (bootstrap gate);
@@ -244,7 +264,9 @@ pub async fn create_user(
     password: &str,
 ) -> Result<i64> {
     if count_users(pool).await? == 0 && role != Role::Admin {
-        return Err(CmsError::Forbidden("the first user must be an admin".into()));
+        return Err(CmsError::Forbidden(
+            "the first user must be an admin".into(),
+        ));
     }
     let hash = auth::hash_password(password)?;
     let res = sqlx::query(
@@ -279,6 +301,99 @@ pub async fn authenticate(pool: &SqlitePool, username: &str, password: &str) -> 
     }
 }
 
+// ===================== sessions =====================
+/// A validated staff session — what the API layer trusts after checking the cookie.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub user_id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+}
+impl Session {
+    pub fn role(&self) -> Result<Role> {
+        Role::parse(&self.role)
+    }
+}
+
+/// Default editorial session lifetime (12 hours).
+pub const SESSION_TTL_SECS: i64 = 12 * 60 * 60;
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+fn token_hash(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex(&Sha256::digest(token.as_bytes()))
+}
+
+/// Mint a session for an authenticated user. Returns the RAW token (put it in an
+/// HttpOnly cookie); only its SHA-256 is persisted, so a DB leak yields nothing.
+pub async fn create_session(pool: &SqlitePool, user: &StaffUser, ttl_secs: i64) -> Result<String> {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    let mut raw = [0u8; 32];
+    let mut rng = OsRng;
+    rng.fill_bytes(&mut raw);
+    let token = hex(&raw);
+    let t = now();
+    sqlx::query(
+        "INSERT INTO session (token_hash, user_id, username, display_name, role, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
+    )
+    .bind(token_hash(&token))
+    .bind(user.id)
+    .bind(&user.username)
+    .bind(&user.display_name)
+    .bind(&user.role)
+    .bind(t)
+    .bind(t + ttl_secs)
+    .execute(pool)
+    .await?;
+    Ok(token)
+}
+
+/// Validate a raw session token: returns the session if present and unexpired,
+/// prunes and returns None when expired, None for unknown tokens.
+pub async fn validate_session(pool: &SqlitePool, token: &str) -> Result<Option<Session>> {
+    let h = token_hash(token);
+    let row = sqlx::query_as::<_, (i64, String, String, String, i64)>(
+        "SELECT user_id, username, display_name, role, expires_at FROM session WHERE token_hash = ?",
+    )
+    .bind(&h)
+    .fetch_optional(pool)
+    .await?;
+    let Some((user_id, username, display_name, role, expires_at)) = row else {
+        return Ok(None);
+    };
+    if expires_at <= now() {
+        sqlx::query("DELETE FROM session WHERE token_hash = ?")
+            .bind(&h)
+            .execute(pool)
+            .await?;
+        return Ok(None);
+    }
+    Ok(Some(Session {
+        user_id,
+        username,
+        display_name,
+        role,
+    }))
+}
+
+/// Destroy a session (logout). Idempotent — unknown tokens are a no-op.
+pub async fn destroy_session(pool: &SqlitePool, token: &str) -> Result<()> {
+    sqlx::query("DELETE FROM session WHERE token_hash = ?")
+        .bind(token_hash(token))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn create_article(
     pool: &SqlitePool,
     slug: &str,
@@ -307,10 +422,12 @@ pub async fn create_article(
 }
 
 pub async fn get_article(pool: &SqlitePool, id: i64) -> Result<Option<Article>> {
-    Ok(sqlx::query_as::<_, Article>("SELECT * FROM article WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Article>("SELECT * FROM article WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 /// Append a record to the hash-chained audit log (reads the current tip first).
@@ -361,16 +478,18 @@ pub async fn audit_chain(pool: &SqlitePool) -> Result<ph_audit::AuditChain> {
     .await?;
     let entries = rows
         .into_iter()
-        .map(|(seq, ts, actor, action, subject, detail, prev_hash, hash)| ph_audit::Entry {
-            seq: seq as u64,
-            ts,
-            actor,
-            action,
-            subject,
-            detail,
-            prev_hash,
-            hash,
-        })
+        .map(
+            |(seq, ts, actor, action, subject, detail, prev_hash, hash)| ph_audit::Entry {
+                seq: seq as u64,
+                ts,
+                actor,
+                action,
+                subject,
+                detail,
+                prev_hash,
+                hash,
+            },
+        )
         .collect();
     ph_audit::AuditChain::from_entries(entries)
         .map_err(|e| CmsError::Bad(format!("audit chain invalid: {e}")))
@@ -459,6 +578,15 @@ pub async fn published_articles(pool: &SqlitePool) -> Result<Vec<Article>> {
     .await?)
 }
 
+/// Every article regardless of state — for the staff editorial dashboard, newest first.
+pub async fn all_articles(pool: &SqlitePool) -> Result<Vec<Article>> {
+    Ok(sqlx::query_as::<_, Article>(
+        "SELECT * FROM article ORDER BY COALESCE(published_at, updated_at) DESC",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
 /// Public text search over published articles (title/summary/body), newest first.
 pub async fn search_articles(pool: &SqlitePool, q: &str) -> Result<Vec<Article>> {
     let like = format!("%{}%", q.replace('%', "").replace('_', ""));
@@ -490,7 +618,14 @@ pub async fn add_correction(
     .bind(now())
     .execute(pool)
     .await?;
-    append_audit(pool, "system", "article.correction", &article_id.to_string(), reason).await?;
+    append_audit(
+        pool,
+        "system",
+        "article.correction",
+        &article_id.to_string(),
+        reason,
+    )
+    .await?;
     Ok(res.last_insert_rowid())
 }
 
@@ -536,7 +671,14 @@ pub async fn bootstrap_admin(
         return Ok(false);
     }
     create_user(pool, username, display_name, Role::Admin, password).await?;
-    append_audit(pool, "system", "bootstrap.admin", username, "first admin created").await?;
+    append_audit(
+        pool,
+        "system",
+        "bootstrap.admin",
+        username,
+        "first admin created",
+    )
+    .await?;
     Ok(true)
 }
 
@@ -573,7 +715,14 @@ pub async fn seed_articles(pool: &SqlitePool, items: &[ArticleSeed<'_>]) -> Resu
         inserted += res.rows_affected();
     }
     if inserted > 0 {
-        append_audit(pool, "system", "seed.articles", &format!("{inserted} seeded"), "").await?;
+        append_audit(
+            pool,
+            "system",
+            "seed.articles",
+            &format!("{inserted} seeded"),
+            "",
+        )
+        .await?;
     }
     Ok(inserted)
 }
@@ -607,12 +756,32 @@ mod tests {
     #[test]
     fn lifecycle_gates_publish_behind_legal() {
         // A writer cannot leap a draft to published.
-        assert!(!can_transition(State::Draft, State::Published, Role::Writer));
-        assert!(!can_transition(State::EditorialReview, State::Published, Role::Editor));
+        assert!(!can_transition(
+            State::Draft,
+            State::Published,
+            Role::Writer
+        ));
+        assert!(!can_transition(
+            State::EditorialReview,
+            State::Published,
+            Role::Editor
+        ));
         // Publish is only reachable from LegalReview (legal sign-off) or Scheduled.
-        assert!(can_transition(State::LegalReview, State::Published, Role::Legal));
-        assert!(!can_transition(State::LegalReview, State::Published, Role::Writer));
-        assert!(can_transition(State::Scheduled, State::Published, Role::Editor));
+        assert!(can_transition(
+            State::LegalReview,
+            State::Published,
+            Role::Legal
+        ));
+        assert!(!can_transition(
+            State::LegalReview,
+            State::Published,
+            Role::Writer
+        ));
+        assert!(can_transition(
+            State::Scheduled,
+            State::Published,
+            Role::Editor
+        ));
         // normal early steps
         assert!(can_transition(State::Draft, State::Submitted, Role::Writer));
     }
@@ -630,10 +799,18 @@ mod tests {
         init(&pool).await.unwrap();
 
         // bootstrap gate: first user must be admin
-        assert!(create_user(&pool, "w", "Writer", Role::Writer, "pw").await.is_err());
-        let _admin = create_user(&pool, "admin", "Admin", Role::Admin, "pw").await.unwrap();
-        create_user(&pool, "jordan", "Jordan Upton", Role::Editor, "pw1").await.unwrap();
-        create_user(&pool, "scott", "Scott Taylor", Role::Legal, "pw2").await.unwrap();
+        assert!(create_user(&pool, "w", "Writer", Role::Writer, "pw")
+            .await
+            .is_err());
+        let _admin = create_user(&pool, "admin", "Admin", Role::Admin, "pw")
+            .await
+            .unwrap();
+        create_user(&pool, "jordan", "Jordan Upton", Role::Editor, "pw1")
+            .await
+            .unwrap();
+        create_user(&pool, "scott", "Scott Taylor", Role::Legal, "pw2")
+            .await
+            .unwrap();
 
         assert!(authenticate(&pool, "jordan", "pw1").await.is_ok());
         assert!(authenticate(&pool, "jordan", "nope").await.is_err());
@@ -641,16 +818,36 @@ mod tests {
         let editor = find_user(&pool, "jordan").await.unwrap().unwrap();
         let legal = find_user(&pool, "scott").await.unwrap().unwrap();
 
-        let id = create_article(&pool, "test-case", "Test case", "summary", "[]", "Jordan Upton", "Court report").await.unwrap();
+        let id = create_article(
+            &pool,
+            "test-case",
+            "Test case",
+            "summary",
+            "[]",
+            "Jordan Upton",
+            "Court report",
+        )
+        .await
+        .unwrap();
 
         // editor cannot publish directly
-        assert!(transition(&pool, id, State::Published, &editor, "").await.is_err());
+        assert!(transition(&pool, id, State::Published, &editor, "")
+            .await
+            .is_err());
 
         // proper path: editor moves through review, legal signs off + publishes
-        transition(&pool, id, State::Submitted, &editor, "").await.unwrap();
-        transition(&pool, id, State::EditorialReview, &editor, "").await.unwrap();
-        transition(&pool, id, State::LegalReview, &editor, "").await.unwrap();
-        transition(&pool, id, State::Published, &legal, "signed off").await.unwrap();
+        transition(&pool, id, State::Submitted, &editor, "")
+            .await
+            .unwrap();
+        transition(&pool, id, State::EditorialReview, &editor, "")
+            .await
+            .unwrap();
+        transition(&pool, id, State::LegalReview, &editor, "")
+            .await
+            .unwrap();
+        transition(&pool, id, State::Published, &legal, "signed off")
+            .await
+            .unwrap();
 
         let a = get_article(&pool, id).await.unwrap().unwrap();
         assert_eq!(a.state().unwrap(), State::Published);
@@ -662,9 +859,13 @@ mod tests {
         assert!(chain.verify().is_ok());
 
         // corrections archive, complaints, public listing + search
-        add_correction(&pool, id, "old text", "new text", "fixed a detail").await.unwrap();
+        add_correction(&pool, id, "old text", "new text", "fixed a detail")
+            .await
+            .unwrap();
         assert_eq!(list_corrections(&pool).await.unwrap().len(), 1);
-        log_complaint(&pool, "test-case", "anon", "you got X wrong").await.unwrap();
+        log_complaint(&pool, "test-case", "anon", "you got X wrong")
+            .await
+            .unwrap();
         assert_eq!(published_articles(&pool).await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "Test").await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "zzznomatch").await.unwrap().len(), 0);
@@ -675,14 +876,34 @@ mod tests {
     async fn bootstrap_and_seed_are_idempotent() {
         let pool = connect("sqlite::memory:").await.unwrap();
         init(&pool).await.unwrap();
-        assert!(bootstrap_admin(&pool, "admin", "Admin", "pw").await.unwrap());
+        assert!(bootstrap_admin(&pool, "admin", "Admin", "pw")
+            .await
+            .unwrap());
         // second call is a no-op once an admin exists
-        assert!(!bootstrap_admin(&pool, "admin2", "Admin2", "pw").await.unwrap());
+        assert!(!bootstrap_admin(&pool, "admin2", "Admin2", "pw")
+            .await
+            .unwrap());
         assert!(authenticate(&pool, "admin", "pw").await.is_ok());
 
         let seeds = [
-            ArticleSeed { slug: "a", title: "A", summary: "s", body: "[]", byline: "x", kind: "Court report", published_at: 1000 },
-            ArticleSeed { slug: "b", title: "B", summary: "s", body: "[]", byline: "x", kind: "Court report", published_at: 2000 },
+            ArticleSeed {
+                slug: "a",
+                title: "A",
+                summary: "s",
+                body: "[]",
+                byline: "x",
+                kind: "Court report",
+                published_at: 1000,
+            },
+            ArticleSeed {
+                slug: "b",
+                title: "B",
+                summary: "s",
+                body: "[]",
+                byline: "x",
+                kind: "Court report",
+                published_at: 2000,
+            },
         ];
         assert_eq!(seed_articles(&pool, &seeds).await.unwrap(), 2);
         assert_eq!(seed_articles(&pool, &seeds).await.unwrap(), 0); // idempotent
@@ -694,14 +915,44 @@ mod tests {
     async fn admin_password_reset_is_deliberate() {
         let pool = connect("sqlite::memory:").await.unwrap();
         init(&pool).await.unwrap();
-        assert!(bootstrap_admin(&pool, "admin", "Admin", "old").await.unwrap());
+        assert!(bootstrap_admin(&pool, "admin", "Admin", "old")
+            .await
+            .unwrap());
         // a later boot never overwrites the admin, even with a different password
-        assert!(!bootstrap_admin(&pool, "admin", "Admin", "different").await.unwrap());
+        assert!(!bootstrap_admin(&pool, "admin", "Admin", "different")
+            .await
+            .unwrap());
         assert!(authenticate(&pool, "admin", "old").await.is_ok());
         // a deliberate reset (PH_ADMIN_RESET) does change it
         assert!(reset_password(&pool, "admin", "new").await.unwrap());
         assert!(authenticate(&pool, "admin", "old").await.is_err());
         assert!(authenticate(&pool, "admin", "new").await.is_ok());
         assert!(audit_chain(&pool).await.unwrap().verify().is_ok());
+    }
+
+    #[tokio::test]
+    async fn session_roundtrip_and_expiry() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        bootstrap_admin(&pool, "ed", "Editor", "pw").await.unwrap();
+        let user = authenticate(&pool, "ed", "pw").await.unwrap();
+
+        let token = create_session(&pool, &user, SESSION_TTL_SECS)
+            .await
+            .unwrap();
+        let s = validate_session(&pool, &token)
+            .await
+            .unwrap()
+            .expect("valid session");
+        assert_eq!(s.username, "ed");
+        assert_eq!(s.role().unwrap(), Role::Admin);
+        // unknown token -> None, never an error
+        assert!(validate_session(&pool, "deadbeef").await.unwrap().is_none());
+        // an already-expired session validates to None and is pruned
+        let expired = create_session(&pool, &user, -1).await.unwrap();
+        assert!(validate_session(&pool, &expired).await.unwrap().is_none());
+        // logout invalidates
+        destroy_session(&pool, &token).await.unwrap();
+        assert!(validate_session(&pool, &token).await.unwrap().is_none());
     }
 }

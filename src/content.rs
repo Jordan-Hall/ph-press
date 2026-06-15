@@ -23,11 +23,11 @@ pub struct Article {
     pub byline: &'static str,
     pub date: &'static str,            // human, e.g. "June 2026"
     pub iso_date: &'static str,        // for <time>/JSON-LD, e.g. "2026-06-14"
-    pub kind: &'static str,            // "Court report" | "Investigation" | "Announcement" | "Explainer"
+    pub kind: &'static str, // "Court report" | "Investigation" | "Announcement" | "Explainer"
     pub body: &'static [&'static str], // paragraphs
-    pub video: Option<Video>,          // self-hosted video (og:video inline play)
+    pub video: Option<Video>, // self-hosted video (og:video inline play)
     pub youtube: Option<&'static str>, // youtube id → youtube-nocookie embed
-    pub image: Option<&'static str>,   // hero/thumbnail (absolute URL or /path)
+    pub image: Option<&'static str>, // hero/thumbnail (absolute URL or /path)
 }
 
 impl Article {
