@@ -110,6 +110,23 @@ pub struct TeamMember {
     pub role: String,
 }
 
+/// One entry in the hash-chained audit trail (for the admin viewer).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuditRow {
+    pub ts: i64,
+    pub actor: String,
+    pub action: String,
+    pub subject: String,
+    pub detail: String,
+}
+
+/// The audit trail + whether its hash chain still verifies (tamper-evidence).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuditLog {
+    pub verified: bool,
+    pub rows: Vec<AuditRow>,
+}
+
 /// An article in ANY state, for an authenticated staff draft preview (carries the
 /// lifecycle state so the preview can banner "Draft — not yet published").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -665,6 +682,33 @@ pub async fn desk_add_staff(
     #[cfg(not(feature = "server"))]
     {
         let _ = (username, display_name, role, password);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// The hash-chained audit trail (admin only), newest first, with the chain
+/// integrity flag — the tamper-evident record IMPRESS accountability relies on.
+#[server(endpoint = "desk_audit")]
+pub async fn desk_audit() -> Result<AuditLog, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_admin().await?;
+        let (verified, rows) = crate::cms::audit_log().await.map_err(ServerFnError::new)?;
+        let mut rows: Vec<AuditRow> = rows
+            .into_iter()
+            .map(|(ts, actor, action, subject, detail)| AuditRow {
+                ts,
+                actor,
+                action,
+                subject,
+                detail,
+            })
+            .collect();
+        rows.reverse(); // newest first
+        Ok(AuditLog { verified, rows })
+    }
+    #[cfg(not(feature = "server"))]
+    {
         Err(ServerFnError::new("server only"))
     }
 }

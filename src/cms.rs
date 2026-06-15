@@ -127,6 +127,28 @@ pub async fn list_staff() -> Result<Vec<ph_cms::StaffUser>, String> {
     ph_cms::list_staff(pool).await.map_err(|e| e.to_string())
 }
 
+/// The hash-chained audit trail: (chain-verifies-ok, entries oldest-first as
+/// (ts, actor, action, subject, detail)). Powers the admin audit viewer.
+pub async fn audit_log() -> Result<(bool, Vec<(i64, String, String, String, String)>), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let chain = ph_cms::audit_chain(pool).await.map_err(|e| e.to_string())?;
+    let verified = chain.verify().is_ok();
+    let rows = chain
+        .entries()
+        .iter()
+        .map(|e| {
+            (
+                e.ts,
+                e.actor.clone(),
+                e.action.clone(),
+                e.subject.clone(),
+                e.detail.clone(),
+            )
+        })
+        .collect();
+    Ok((verified, rows))
+}
+
 /// Create a staff user at the given role. (API layer gates this to admins.)
 pub async fn create_staff(
     username: &str,

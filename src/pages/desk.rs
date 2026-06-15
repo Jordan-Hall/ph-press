@@ -7,10 +7,10 @@
 use dioxus::prelude::*;
 
 use crate::api::{
-    desk_add_correction, desk_add_staff, desk_articles, desk_complaint_status, desk_complaints,
-    desk_corrections, desk_create, desk_log_complaint, desk_preview, desk_staff, desk_transition,
-    desk_update, staff_change_password, staff_login, staff_logout, staff_me, DeskArticle,
-    DeskComplaint, DeskCorrection, DeskSession, PreviewArticle, StaffMember,
+    desk_add_correction, desk_add_staff, desk_articles, desk_audit, desk_complaint_status,
+    desk_complaints, desk_corrections, desk_create, desk_log_complaint, desk_preview, desk_staff,
+    desk_transition, desk_update, staff_change_password, staff_login, staff_logout, staff_me,
+    DeskArticle, DeskComplaint, DeskCorrection, DeskSession, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 
@@ -108,6 +108,7 @@ enum Tab {
     Complaints,
     Corrections,
     Staff,
+    Audit,
     Settings,
 }
 
@@ -148,6 +149,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 button { class: tab_class(Tab::Corrections), onclick: move |_| tab.set(Tab::Corrections), "Corrections" }
                 if user.role == "admin" {
                     button { class: tab_class(Tab::Staff), onclick: move |_| tab.set(Tab::Staff), "Staff" }
+                    button { class: tab_class(Tab::Audit), onclick: move |_| tab.set(Tab::Audit), "Audit" }
                 }
                 button { class: tab_class(Tab::Settings), onclick: move |_| tab.set(Tab::Settings), "Settings" }
             }
@@ -158,6 +160,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 Tab::Complaints => rsx! { ComplaintsPanel {} },
                 Tab::Corrections => rsx! { CorrectionsPanel {} },
                 Tab::Staff => rsx! { StaffPanel {} },
+                Tab::Audit => rsx! { AuditPanel {} },
                 Tab::Settings => rsx! { SettingsPanel {} },
             }
         }
@@ -539,6 +542,85 @@ fn CorrectionsPanel() -> Element {
                 },
             }
         }
+    }
+}
+
+#[component]
+fn AuditPanel() -> Element {
+    let mut log = use_signal(|| Option::<crate::api::AuditLog>::None);
+    let mut err = use_signal(|| Option::<String>::None);
+
+    use_resource(move || async move {
+        match desk_audit().await {
+            Ok(v) => log.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let data = log.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Audit trail" }
+                if let Some(d) = data.as_ref() {
+                    if d.verified {
+                        span { class: "desk-state s-published", "Chain verified ✓" }
+                    } else {
+                        span { class: "desk-state s-retracted", "Chain BROKEN" }
+                    }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match data {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some(d) if d.rows.is_empty() => rsx! { p { class: "desk-muted pad", "No activity recorded yet." } },
+                Some(d) => rsx! {
+                    p { class: "desk-muted pad", style: "padding-bottom:0;", "Every staff action is recorded in a tamper-evident hash chain." }
+                    table { class: "desk-table",
+                        thead { tr { th { "When" } th { "Who" } th { "Action" } th { "Subject" } } }
+                        tbody {
+                            for (i , r) in d.rows.iter().enumerate() {
+                                tr { key: "{i}",
+                                    td { class: "desk-muted", "{ymd(r.ts)}" }
+                                    td { "{r.actor}" }
+                                    td { span { class: "desk-row-title", "{audit_label(&r.action)}" }
+                                        if !r.detail.is_empty() {
+                                            div { class: "desk-muted", style: "font-size:12px;", "{r.detail}" }
+                                        }
+                                    }
+                                    td { class: "desk-muted desk-wrap", "{r.subject}" }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+fn audit_label(action: &str) -> &str {
+    match action {
+        "staff.login" => "Signed in",
+        "staff.password_change" => "Changed password",
+        "staff.password_reset" | "admin.password_reset" => "Password reset",
+        "article.create" => "Created draft",
+        "article.edit" => "Edited article",
+        "article.submitted" => "Submitted",
+        "article.editorial_review" => "Sent to editorial review",
+        "article.legal_review" => "Sent to legal",
+        "article.scheduled" => "Scheduled",
+        "article.published" => "Published",
+        "article.corrected" => "Marked corrected",
+        "article.retracted" => "Retracted",
+        "article.correction" => "Published correction",
+        "complaint.received" => "Complaint received",
+        "complaint.status" => "Complaint status changed",
+        "user.create" => "Staff added",
+        "seed" => "Seeded content",
+        other => other,
     }
 }
 
