@@ -301,6 +301,11 @@ a.card:hover,.card.reveal:hover{border-color:var(--ink);}
   .mh-cta{display:none;}
 }
 
+/* Logo fallback for imageless stories (e.g. announcements) — contain on a brand
+   panel so the wordmark isn't cropped like a photo. */
+.media.logo,.r-thumb.logo{object-fit:contain!important;background:var(--paper)!important;padding:14% 16%;}
+html[data-theme="light"] .media.logo,html[data-theme="light"] .r-thumb.logo{background:#14151A!important;}
+
 /* ===== Home front page: section nav + clusters + database teaser ===== */
 .sec-nav{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--maxw);margin:0 auto;padding:16px var(--gut) 0;}
 .sec-chip{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);border:1px solid var(--rule-2);border-radius:999px;padding:6px 14px;text-decoration:none;transition:.15s;}

@@ -6,6 +6,7 @@
 use dioxus::prelude::*;
 
 use crate::app::Route;
+use crate::assets::PH_LOGO;
 use crate::config;
 use crate::content::{in_section, Article, ARTICLES, SECTIONS};
 use crate::icons::svg;
@@ -86,8 +87,10 @@ pub fn Home() -> Element {
         section { class: "section", style: "padding-top:clamp(10px,2vh,22px);",
             div { class: "wrap",
                 Link { class: "hero-lead", to: Route::Article { slug: lead.slug.to_string() },
-                    if lead.image.is_some() {
-                        img { class: "media", src: lead.image.unwrap_or(""), alt: "{lead.title}", loading: "lazy" }
+                    if let Some(src) = lead.image {
+                        img { class: "media", src: src, alt: "{lead.title}", loading: "lazy" }
+                    } else {
+                        img { class: "media logo", src: PH_LOGO, alt: "{lead.title}", loading: "lazy" }
                     }
                     div {
                         span { class: "kicker", "{lead.section}" }
@@ -114,8 +117,10 @@ pub fn Home() -> Element {
                     div { class: "cards",
                         for a in arts.iter() {
                             Link { key: "{a.slug}", class: "ncard", to: Route::Article { slug: a.slug.to_string() },
-                                if a.image.is_some() {
-                                    img { class: "media", src: a.image.unwrap_or(""), alt: "{a.title}", loading: "lazy" }
+                                if let Some(src) = a.image {
+                                    img { class: "media", src: src, alt: "{a.title}", loading: "lazy" }
+                                } else {
+                                    img { class: "media logo", src: PH_LOGO, alt: "{a.title}", loading: "lazy" }
                                 }
                                 div { class: "ncard-body",
                                     span { class: "kicker", "{a.section}" }
