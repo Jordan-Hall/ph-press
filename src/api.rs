@@ -69,6 +69,32 @@ pub struct DeskCorrection {
     pub ts: i64,
 }
 
+/// A public news-list card from the live CMS feed (a story published via /desk).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeedItem {
+    pub slug: String,
+    pub title: String,
+    pub summary: String,
+    pub kind: String,
+    pub section: String,
+    pub byline: String,
+    pub iso_date: String,
+}
+
+/// A full public article from the live CMS, for the detail page when the slug is
+/// not a compile-time seed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicArticle {
+    pub slug: String,
+    pub title: String,
+    pub summary: String,
+    pub body: Vec<String>,
+    pub kind: String,
+    pub section: String,
+    pub byline: String,
+    pub iso_date: String,
+}
+
 // ---- server-only cookie helpers ---------------------------------------------
 
 /// Attach the session cookie to the current server-fn response. `max_age` of 0
@@ -178,6 +204,35 @@ async fn require_session() -> Result<ph_cms::Session, ServerFnError> {
         .await
         .map_err(ServerFnError::new)?
         .ok_or_else(|| ServerFnError::new("not authenticated"))
+}
+
+/// Unix seconds → "YYYY-MM-DD" (civil_from_days; no chrono).
+#[cfg(feature = "server")]
+fn ymd(unix: i64) -> String {
+    let days = unix.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// DB articles have no `section` column yet — derive a sensible topical section
+/// from the format so live feed cards still carry a kicker.
+#[cfg(feature = "server")]
+fn db_section(kind: &str) -> String {
+    match kind {
+        "Court report" | "Investigation" => "Crime",
+        "Announcement" | "Explainer" => "Community",
+        _ => "News",
+    }
+    .to_string()
 }
 
 // ---- endpoints --------------------------------------------------------------
@@ -488,5 +543,73 @@ pub async fn desk_add_correction(
     {
         let _ = (article_id, original, corrected, reason);
         Err(ServerFnError::new("server only"))
+    }
+}
+
+// ---- public CMS feed (the live site reads the DB) --------------------------
+
+/// Publicly visible articles from the live CMS (published/corrected), newest
+/// first. The public pages merge these with the compile-time seeds so a story
+/// published in /desk shows on the live site. Public — no session required.
+#[server(endpoint = "published_feed")]
+pub async fn published_feed() -> Result<Vec<FeedItem>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let arts = crate::cms::public_feed()
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(arts
+            .into_iter()
+            .map(|a| {
+                let section = db_section(&a.kind);
+                let iso_date = ymd(a.published_at.unwrap_or(a.updated_at));
+                FeedItem {
+                    slug: a.slug,
+                    title: a.title,
+                    summary: a.summary,
+                    kind: a.kind,
+                    section,
+                    byline: a.byline,
+                    iso_date,
+                }
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// A full public article by slug from the live CMS (published/corrected only),
+/// for the detail page when the slug is not a compile-time seed. Public.
+#[server(endpoint = "public_article")]
+pub async fn public_article(slug: String) -> Result<Option<PublicArticle>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let Some(a) = crate::cms::public_article(&slug)
+            .await
+            .map_err(ServerFnError::new)?
+        else {
+            return Ok(None);
+        };
+        let body: Vec<String> = serde_json::from_str(&a.body).unwrap_or_default();
+        let section = db_section(&a.kind);
+        let iso_date = ymd(a.published_at.unwrap_or(a.updated_at));
+        Ok(Some(PublicArticle {
+            slug: a.slug,
+            title: a.title,
+            summary: a.summary,
+            body,
+            kind: a.kind,
+            section,
+            byline: a.byline,
+            iso_date,
+        }))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = slug;
+        Ok(None)
     }
 }

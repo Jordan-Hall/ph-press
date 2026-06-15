@@ -1,19 +1,69 @@
-//! News — the newsroom index. Lists published articles (from content::ARTICLES)
-//! as cards linking to /news/:slug. Real CMS-backed data lands in WS2.
+//! News — the newsroom index. DATA-DRIVEN: the compile-time seeds are the baseline
+//! and the live CMS feed (published via /desk) is merged in, so newly published
+//! stories appear here without a code change. SSG renders the seeds (crawlable);
+//! the client fetches the live feed and folds in anything new. Newest first.
 
 use dioxus::prelude::*;
 
+use crate::api::published_feed;
 use crate::app::Route;
 use crate::assets::PH_LOGO;
-use crate::content::{Article, ARTICLES};
+use crate::content::ARTICLES;
 use crate::icons::svg;
+
+/// A unified news-list card, from either a compile-time seed or the live CMS feed.
+#[derive(Clone, PartialEq)]
+struct Card {
+    slug: String,
+    title: String,
+    summary: String,
+    kind: String,
+    section: String,
+    date: String,
+    iso: String,
+    image: Option<String>,
+}
 
 #[component]
 pub fn News() -> Element {
-    // Newest first: iso dates ("YYYY-MM-DD") sort chronologically, so a desc sort
-    // puts the latest announcements ahead of back-dated court reports.
-    let mut arts: Vec<&'static Article> = ARTICLES.iter().collect();
-    arts.sort_by(|a, b| b.iso_date.cmp(a.iso_date));
+    // Live CMS feed (client-fetched on the web target; merged with the seeds).
+    let feed = use_resource(move || published_feed());
+
+    let mut cards: Vec<Card> = ARTICLES
+        .iter()
+        .map(|a| Card {
+            slug: a.slug.to_string(),
+            title: a.title.to_string(),
+            summary: a.summary.to_string(),
+            kind: a.kind.to_string(),
+            section: a.section.to_string(),
+            date: a.date.to_string(),
+            iso: a.iso_date.to_string(),
+            image: a.image.map(|s| s.to_string()),
+        })
+        .collect();
+    {
+        // Fold in published stories that aren't compile-time seeds (new in /desk).
+        let g = feed.read();
+        if let Some(Ok(items)) = g.as_ref() {
+            for f in items {
+                if !ARTICLES.iter().any(|a| a.slug == f.slug) {
+                    cards.push(Card {
+                        slug: f.slug.clone(),
+                        title: f.title.clone(),
+                        summary: f.summary.clone(),
+                        kind: f.kind.clone(),
+                        section: f.section.clone(),
+                        date: f.iso_date.clone(),
+                        iso: f.iso_date.clone(),
+                        image: None,
+                    });
+                }
+            }
+        }
+    }
+    cards.sort_by(|a, b| b.iso.cmp(&a.iso));
+
     rsx! {
         crate::components::Seo {
             title: "News | Predator Hunters",
@@ -36,23 +86,23 @@ pub fn News() -> Element {
         section { class: "section", style: "padding-top:clamp(20px,4vh,48px);",
             div { class: "wrap",
                 div { class: "research-list",
-                    for a in arts.iter() {
+                    for c in cards.iter() {
                         Link {
-                            key: "{a.slug}",
+                            key: "{c.slug}",
                             class: "r-row has-img reveal",
-                            to: Route::Article { slug: a.slug.to_string() },
-                            if let Some(src) = a.image {
-                                img { class: "r-thumb", src: src, alt: "{a.title}", loading: "lazy" }
+                            to: Route::Article { slug: c.slug.clone() },
+                            if let Some(src) = c.image.as_ref() {
+                                img { class: "r-thumb", src: "{src}", alt: "{c.title}", loading: "lazy" }
                             } else {
-                                img { class: "r-thumb logo", src: PH_LOGO, alt: "{a.title}", loading: "lazy" }
+                                img { class: "r-thumb logo", src: PH_LOGO, alt: "{c.title}", loading: "lazy" }
                             }
                             div {
-                                span { class: "r-num", "{a.section} · {a.kind}" }
-                                h3 { class: "hl", "{a.title}" }
-                                p { class: "r-desc", "{a.summary}" }
+                                span { class: "r-num", "{c.section} · {c.kind}" }
+                                h3 { class: "hl", "{c.title}" }
+                                p { class: "r-desc", "{c.summary}" }
                             }
                             div { class: "r-meta",
-                                span { class: "byline", "{a.date}" }
+                                span { class: "byline", "{c.date}" }
                                 span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
                             }
                         }

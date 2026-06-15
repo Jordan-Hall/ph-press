@@ -684,6 +684,17 @@ pub async fn published_articles(pool: &SqlitePool) -> Result<Vec<Article>> {
     .await?)
 }
 
+/// A single publicly-visible article by slug (published or corrected) — for the
+/// public detail page when the slug is not a compile-time seed.
+pub async fn published_by_slug(pool: &SqlitePool, slug: &str) -> Result<Option<Article>> {
+    Ok(sqlx::query_as::<_, Article>(
+        "SELECT * FROM article WHERE slug = ? AND state IN ('published','corrected')",
+    )
+    .bind(slug)
+    .fetch_optional(pool)
+    .await?)
+}
+
 /// Every article regardless of state — for the staff editorial dashboard, newest first.
 pub async fn all_articles(pool: &SqlitePool) -> Result<Vec<Article>> {
     Ok(sqlx::query_as::<_, Article>(

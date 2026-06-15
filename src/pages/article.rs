@@ -6,6 +6,7 @@
 
 use dioxus::prelude::*;
 
+use crate::api::{public_article, PublicArticle};
 use crate::app::Route;
 use crate::content::{by_slug, Article as Art};
 use crate::icons::svg;
@@ -36,20 +37,10 @@ fn news_jsonld(a: &Art) -> String {
 
 #[component]
 pub fn Article(slug: String) -> Element {
+    // Compile-time seed? Render the full editorial layout below. Otherwise it may
+    // be a story published live via /desk — fetch it from the CMS by slug.
     let Some(a) = by_slug(&slug) else {
-        return rsx! {
-            dioxus::document::Meta { name: "robots", content: "noindex, follow" }
-            header { class: "page-head",
-                div { class: "wrap",
-                    p { class: "eyebrow rise d1", "Not found" }
-                    h1 { class: "rise d2", "That story " span { class: "grad-text", "isn't here." } }
-                    p { class: "lede rise d3", "The link may be old or mistyped." }
-                    div { class: "rise d4", style: "margin-top:28px; display:flex; gap:12px; flex-wrap:wrap;",
-                        Link { class: "btn btn-primary", to: Route::News {}, "Back to the newsroom" }
-                    }
-                }
-            }
-        };
+        return rsx! { LiveArticle { key: "{slug}", slug } };
     };
 
     let url = format!("{BASE}/news/{}", a.slug);
@@ -148,6 +139,97 @@ pub fn Article(slug: String) -> Element {
                     } else if has_hero {
                         img { class: "media lead-media reveal", src: "{hero}", alt: "{a.title}", loading: "lazy" }
                     }
+                    div { class: "prose reveal",
+                        for para in a.body.iter() {
+                            p { "{para}" }
+                        }
+                    }
+                    div { style: "margin-top:32px; padding-top:20px; border-top:1px solid var(--hair); display:flex; gap:12px; flex-wrap:wrap;",
+                        Link { class: "btn btn-ghost", to: Route::News {},
+                            span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+                            "More from the newsroom"
+                        }
+                        Link { class: "btn btn-ghost", to: Route::Standards {},
+                            span { class: "ic", dangerous_inner_html: svg("scale") }
+                            "Our standards"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A story published live via /desk (not a compile-time seed). Fetched from the
+/// CMS by slug and rendered in the reading layout. NewsArticle JSON-LD + article
+/// OG so live stories share + index correctly.
+#[component]
+fn LiveArticle(slug: String) -> Element {
+    // Keyed by slug at the call site, so each article is a fresh instance and the
+    // resource refetches per slug.
+    let res = use_resource(move || {
+        let slug = slug.clone();
+        async move { public_article(slug).await }
+    });
+    let guard = res.read();
+    match guard.as_ref() {
+        None => rsx! {
+            header { class: "page-head",
+                div { class: "wrap", p { class: "lede", "Loading…" } }
+            }
+        },
+        Some(Ok(Some(a))) => rsx! { LiveArticleBody { a: a.clone() } },
+        _ => rsx! {
+            dioxus::document::Meta { name: "robots", content: "noindex, follow" }
+            header { class: "page-head",
+                div { class: "wrap",
+                    p { class: "eyebrow rise d1", "Not found" }
+                    h1 { class: "rise d2", "That story " span { class: "grad-text", "isn't here." } }
+                    p { class: "lede rise d3", "The link may be old or mistyped." }
+                    div { class: "rise d4", style: "margin-top:28px; display:flex; gap:12px; flex-wrap:wrap;",
+                        Link { class: "btn btn-primary", to: Route::News {}, "Back to the newsroom" }
+                    }
+                }
+            }
+        },
+    }
+}
+
+#[component]
+fn LiveArticleBody(a: PublicArticle) -> Element {
+    let url = format!("{BASE}/news/{}", a.slug);
+    let jsonld = format!(
+        "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"articleSection\":\"{}\",\"datePublished\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}}}",
+        json_esc(&a.title), json_esc(&a.summary), json_esc(&a.section), a.iso_date, json_esc(&a.byline)
+    );
+    rsx! {
+        dioxus::document::Title { "{a.title} | Predator Hunters" }
+        dioxus::document::Meta { name: "description", content: "{a.summary}" }
+        dioxus::document::Link { rel: "canonical", href: "{url}" }
+        dioxus::document::Meta { property: "og:type", content: "article" }
+        dioxus::document::Meta { property: "og:title", content: "{a.title}" }
+        dioxus::document::Meta { property: "og:description", content: "{a.summary}" }
+        dioxus::document::Meta { property: "og:url", content: "{url}" }
+        dioxus::document::Meta { property: "article:section", content: "{a.section}" }
+        dioxus::document::Meta { property: "article:published_time", content: "{a.iso_date}" }
+        dioxus::document::Meta { name: "twitter:card", content: "summary_large_image" }
+        script { r#type: "application/ld+json", dangerous_inner_html: jsonld }
+
+        article {
+            header { class: "page-head",
+                div { class: "wrap", style: "max-width:760px;",
+                    p { class: "eyebrow rise d1", "{a.section} · {a.kind}" }
+                    h1 { class: "rise d2", "{a.title}" }
+                    p { class: "lede rise d3", "{a.summary}" }
+                    div { class: "rise d4", style: "margin-top:18px; display:flex; gap:14px; align-items:center; font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);",
+                        span { "By {a.byline}" }
+                        span { "·" }
+                        time { datetime: "{a.iso_date}", "{a.iso_date}" }
+                    }
+                }
+            }
+            section { class: "section", style: "padding-top:clamp(14px,2.5vh,30px);",
+                div { class: "wrap", style: "max-width:760px;",
                     div { class: "prose reveal",
                         for para in a.body.iter() {
                             p { "{para}" }
