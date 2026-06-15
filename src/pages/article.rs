@@ -174,6 +174,7 @@ pub fn Article(slug: String) -> Element {
                 }
             }
         }
+        RelatedStories { section: a.section.to_string(), exclude: a.slug.to_string() }
     }
 }
 
@@ -264,6 +265,52 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
                         Link { class: "btn btn-ghost", to: Route::Standards {},
                             span { class: "ic", dangerous_inner_html: svg("scale") }
                             "Our standards"
+                        }
+                    }
+                }
+            }
+        }
+        RelatedStories { section: a.section.clone(), exclude: a.slug.clone() }
+    }
+}
+
+/// "More from this section" — up to three other seed stories in the same section,
+/// newest first. A standard newsroom cross-link block: keeps readers in the
+/// story and strengthens internal linking for search. Renders nothing if the
+/// section has no other stories. Live (CMS) stories relate against the seeds.
+#[component]
+fn RelatedStories(section: String, exclude: String) -> Element {
+    let mut related: Vec<&'static Art> = crate::content::in_section(&section)
+        .into_iter()
+        .filter(|a| a.slug != exclude)
+        .collect();
+    related.sort_by(|a, b| b.iso_date.cmp(a.iso_date));
+    related.truncate(3);
+    if related.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        section { class: "section", style: "padding-top:8px;",
+            div { class: "wrap", style: "max-width:760px;",
+                div { class: "section-label", style: "margin-bottom:14px;",
+                    span { class: "sec-index", "More from {section}" }
+                    Link { class: "sec-more", to: Route::News {}, "All news" }
+                }
+                div { class: "research-list",
+                    for a in related.iter() {
+                        Link {
+                            key: "{a.slug}",
+                            class: "r-row reveal",
+                            to: Route::Article { slug: a.slug.to_string() },
+                            div {
+                                span { class: "r-num", "{a.section} · {a.kind}" }
+                                h3 { class: "hl", "{a.title}" }
+                                p { class: "r-desc", "{a.summary}" }
+                            }
+                            div { class: "r-meta",
+                                span { class: "byline", "{a.date}" }
+                                span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
+                            }
                         }
                     }
                 }
