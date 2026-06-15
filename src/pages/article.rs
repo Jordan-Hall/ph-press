@@ -13,6 +13,11 @@ use crate::icons::svg;
 
 use crate::config::BASE_URL as BASE;
 
+/// Estimated reading time in minutes from a word count (~200 wpm), min 1.
+fn read_mins(words: usize) -> usize {
+    words.div_ceil(200).max(1)
+}
+
 fn json_esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -69,6 +74,7 @@ pub fn Article(slug: String) -> Element {
     let yt_id = a.youtube.unwrap_or("");
     let hero = a.image.unwrap_or("");
     let has_hero = a.image.is_some() && !has_youtube && !has_video;
+    let mins = read_mins(a.body.iter().map(|p| p.split_whitespace().count()).sum());
 
     rsx! {
         // ---- head: per-article SEO + social-share (incl. video) ----
@@ -115,6 +121,8 @@ pub fn Article(slug: String) -> Element {
                         span { "By {a.byline}" }
                         span { "·" }
                         time { datetime: "{a.iso_date}", "{a.date}" }
+                        span { "·" }
+                        span { "{mins} min read" }
                     }
                 }
             }
@@ -211,6 +219,7 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
         "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"articleSection\":\"{}\",\"datePublished\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}}}",
         json_esc(&a.title), json_esc(&a.summary), json_esc(&a.section), a.iso_date, json_esc(&a.byline)
     );
+    let mins = read_mins(a.body.iter().map(|p| p.split_whitespace().count()).sum());
     rsx! {
         dioxus::document::Title { "{a.title} | Predator Hunters" }
         dioxus::document::Meta { name: "description", content: "{a.summary}" }
@@ -235,6 +244,8 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
                         span { "By {a.byline}" }
                         span { "·" }
                         time { datetime: "{a.iso_date}", "{a.iso_date}" }
+                        span { "·" }
+                        span { "{mins} min read" }
                     }
                 }
             }
