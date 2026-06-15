@@ -171,6 +171,8 @@ fn ArticlesPanel() -> Element {
     let mut err = use_signal(|| Option::<String>::None);
     // (article id, target state, button label) of a publish awaiting IMPRESS sign-off.
     let pending = use_signal(|| Option::<(i64, String, String)>::None);
+    // Pipeline filter: "" = all, else a lifecycle state.
+    let mut filter = use_signal(String::new);
 
     use_resource(move || async move {
         match desk_articles().await {
@@ -200,25 +202,67 @@ fn ArticlesPanel() -> Element {
                 Some(v) if v.is_empty() => rsx! {
                     p { class: "desk-muted pad", "No articles yet. Create the first draft." }
                 },
-                Some(v) => rsx! {
-                    table { class: "desk-table",
-                        thead {
-                            tr {
-                                th { "Title" }
-                                th { "State" }
-                                th { "Kind" }
-                                th { "Byline" }
-                                th { "Updated" }
-                                th { "Actions" }
+                Some(v) => {
+                    // Pipeline overview: a chip per lifecycle state present, with a
+                    // count, so an editor sees drafts / in-review / awaiting-legal at
+                    // a glance and can filter the queue.
+                    let states = [
+                        "draft",
+                        "submitted",
+                        "editorial_review",
+                        "legal_review",
+                        "scheduled",
+                        "published",
+                        "corrected",
+                        "retracted",
+                    ];
+                    let f = filter();
+                    let chips: Vec<(&str, usize)> = states
+                        .iter()
+                        .map(|&s| (s, v.iter().filter(|a| a.state == s).count()))
+                        .filter(|(_, c)| *c > 0)
+                        .collect();
+                    let all_n = v.len();
+                    let filtered: Vec<DeskArticle> = v
+                        .iter()
+                        .filter(|a| f.is_empty() || a.state == f)
+                        .cloned()
+                        .collect();
+                    rsx! {
+                        nav { class: "desk-filters", "aria-label": "Filter by stage",
+                            button {
+                                class: if f.is_empty() { "desk-fchip on" } else { "desk-fchip" },
+                                onclick: move |_| filter.set(String::new()),
+                                "All " span { class: "desk-fcount", "{all_n}" }
+                            }
+                            for (s , c) in chips {
+                                button {
+                                    key: "{s}",
+                                    class: if f == s { "desk-fchip on" } else { "desk-fchip" },
+                                    onclick: move |_| filter.set(s.to_string()),
+                                    "{state_label(s)} " span { class: "desk-fcount", "{c}" }
+                                }
                             }
                         }
-                        tbody {
-                            for a in v {
-                                DeskRow { key: "{a.id}", a, articles, busy, err, pending }
+                        table { class: "desk-table",
+                            thead {
+                                tr {
+                                    th { "Title" }
+                                    th { "State" }
+                                    th { "Kind" }
+                                    th { "Byline" }
+                                    th { "Updated" }
+                                    th { "Actions" }
+                                }
+                            }
+                            tbody {
+                                for a in filtered {
+                                    DeskRow { key: "{a.id}", a, articles, busy, err, pending }
+                                }
                             }
                         }
                     }
-                },
+                }
             }
             PublishGate { pending, articles, busy, err }
         }
