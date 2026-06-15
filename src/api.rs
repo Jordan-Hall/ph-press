@@ -713,6 +713,28 @@ pub async fn desk_audit() -> Result<AuditLog, ServerFnError> {
     }
 }
 
+/// Submit a complaint from the PUBLIC site (no session) — it lands straight in the
+/// /desk Complaints inbox (status "received"), audited. The body is required.
+#[server(endpoint = "submit_complaint")]
+pub async fn submit_complaint(
+    article_slug: String,
+    complainant: String,
+    body: String,
+) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::log_complaint(&article_slug, &complainant, &body)
+            .await
+            .map(|_| ())
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (article_slug, complainant, body);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
 /// The public editorial team — display name + role only, excluding the system
 /// bootstrap admin account. Public (no session).
 #[server(endpoint = "public_team")]

@@ -342,6 +342,16 @@ html[data-theme="light"] .media.logo,html[data-theme="light"] .r-thumb.logo{back
 a.mappop-link{font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--red);text-decoration:none;}
 a.mappop-link:hover{text-decoration:underline;}
 
+/* Public complaint form (on /standards) — submits into the desk inbox */
+.complaint-form{margin-top:24px;max-width:680px;}
+.cf-row{display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;}
+.cf-row .cf-in{flex:1;min-width:200px;}
+.cf-in{width:100%;box-sizing:border-box;background:var(--paper-2);border:1px solid var(--rule-2);border-radius:var(--r-md);color:var(--ink);font-family:var(--sans);font-size:15px;padding:12px 14px;}
+.cf-in:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 3px var(--tag);}
+.cf-body{display:block;resize:vertical;font-family:var(--sans);line-height:1.5;}
+.cf-err{color:var(--red);font-size:14px;margin:10px 0 0;}
+.cf-actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:14px;}
+
 /* IMPRESS pre-publish checklist modal */
 .modal-scrim{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;}
 .modal{width:100%;max-width:480px;background:var(--paper-2);border:1px solid var(--rule-2);border-radius:var(--r-xl);padding:26px 26px 22px;box-shadow:0 30px 70px rgba(0,0,0,.5);}

@@ -4,6 +4,7 @@
 
 use dioxus::prelude::*;
 
+use crate::api::submit_complaint;
 use crate::icons::svg;
 
 /// (term, definition) — our standards. Written to satisfy the IMPRESS Standards
@@ -72,10 +73,7 @@ pub fn Standards() -> Element {
                     div { class: "def", dt { "If we got it wrong" } dd { "We correct or clarify it quickly, with prominence equal to the original, and we keep both versions on the record." } }
                     div { class: "def", dt { "If you are not satisfied" } dd { "You can take your complaint to our independent press regulator. We keep a record of every complaint we receive." } }
                 }
-                a { class: "btn btn-primary", style: "margin-top:24px;", href: "mailto:complaints@predatorhunters.co.uk?subject=Complaint",
-                    span { dangerous_inner_html: svg("mail") }
-                    "Make a complaint"
-                }
+                ComplaintForm {}
             }
         }
 
@@ -120,6 +118,77 @@ pub fn Standards() -> Element {
                     p { "Predator Hunters is a small, independent local newsroom, reporting since 2022. It has two editors-in-chief, Jordan Upton and Scott Taylor, and is self-funded, mainly by Jordan Upton, with Scott Taylor contributing when needed. We cover local news and investigations, report from the courts, and offer rewards for information on serious crimes. We are not owned by, and do not act for, any police force or political party." }
                     p { "We are working towards registration with IMPRESS. Until that is complete we hold ourselves to the standards above and operate the same complaints and corrections process. We will publish our regulator details and trustmark here once registration is in place." }
                 }
+            }
+        }
+    }
+}
+
+/// Public complaint form — submits straight into the /desk Complaints inbox.
+#[component]
+fn ComplaintForm() -> Element {
+    let mut slug = use_signal(String::new);
+    let mut name = use_signal(String::new);
+    let mut body = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut done = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            match submit_complaint(slug(), name(), body()).await {
+                Ok(()) => done.set(true),
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    if done() {
+        return rsx! {
+            div { class: "card reveal", style: "margin-top:24px; max-width:680px;",
+                div { class: "card-ic", dangerous_inner_html: svg("check") }
+                h3 { "Thank you — your complaint is logged" }
+                p { "We have received it and will acknowledge it within 7 days. If you left a way to reach you, we will be in touch." }
+            }
+        };
+    }
+
+    rsx! {
+        form { class: "complaint-form reveal", onsubmit: submit,
+            div { class: "cf-row",
+                input {
+                    class: "cf-in",
+                    r#type: "text",
+                    placeholder: "Which article or video? (link or title — optional)",
+                    value: "{slug}",
+                    oninput: move |e| slug.set(e.value()),
+                }
+                input {
+                    class: "cf-in",
+                    r#type: "text",
+                    placeholder: "Your name or email (optional)",
+                    value: "{name}",
+                    oninput: move |e| name.set(e.value()),
+                }
+            }
+            textarea {
+                class: "cf-in cf-body",
+                rows: "5",
+                placeholder: "What do you believe is inaccurate or unfair?",
+                value: "{body}",
+                oninput: move |e| body.set(e.value()),
+            }
+            if let Some(e) = err() {
+                p { class: "cf-err", "{e}" }
+            }
+            div { class: "cf-actions",
+                button { class: "btn btn-primary", r#type: "submit", disabled: busy(),
+                    if busy() { "Sending…" } else { "Submit complaint" }
+                }
+                a { class: "btn btn-ghost", href: "mailto:complaints@predatorhunters.co.uk?subject=Complaint", "Or email us instead" }
             }
         }
     }
