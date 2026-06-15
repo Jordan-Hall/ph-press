@@ -98,10 +98,12 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Editorial-admin credentials live ONLY in deploy config, never in the
-          # repo/image. PH_ADMIN_PASS (secret) seeds the first admin on the very
-          # first deploy and is then ignored on updates (bootstrap is create-once).
-          # To deliberately take over the account, set repo var PH_ADMIN_RESET=1
-          # for ONE deploy (rotate PH_ADMIN_PASS first), then clear it back to 0.
+          # repo/image. PH_ADMIN_PASS (secret) is OPTIONAL: if set it seeds the
+          # first admin on the very first deploy and is then ignored on updates
+          # (bootstrap is create-once). If UNSET, the first admin gets a known
+          # default password that you change in /desk → Settings. To deliberately
+          # take over the account, set repo var PH_ADMIN_RESET=1 for ONE deploy
+          # (set PH_ADMIN_PASS first), then clear it back to 0.
           PH_ADMIN_USER: ${{ vars.PH_ADMIN_USER }}
           PH_ADMIN_PASS: ${{ secrets.PH_ADMIN_PASS }}
           PH_ADMIN_RESET: ${{ vars.PH_ADMIN_RESET }}

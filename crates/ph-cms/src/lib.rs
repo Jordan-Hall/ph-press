@@ -267,6 +267,35 @@ pub async fn reset_password(pool: &SqlitePool, username: &str, new_password: &st
     Ok(changed)
 }
 
+/// Self-service password change: verify the current password, then set the new
+/// one. Returns `CmsError::Auth` if the current password is wrong. Audited.
+pub async fn change_password(
+    pool: &SqlitePool,
+    username: &str,
+    current: &str,
+    new_password: &str,
+) -> Result<()> {
+    let user = find_user(pool, username).await?.ok_or(CmsError::Auth)?;
+    if !auth::verify_password(&user.password_hash, current) {
+        return Err(CmsError::Auth);
+    }
+    let hash = auth::hash_password(new_password)?;
+    sqlx::query("UPDATE staff_user SET password_hash = ? WHERE username = ?")
+        .bind(hash)
+        .bind(username)
+        .execute(pool)
+        .await?;
+    append_audit(
+        pool,
+        username,
+        "staff.password_change",
+        username,
+        "self-service",
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn count_users(pool: &SqlitePool) -> Result<i64> {
     Ok(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM staff_user")
@@ -1078,6 +1107,17 @@ mod tests {
         assert!(reset_password(&pool, "admin", "new").await.unwrap());
         assert!(authenticate(&pool, "admin", "old").await.is_err());
         assert!(authenticate(&pool, "admin", "new").await.is_ok());
+
+        // self-service change needs the correct current password
+        assert!(change_password(&pool, "admin", "wrong", "newer123")
+            .await
+            .is_err());
+        assert!(authenticate(&pool, "admin", "new").await.is_ok()); // unchanged after a bad attempt
+        change_password(&pool, "admin", "new", "newer123")
+            .await
+            .unwrap();
+        assert!(authenticate(&pool, "admin", "new").await.is_err());
+        assert!(authenticate(&pool, "admin", "newer123").await.is_ok());
         assert!(audit_chain(&pool).await.unwrap().verify().is_ok());
     }
 

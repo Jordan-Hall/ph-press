@@ -8,8 +8,8 @@ use dioxus::prelude::*;
 
 use crate::api::{
     desk_add_correction, desk_articles, desk_complaint_status, desk_complaints, desk_corrections,
-    desk_create, desk_log_complaint, desk_transition, staff_login, staff_logout, staff_me,
-    DeskArticle, DeskComplaint, DeskCorrection, DeskSession,
+    desk_create, desk_log_complaint, desk_transition, staff_change_password, staff_login,
+    staff_logout, staff_me, DeskArticle, DeskComplaint, DeskCorrection, DeskSession,
 };
 
 /// Auth state for the console shell.
@@ -105,6 +105,7 @@ enum Tab {
     Articles,
     Complaints,
     Corrections,
+    Settings,
 }
 
 #[component]
@@ -142,6 +143,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 button { class: tab_class(Tab::Articles), onclick: move |_| tab.set(Tab::Articles), "Articles" }
                 button { class: tab_class(Tab::Complaints), onclick: move |_| tab.set(Tab::Complaints), "Complaints" }
                 button { class: tab_class(Tab::Corrections), onclick: move |_| tab.set(Tab::Corrections), "Corrections" }
+                button { class: tab_class(Tab::Settings), onclick: move |_| tab.set(Tab::Settings), "Settings" }
             }
         }
         main { class: "desk-main",
@@ -149,6 +151,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 Tab::Articles => rsx! { ArticlesPanel {} },
                 Tab::Complaints => rsx! { ComplaintsPanel {} },
                 Tab::Corrections => rsx! { CorrectionsPanel {} },
+                Tab::Settings => rsx! { SettingsPanel {} },
             }
         }
     }
@@ -465,6 +468,81 @@ fn CorrectionsPanel() -> Element {
                         }
                     }
                 },
+            }
+        }
+    }
+}
+
+#[component]
+fn SettingsPanel() -> Element {
+    let mut current = use_signal(String::new);
+    let mut newpw = use_signal(String::new);
+    let mut confirm = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut ok = use_signal(|| Option::<String>::None);
+    let mut err = use_signal(|| Option::<String>::None);
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            ok.set(None);
+            err.set(None);
+            if newpw() != confirm() {
+                err.set(Some("the new passwords do not match".to_string()));
+                return;
+            }
+            busy.set(true);
+            match staff_change_password(current(), newpw()).await {
+                Ok(()) => {
+                    ok.set(Some("Password changed.".to_string()));
+                    current.set(String::new());
+                    newpw.set(String::new());
+                    confirm.set(String::new());
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Settings" }
+            }
+            form { class: "desk-new", onsubmit: submit,
+                p { class: "desk-muted", style: "margin:0 0 14px;", "Change your password." }
+                input {
+                    class: "desk-in full",
+                    r#type: "password",
+                    autocomplete: "current-password",
+                    placeholder: "Current password",
+                    value: "{current}",
+                    oninput: move |e| current.set(e.value()),
+                }
+                input {
+                    class: "desk-in full",
+                    r#type: "password",
+                    autocomplete: "new-password",
+                    placeholder: "New password (at least 8 characters)",
+                    value: "{newpw}",
+                    oninput: move |e| newpw.set(e.value()),
+                }
+                input {
+                    class: "desk-in full",
+                    r#type: "password",
+                    autocomplete: "new-password",
+                    placeholder: "Confirm new password",
+                    value: "{confirm}",
+                    oninput: move |e| confirm.set(e.value()),
+                }
+                if let Some(m) = ok() {
+                    p { class: "desk-ok", "{m}" }
+                }
+                if let Some(e) = err() {
+                    p { class: "desk-error", "{e}" }
+                }
+                button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Change password" }
             }
         }
     }

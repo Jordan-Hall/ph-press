@@ -9,6 +9,10 @@ use tokio::sync::OnceCell;
 
 static DB: OnceCell<Db> = OnceCell::const_new();
 
+/// Known default for the first admin when PH_ADMIN_PASS isn't set. Meant to be
+/// changed immediately via /desk → Settings (logged as a warning at boot).
+const DEFAULT_ADMIN_PASS: &str = "PH-med!a1";
+
 /// Lazily open + set up the database. Config via env:
 ///   PH_DB         sqlite url (default sqlite:/data/ph-press.db?mode=rwc)
 ///   PH_ADMIN_USER first admin username (default "admin")
@@ -18,15 +22,20 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
         let url = std::env::var("PH_DB")
             .unwrap_or_else(|_| "sqlite:/data/ph-press.db?mode=rwc".to_string());
         let admin_user = std::env::var("PH_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
-        // Treat an empty value as unset: GitHub renders an unset secret as "" in
-        // the deploy env, and an empty password must never become a real login.
+        // PH_ADMIN_PASS is an OPTIONAL deploy override. When it isn't set (empty =
+        // unset, since GitHub renders an unset secret as ""), the first admin gets
+        // a KNOWN default so you can always log in — then change it in /desk →
+        // Settings. The default is only meaningful on the very first deploy
+        // (bootstrap is create-once); it never overwrites an existing admin.
         let admin_pass = std::env::var("PH_ADMIN_PASS")
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| {
-                let p = generated_password();
-                eprintln!("[ph-press] PH_ADMIN_PASS not set; generated first-admin password: {p}");
-                p
+                eprintln!(
+                    "[ph-press] PH_ADMIN_PASS not set; first admin uses the default password. \
+                     Sign in and change it in /desk → Settings."
+                );
+                DEFAULT_ADMIN_PASS.to_string()
             });
         // PH_ADMIN_RESET=1 (or true) on a deploy deliberately resets the admin
         // password to PH_ADMIN_PASS (operator takeover). Otherwise the existing
@@ -263,10 +272,17 @@ fn iso_to_unix(iso: &str) -> i64 {
     days * 86400
 }
 
-fn generated_password() -> String {
-    let n = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("ph-{n:x}")
+/// Self-service password change for the logged-in user. Verifies the current
+/// password first; enforces a minimum length on the new one.
+pub async fn change_password(username: &str, current: &str, new: &str) -> Result<(), String> {
+    if new.chars().count() < 8 {
+        return Err("the new password must be at least 8 characters".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::change_password(pool, username, current, new)
+        .await
+        .map_err(|e| match e {
+            ph_cms::CmsError::Auth => "the current password is incorrect".to_string(),
+            other => other.to_string(),
+        })
 }

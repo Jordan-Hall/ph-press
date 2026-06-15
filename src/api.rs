@@ -268,6 +268,23 @@ pub async fn staff_logout() -> Result<(), ServerFnError> {
     }
 }
 
+/// Change the logged-in user's password (verifies the current one server-side).
+#[server(endpoint = "staff_change_password")]
+pub async fn staff_change_password(current: String, new: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::change_password(&session.username, &current, &new)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (current, new);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
 /// The editorial dashboard listing — every article in any state, with the
 /// actions this user may perform. Requires a valid session.
 #[server(endpoint = "desk_articles")]
