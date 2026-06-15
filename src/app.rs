@@ -8,8 +8,8 @@ use crate::assets::{FAVICON, PH_LOGO};
 use crate::components::{ClosingCta, SiteFooter};
 use crate::icons::svg;
 use crate::pages::{
-    About, Article, Contact, Database, Desk, Home, News, NotFound, Podcast, Privacy, Standards,
-    Watch,
+    About, Article, Contact, Database, Desk, DeskPreview, Home, News, NotFound, Podcast, Privacy,
+    Standards, Watch,
 };
 
 #[derive(Routable, Clone, PartialEq)]
@@ -18,6 +18,8 @@ pub enum Route {
     // renders with its own chrome (no public masthead/footer). noindex + unlinked.
     #[route("/desk")]
     Desk {},
+    #[route("/desk/preview/:id")]
+    DeskPreview { id: i64 },
     #[layout(Shell)]
     #[route("/")]
     Home {},

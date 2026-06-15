@@ -389,6 +389,12 @@ a.mappop-link:hover{text-decoration:underline;}
 .desk-act:hover{border-color:var(--red);color:var(--ink);}
 .desk-act.danger:hover{border-color:var(--red);color:var(--red);}
 .desk-act:disabled{opacity:.5;cursor:default;}
+/* Staff draft preview banner */
+.preview-banner{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px var(--gut);background:var(--red);color:var(--on-red);}
+.preview-tag{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;border:1px solid rgba(255,255,255,.5);border-radius:999px;padding:3px 10px;}
+.preview-state{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;}
+.preview-back{margin-left:auto;color:var(--on-red);text-decoration:underline;font-size:13px;}
+
 /* Writer-first draft editor (Ghost/Medium feel) */
 .editor{padding:24px 26px 26px;border-bottom:1px solid var(--rule);background:var(--sunk);}
 .editor-title{width:100%;box-sizing:border-box;background:transparent;border:0;outline:0;color:var(--ink);font-family:var(--serif);font-weight:600;font-size:clamp(22px,3.5vw,32px);line-height:1.15;padding:4px 0;}

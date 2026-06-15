@@ -121,6 +121,14 @@ pub async fn public_article(slug: &str) -> Result<Option<ph_cms::Article>, Strin
         .map_err(|e| e.to_string())
 }
 
+/// Any article by id, ANY state — for an authenticated staff draft preview.
+pub async fn preview_article(id: i64) -> Result<Option<ph_cms::Article>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::get_article(pool, id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Apply a lifecycle transition as `username`. The actor is reloaded from the DB
 /// so the role gate uses the CURRENT role; ph_cms::transition enforces the gate
 /// (publish only via legal sign-off), logs the review, and audits.

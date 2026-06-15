@@ -95,6 +95,20 @@ pub struct PublicArticle {
     pub iso_date: String,
 }
 
+/// An article in ANY state, for an authenticated staff draft preview (carries the
+/// lifecycle state so the preview can banner "Draft — not yet published").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreviewArticle {
+    pub title: String,
+    pub summary: String,
+    pub body: Vec<String>,
+    pub kind: String,
+    pub section: String,
+    pub byline: String,
+    pub state: String,
+    pub iso_date: String,
+}
+
 // ---- server-only cookie helpers ---------------------------------------------
 
 /// Attach the session cookie to the current server-fn response. `max_age` of 0
@@ -569,6 +583,39 @@ pub async fn published_feed() -> Result<Vec<FeedItem>, ServerFnError> {
     #[cfg(not(feature = "server"))]
     {
         Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Preview ANY article by id (any state) — authenticated staff only, so an editor
+/// can read a draft before it is published.
+#[server(endpoint = "desk_preview")]
+pub async fn desk_preview(id: i64) -> Result<Option<PreviewArticle>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        let Some(a) = crate::cms::preview_article(id)
+            .await
+            .map_err(ServerFnError::new)?
+        else {
+            return Ok(None);
+        };
+        let body: Vec<String> = serde_json::from_str(&a.body).unwrap_or_default();
+        let iso_date = ymd(a.published_at.unwrap_or(a.updated_at));
+        Ok(Some(PreviewArticle {
+            title: a.title,
+            summary: a.summary,
+            body,
+            kind: a.kind,
+            section: a.section,
+            byline: a.byline,
+            state: a.state,
+            iso_date,
+        }))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = id;
+        Ok(None)
     }
 }
 

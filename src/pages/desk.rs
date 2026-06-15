@@ -8,9 +8,11 @@ use dioxus::prelude::*;
 
 use crate::api::{
     desk_add_correction, desk_articles, desk_complaint_status, desk_complaints, desk_corrections,
-    desk_create, desk_log_complaint, desk_transition, staff_change_password, staff_login,
-    staff_logout, staff_me, DeskArticle, DeskComplaint, DeskCorrection, DeskSession,
+    desk_create, desk_log_complaint, desk_preview, desk_transition, staff_change_password,
+    staff_login, staff_logout, staff_me, DeskArticle, DeskComplaint, DeskCorrection, DeskSession,
+    PreviewArticle,
 };
+use crate::app::Route;
 
 /// Auth state for the console shell.
 #[derive(Clone, PartialEq)]
@@ -589,6 +591,14 @@ fn DeskRow(
                         rel: "noopener",
                         "View ↗"
                     }
+                } else {
+                    a {
+                        class: "desk-act",
+                        href: "/desk/preview/{a.id}",
+                        target: "_blank",
+                        rel: "noopener",
+                        "Preview ↗"
+                    }
                 }
                 if a.actions.is_empty() {
                     span { class: "desk-muted", "—" }
@@ -701,6 +711,68 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
             div { class: "editor-actions",
                 span { class: "editor-hint", "Saved as a draft \u{2014} it goes live only after editorial + legal review." }
                 button { class: "desk-btn", r#type: "submit", disabled: busy(), "Create draft" }
+            }
+        }
+    }
+}
+
+/// Staff-only draft preview at /desk/preview/:id — fetches the article in ANY
+/// state and renders it in the reading layout with a "preview" banner. noindex.
+#[component]
+pub fn DeskPreview(id: i64) -> Element {
+    let res = use_resource(move || async move { desk_preview(id).await });
+    let guard = res.read();
+    rsx! {
+        document::Meta { name: "robots", content: "noindex, nofollow" }
+        document::Title { "Preview · Predator Hunters" }
+        div { class: "desk-root",
+            match guard.as_ref() {
+                None => rsx! { div { class: "desk-loading", "Loading preview…" } },
+                Some(Ok(Some(a))) => rsx! { PreviewBody { a: a.clone() } },
+                _ => rsx! {
+                    div { class: "desk-login",
+                        div { class: "desk-card",
+                            h1 { class: "desk-title", "Not available" }
+                            p { class: "desk-sub", "Sign in to the desk to preview drafts." }
+                            Link { class: "desk-btn", to: Route::Desk {}, "Go to the desk" }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn PreviewBody(a: PreviewArticle) -> Element {
+    rsx! {
+        div { class: "preview-banner",
+            span { class: "preview-tag", "Preview" }
+            span { class: "preview-state", "{state_label(&a.state)} — not the public version" }
+            Link { class: "preview-back", to: Route::Desk {}, "← Back to the desk" }
+        }
+        article {
+            header { class: "page-head",
+                div { class: "wrap", style: "max-width:760px;",
+                    p { class: "eyebrow", "{a.section} · {a.kind}" }
+                    h1 { "{a.title}" }
+                    p { class: "lede", "{a.summary}" }
+                    div { style: "margin-top:14px; font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);",
+                        "By {a.byline} · {a.iso_date}"
+                    }
+                }
+            }
+            section { class: "section", style: "padding-top:clamp(14px,2.5vh,30px);",
+                div { class: "wrap", style: "max-width:760px;",
+                    if a.body.is_empty() {
+                        p { class: "desk-muted", "No body written yet." }
+                    }
+                    div { class: "prose",
+                        for para in a.body.iter() {
+                            p { "{para}" }
+                        }
+                    }
+                }
             }
         }
     }
