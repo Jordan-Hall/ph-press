@@ -10,7 +10,7 @@ use crate::app::Route;
 use crate::content::{by_slug, Article as Art};
 use crate::icons::svg;
 
-const BASE: &str = "https://predatorhunters.co.uk";
+use crate::config::BASE_URL as BASE;
 
 fn json_esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")

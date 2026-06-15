@@ -14,6 +14,7 @@ mod assets;
 #[cfg(feature = "server")]
 mod cms;
 mod components;
+mod config;
 mod content;
 mod icons;
 mod pages;

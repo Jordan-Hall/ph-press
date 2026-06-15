@@ -102,8 +102,8 @@ fn Masthead() -> Element {
             div { class: "wrap",
                 div { class: "mh-bar",
                     Link { class: "brand", to: Route::Home {},
-                        img { class: "brand-logo", src: PH_LOGO, alt: "Predator Hunters", width: "500", height: "168" }
-                        span { class: "brand-tag", "Independent local journalism" }
+                        img { class: "brand-logo", src: PH_LOGO, alt: crate::config::SITE_NAME, width: "500", height: "168" }
+                        span { class: "brand-tag", {crate::config::TAGLINE} }
                     }
                     div { class: "mh-right",
                         button {

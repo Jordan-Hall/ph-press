@@ -4,35 +4,38 @@ use dioxus::prelude::*;
 
 use crate::icons::svg;
 
-/// (icon, title, description, label, href)
+use crate::config;
+
+/// (icon, title, description, email, mail-subject). The email + href are derived
+/// from the white-label config so a fork rebrands contact in one place.
 const LANES: [(&str, &str, &str, &str, &str); 4] = [
     (
         "shield",
         "Report a predator / a tip",
         "If you have information about someone targeting children, contact us in confidence. If a child is in immediate danger, call 999.",
-        "tips@predatorhunters.co.uk",
-        "mailto:tips@predatorhunters.co.uk?subject=Tip",
+        config::TIPS_EMAIL,
+        "Tip",
     ),
     (
         "doc",
         "Press & media",
         "Journalists, broadcasters and researchers: for interviews, footage requests and court-reporting queries.",
-        "press@predatorhunters.co.uk",
-        "mailto:press@predatorhunters.co.uk?subject=Press",
+        config::PRESS_EMAIL,
+        "Press",
     ),
     (
         "shield-check",
         "Safeguarding partners",
         "Schools, charities and platforms working to keep children safe and wanting to work with us.",
-        "press@predatorhunters.co.uk",
-        "mailto:press@predatorhunters.co.uk?subject=Partnership",
+        config::PRESS_EMAIL,
+        "Partnership",
     ),
     (
         "scale",
         "Complaints & corrections",
         "Think we got something wrong, or that a database entry needs checking? Tell us and we will review it against the record.",
-        "complaints@predatorhunters.co.uk",
-        "mailto:complaints@predatorhunters.co.uk?subject=Complaint",
+        config::COMPLAINTS_EMAIL,
+        "Complaint",
     ),
 ];
 
@@ -60,14 +63,14 @@ pub fn Contact() -> Element {
         section { class: "section", style: "padding-top:clamp(20px,4vh,48px);",
             div { class: "wrap",
                 div { class: "grid-2",
-                    for (icon , title , desc , label , href) in LANES {
+                    for (icon , title , desc , email , subject) in LANES {
                         div { key: "{title}", class: "card reveal",
                             div { class: "card-ic", dangerous_inner_html: svg(icon) }
                             h3 { "{title}" }
                             p { "{desc}" }
-                            a { class: "btn btn-ghost btn-sm", style: "margin-top:16px;", href: "{href}",
+                            a { class: "btn btn-ghost btn-sm", style: "margin-top:16px;", href: "mailto:{email}?subject={subject}",
                                 span { class: "ic", dangerous_inner_html: svg("mail") }
-                                "{label}"
+                                "{email}"
                             }
                         }
                     }

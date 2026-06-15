@@ -8,17 +8,18 @@ use crate::app::Route;
 use crate::assets::PH_LOGO;
 use crate::icons::svg;
 
-const BASE: &str = "https://predatorhunters.co.uk";
+use crate::config;
 
 /// Per-route SEO head: title, description, canonical, Open Graph + Twitter.
 #[component]
 pub fn Seo(title: String, description: String, path: String, image: String) -> Element {
-    let url = format!("{BASE}{path}");
-    let img = format!("{BASE}{image}");
+    let url = format!("{}{path}", config::BASE_URL);
+    let img = format!("{}{image}", config::BASE_URL);
     rsx! {
         dioxus::document::Title { "{title}" }
         dioxus::document::Meta { name: "description", content: "{description}" }
         dioxus::document::Link { rel: "canonical", href: "{url}" }
+        dioxus::document::Meta { property: "og:site_name", content: config::SITE_NAME }
         dioxus::document::Meta { property: "og:title", content: "{title}" }
         dioxus::document::Meta { property: "og:description", content: "{description}" }
         dioxus::document::Meta { property: "og:url", content: "{url}" }
@@ -70,14 +71,16 @@ pub fn ClosingCta() -> Element {
 
 #[component]
 pub fn SiteFooter() -> Element {
+    let site_name = config::SITE_NAME;
+    let press_email = config::PRESS_EMAIL;
     rsx! {
         footer { class: "footer",
             div { class: "wrap",
                 div { class: "footer-top",
                     div {
                         Link { class: "brand", to: Route::Home {},
-                            img { class: "brand-logo", src: PH_LOGO, alt: "Predator Hunters", width: "500", height: "168" }
-                            span { class: "brand-tag", "Predator Hunters" }
+                            img { class: "brand-logo", src: PH_LOGO, alt: config::SITE_NAME, width: "500", height: "168" }
+                            span { class: "brand-tag", "{site_name}" }
                         }
                         p { class: "footer-blurb",
                             "Independent local journalism. Local news and investigations, court reporting from the public record, reward appeals for information on serious crimes, and a public conviction database. Reporting since 2022."
@@ -108,15 +111,15 @@ pub fn SiteFooter() -> Element {
                             li { a { href: "https://www.facebook.com/Online.Stings", target: "_blank", rel: "noopener", "Facebook ↗" } }
                             li { a { href: "https://www.youtube.com/@JordanHall_dev", target: "_blank", rel: "noopener", "YouTube ↗" } }
                             li { a { href: "https://x.com/PredHunTers", target: "_blank", rel: "noopener", "X · @PredHunTers ↗" } }
-                            li { a { href: "mailto:press@predatorhunters.co.uk", "press@predatorhunters.co.uk" } }
+                            li { a { href: "mailto:{press_email}", "{press_email}" } }
                         }
                         div { style: "margin-top:18px;",
-                            img { class: "brand-logo", src: PH_LOGO, alt: "Predator Hunters", width: "500", height: "168", style: "height:46px;" }
+                            img { class: "brand-logo", src: PH_LOGO, alt: config::SITE_NAME, width: "500", height: "168", style: "height:46px;" }
                         }
                     }
                 }
                 div { class: "footer-bottom",
-                    p { "© 2026 Predator Hunters. All rights reserved." }
+                    p { "© 2026 {site_name}. All rights reserved." }
                     p { class: "legal",
                         "Independent journalism. We keep our sources anonymous and act only on what we can cross-reference and verify. We offer rewards for information on serious crimes. We report from the public record, and on concluded court cases we name only after conviction. We work independently of any police force. Complaints: see our Standards page."
                     }

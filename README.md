@@ -60,13 +60,30 @@ This is open source. Take the code and stand up your own independent local
 newsroom:
 
 1. Fork the repo and clone it.
-2. Replace the branding in `assets/` + `deploy/static/` (logo, favicon, fonts, OG
-   cards via `tools/og/gen.mjs`), and the name/copy (search for "Predator Hunters").
-3. Put your own articles in `src/content.rs` (or use the editorial CMS once it is
-   wired in), set your domain in `src/components.rs` / `index.html`, and adjust
-   `deploy/` (Dockerfile, Caddyfile, the workflow) for your host + domain.
-4. `dx serve` to preview, `dx build --fullstack --ssg --release` to build, and deploy
-   the container (see **[deploy/README.md](deploy/README.md)**).
+2. **Set your identity at build time** — the name, tagline, base URL and contact
+   addresses are read from environment variables by [`src/config.rs`](src/config.rs)
+   and baked into the build (defaults are the Predator Hunters identity):
+
+   ```sh
+   PH_SITE_NAME="Acme Watch" \
+   PH_TAGLINE="Independent local journalism" \
+   PH_BASE_URL="https://acmewatch.org" \
+   PH_TIPS_EMAIL="tips@acmewatch.org" \
+   PH_PRESS_EMAIL="press@acmewatch.org" \
+   PH_COMPLAINTS_EMAIL="complaints@acmewatch.org" \
+   dx build --fullstack --ssg --release
+   ```
+
+3. Replace the **brand assets** in `assets/` + `deploy/static/` (logo, favicon,
+   fonts, OG cards via `tools/og/gen.mjs`) and the **palette** in `index.html`
+   (`:root` CSS variables). Editorial prose (the org's story in `src/pages/about.rs`,
+   seed articles in `src/content.rs`) is yours to rewrite.
+4. **Editorial console** at `/desk`: first deploy creates an `admin` account. Set
+   `PH_ADMIN_PASS` (deploy secret) to choose its password, or use the default and
+   change it in `/desk → Settings`. Articles you publish there flow into the DB.
+5. Adjust `deploy/` (Dockerfile, Caddyfile, the workflow) for your host + domain,
+   then `dx serve` to preview and deploy the container (see
+   **[deploy/README.md](deploy/README.md)**).
 
 You run your own instance, under your own name, and you are responsible for your
 own editorial standards and legal compliance (defamation, contempt of court, data
