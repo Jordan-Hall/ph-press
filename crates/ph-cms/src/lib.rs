@@ -558,6 +558,61 @@ pub async fn log_complaint(
     Ok(res.last_insert_rowid())
 }
 
+/// First-run setup. If there are no staff users yet, create the first admin
+/// (the only way a first admin can be made; after this, an existing admin invites
+/// others). Idempotent: returns true only if it created the admin this call.
+pub async fn bootstrap_admin(
+    pool: &SqlitePool,
+    username: &str,
+    display_name: &str,
+    password: &str,
+) -> Result<bool> {
+    if count_users(pool).await? > 0 {
+        return Ok(false);
+    }
+    create_user(pool, username, display_name, Role::Admin, password).await?;
+    append_audit(pool, "system", "bootstrap.admin", username, "first admin created").await?;
+    Ok(true)
+}
+
+/// A seed article (the compile-time `content.rs` data, migrated into the DB).
+pub struct ArticleSeed<'a> {
+    pub slug: &'a str,
+    pub title: &'a str,
+    pub summary: &'a str,
+    pub body: &'a str, // JSON array of paragraphs
+    pub byline: &'a str,
+    pub kind: &'a str,
+    pub published_at: i64,
+}
+
+/// Idempotently insert seed articles as Published (by slug). Returns how many
+/// were newly inserted. Safe to call on every boot.
+pub async fn seed_articles(pool: &SqlitePool, items: &[ArticleSeed<'_>]) -> Result<u64> {
+    let mut inserted = 0u64;
+    for a in items {
+        let res = sqlx::query(
+            "INSERT OR IGNORE INTO article (slug, title, summary, body, byline, kind, state, created_at, updated_at, published_at) VALUES (?,?,?,?,?,?, 'published', ?, ?, ?)",
+        )
+        .bind(a.slug)
+        .bind(a.title)
+        .bind(a.summary)
+        .bind(a.body)
+        .bind(a.byline)
+        .bind(a.kind)
+        .bind(a.published_at)
+        .bind(a.published_at)
+        .bind(a.published_at)
+        .execute(pool)
+        .await?;
+        inserted += res.rows_affected();
+    }
+    if inserted > 0 {
+        append_audit(pool, "system", "seed.articles", &format!("{inserted} seeded"), "").await?;
+    }
+    Ok(inserted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,6 +681,25 @@ mod tests {
         assert_eq!(published_articles(&pool).await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "Test").await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "zzznomatch").await.unwrap().len(), 0);
+        assert!(audit_chain(&pool).await.unwrap().verify().is_ok());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_and_seed_are_idempotent() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        assert!(bootstrap_admin(&pool, "admin", "Admin", "pw").await.unwrap());
+        // second call is a no-op once an admin exists
+        assert!(!bootstrap_admin(&pool, "admin2", "Admin2", "pw").await.unwrap());
+        assert!(authenticate(&pool, "admin", "pw").await.is_ok());
+
+        let seeds = [
+            ArticleSeed { slug: "a", title: "A", summary: "s", body: "[]", byline: "x", kind: "Court report", published_at: 1000 },
+            ArticleSeed { slug: "b", title: "B", summary: "s", body: "[]", byline: "x", kind: "Court report", published_at: 2000 },
+        ];
+        assert_eq!(seed_articles(&pool, &seeds).await.unwrap(), 2);
+        assert_eq!(seed_articles(&pool, &seeds).await.unwrap(), 0); // idempotent
+        assert_eq!(published_articles(&pool).await.unwrap().len(), 2);
         assert!(audit_chain(&pool).await.unwrap().verify().is_ok());
     }
 }
