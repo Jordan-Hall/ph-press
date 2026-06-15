@@ -8,8 +8,11 @@
 //! anyone before they are charged, and we report only on cases concluded in
 //! court, from the public record. No public face-recognition.
 
+mod api;
 mod app;
 mod assets;
+#[cfg(feature = "server")]
+mod cms;
 mod components;
 mod content;
 mod icons;

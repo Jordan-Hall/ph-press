@@ -11,13 +11,19 @@ publish = false
 [features]
 default = ["web"]
 web = ["dioxus/web"]
-server = ["dioxus/server"]
+# server pulls the CMS (sqlx/SQLite) — SERVER-ONLY, never in the wasm/web build.
+server = ["dioxus/server", "dep:ph-cms", "dep:tokio", "dep:serde_json"]
 # native targets (experimental — Blitz is alpha): wired in WS4
 # desktop = ["dioxus/desktop"]
 # mobile  = ["dioxus/mobile"]
 
 [dependencies]
 dioxus = { version = "0.8.0-alpha.0", features = ["router", "fullstack"] }
+# Editorial CMS (SQLite). Optional + only enabled by the `server` feature, so the
+# wasm/web build never tries to compile sqlx.
+ph-cms = { path = "crates/ph-cms", optional = true }
+tokio = { version = "1", features = ["sync"], optional = true }
+serde_json = { version = "1", optional = true }
 
 # Standalone repo (PH Press) — owns its tree. Backend crates (ph-cms,
 # ph-offender) join as members as WS2/WS3 land. These are server-side only and

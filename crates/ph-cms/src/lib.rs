@@ -8,6 +8,10 @@
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
+/// The database handle (an sqlx SQLite pool). Re-exported so callers need not
+/// depend on sqlx directly.
+pub type Db = SqlitePool;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CmsError {
     #[error("database error: {0}")]
@@ -611,6 +615,22 @@ pub async fn seed_articles(pool: &SqlitePool, items: &[ArticleSeed<'_>]) -> Resu
         append_audit(pool, "system", "seed.articles", &format!("{inserted} seeded"), "").await?;
     }
     Ok(inserted)
+}
+
+/// Open the database, run schema init, ensure a first admin exists, and seed the
+/// starter articles. The one call a server makes on boot. Idempotent.
+pub async fn open_and_setup(
+    url: &str,
+    admin_user: &str,
+    admin_display: &str,
+    admin_pass: &str,
+    seeds: &[ArticleSeed<'_>],
+) -> Result<Db> {
+    let pool = connect(url).await?;
+    init(&pool).await?;
+    bootstrap_admin(&pool, admin_user, admin_display, admin_pass).await?;
+    seed_articles(&pool, seeds).await?;
+    Ok(pool)
 }
 
 #[cfg(test)]

@@ -2497,6 +2497,9 @@ name = "ph-press"
 version = "0.0.0"
 dependencies = [
  "dioxus",
+ "ph-cms",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
