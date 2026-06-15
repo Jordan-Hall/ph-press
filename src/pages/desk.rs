@@ -154,7 +154,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
         }
         main { class: "desk-main",
             match active {
-                Tab::Articles => rsx! { ArticlesPanel {} },
+                Tab::Articles => rsx! { ArticlesPanel { user: user.clone() } },
                 Tab::Complaints => rsx! { ComplaintsPanel {} },
                 Tab::Corrections => rsx! { CorrectionsPanel {} },
                 Tab::Staff => rsx! { StaffPanel {} },
@@ -165,7 +165,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
 }
 
 #[component]
-fn ArticlesPanel() -> Element {
+fn ArticlesPanel(user: DeskSession) -> Element {
     let mut articles = use_signal(|| Option::<Vec<DeskArticle>>::None);
     let busy = use_signal(|| false);
     let mut err = use_signal(|| Option::<String>::None);
@@ -223,9 +223,14 @@ fn ArticlesPanel() -> Element {
                         .filter(|(_, c)| *c > 0)
                         .collect();
                     let all_n = v.len();
+                    let mine_n = v.iter().filter(|a| a.byline == user.display_name).count();
                     let filtered: Vec<DeskArticle> = v
                         .iter()
-                        .filter(|a| f.is_empty() || a.state == f)
+                        .filter(|a| match f.as_str() {
+                            "" => true,
+                            "mine" => a.byline == user.display_name,
+                            s => a.state == s,
+                        })
                         .cloned()
                         .collect();
                     rsx! {
@@ -234,6 +239,13 @@ fn ArticlesPanel() -> Element {
                                 class: if f.is_empty() { "desk-fchip on" } else { "desk-fchip" },
                                 onclick: move |_| filter.set(String::new()),
                                 "All " span { class: "desk-fcount", "{all_n}" }
+                            }
+                            if mine_n > 0 {
+                                button {
+                                    class: if f == "mine" { "desk-fchip on" } else { "desk-fchip" },
+                                    onclick: move |_| filter.set("mine".to_string()),
+                                    "Mine " span { class: "desk-fcount", "{mine_n}" }
+                                }
                             }
                             for (s , c) in chips {
                                 button {
