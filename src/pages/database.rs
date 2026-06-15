@@ -12,13 +12,18 @@ use crate::icons::svg;
 
 /// Escape a string for embedding inside a single-quoted JS string literal.
 fn js1(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ")
+    s.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\n', " ")
 }
 
 /// Truncate a summary to a tidy one-line snippet for the map popup.
 fn snippet(s: &str, max: usize) -> String {
     if s.chars().count() > max {
-        format!("{}\u{2026}", s.chars().take(max).collect::<String>().trim_end())
+        format!(
+            "{}\u{2026}",
+            s.chars().take(max).collect::<String>().trim_end()
+        )
     } else {
         s.to_string()
     }

@@ -132,7 +132,10 @@ mod tests {
         assert_eq!(block_html("a * b"), "<p>a * b</p>");
         // opt-in drop cap: only a leading "^ " classes the paragraph; the marker
         // is stripped, and a plain paragraph is never auto-capped.
-        assert_eq!(block_html("^ Once upon"), "<p class=\"dropcap\">Once upon</p>");
+        assert_eq!(
+            block_html("^ Once upon"),
+            "<p class=\"dropcap\">Once upon</p>"
+        );
         assert_eq!(block_html("Once upon"), "<p>Once upon</p>");
         // a standalone image renders; a javascript: image src does not
         assert!(
