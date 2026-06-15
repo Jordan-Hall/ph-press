@@ -11,9 +11,9 @@ use crate::icons::svg;
 /// (year, event)
 const TIMELINE: [(&str, &str); 4] = [
     ("2020", "We begin offering rewards for information that helps catch the people behind serious crimes: killers, rapists and abusers. People come to us because they trust us to keep them anonymous."),
-    ("2022", "Our reporting starts with a single local story: a social club in Derbyshire selling alcohol to children. It is the first of many."),
-    ("2025", "We report what we can, when we can, building relationships and trust across the communities we cover."),
-    ("2026", "The newsroom becomes a core part of who we are: local news, court reporting from the public record, reward appeals, and a public conviction database."),
+    ("2022", "Our first major story is a murder. We publish details the police have not, and afterwards officers come to us asking for our sources. We protect them. Around the same time we report a social club in Derbyshire selling alcohol to children."),
+    ("2025", "We widen into local investigations: bailiffs and arrests at a local hospital, and council housing decisions that leave residents without homes, while keeping every source anonymous."),
+    ("2026", "Court reporting and a public conviction database become a core part of who we are, and we open our newsroom."),
 ];
 
 #[component]
@@ -42,10 +42,10 @@ pub fn About() -> Element {
             div { class: "wrap",
                 div { class: "prose reveal",
                     p {
-                        "It started with a single local story. In 2022 we reported that a social club in Derbyshire was selling alcohol to children. People talked to us because they trusted us to protect them, and that trust is still the foundation of everything we do."
+                        "It started with the kind of story that decides what a newsroom is. We covered a murder and published details the police had not. When officers came to us asking for our sources, we protected them. People trust us because of that, and that trust is still the foundation of everything we do."
                     }
                     p {
-                        "Since 2020 we have offered rewards for information that helps catch the people behind serious crimes. We break local news of all kinds, not only the headline cases. We report concluded cases from the public court record, and we keep a public database of convictions so a community can see what the courts have decided. Where there is a child-protection angle we draw on years of frontline experience, but we are a "
+                        "Since then we have broken local news of all kinds: a social club in Derbyshire selling alcohol to children, bailiffs and arrests at a local hospital, council housing decisions that left residents without homes. Since 2020 we have offered rewards for information that helps catch the people behind serious crimes. We report concluded cases from the public court record and keep a public database of convictions. Where there is a child-protection angle we draw on years of frontline experience, but we are a "
                         strong { "local newsroom first." }
                     }
                     p {
