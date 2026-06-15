@@ -2,10 +2,11 @@
 //! line) renders to one HTML element. The text is HTML-ESCAPED first and only our
 //! own tags are added afterwards, so author input can never inject markup; link
 //! URLs are validated to http(s) or site-relative. Supports: `#`/`##` headings,
-//! `- ` bullets, `**bold**`, `*italic*`, `[text](url)`, and a standalone image
-//! block `![caption](url)`. Used by every body
-//! renderer (public article, staff preview, editor live preview) so what an editor
-//! types is what readers see.
+//! `- ` bullets, `**bold**`, `*italic*`, `[text](url)`, a standalone image
+//! block `![caption](url)`, and a leading `^ ` for an OPT-IN drop cap (the large
+//! first letter) — only the paragraph(s) an author marks get it, never every one.
+//! Used by every body renderer (public article, staff preview, editor live
+//! preview) so what an editor types is what readers see.
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -102,6 +103,12 @@ pub fn block_html(block: &str) -> String {
         format!("<h2>{}</h2>", inline(h))
     } else if let Some(li) = b.strip_prefix("- ") {
         format!("<ul><li>{}</li></ul>", inline(li))
+    } else if let Some(lead) = b.strip_prefix("^ ") {
+        // Opt-in drop cap: a leading "^ " gives THIS paragraph the large red
+        // initial (`.prose p.dropcap::first-letter`). Nothing is auto-capped, so
+        // the style appears only where the author asks for it — never on every
+        // paragraph. The marker itself is stripped before inline formatting.
+        format!("<p class=\"dropcap\">{}</p>", inline(lead))
     } else {
         format!("<p>{}</p>", inline(b))
     }
@@ -123,6 +130,10 @@ mod tests {
         assert!(!block_html("[no](javascript:alert(1))").contains("<a "));
         // unbalanced marker stays literal
         assert_eq!(block_html("a * b"), "<p>a * b</p>");
+        // opt-in drop cap: only a leading "^ " classes the paragraph; the marker
+        // is stripped, and a plain paragraph is never auto-capped.
+        assert_eq!(block_html("^ Once upon"), "<p class=\"dropcap\">Once upon</p>");
+        assert_eq!(block_html("Once upon"), "<p>Once upon</p>");
         // a standalone image renders; a javascript: image src does not
         assert!(
             block_html("![cat](https://x.com/c.jpg)").contains("<img src=\"https://x.com/c.jpg\"")

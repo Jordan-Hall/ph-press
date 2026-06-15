@@ -243,7 +243,9 @@ a.card:hover,.card.reveal:hover{border-color:var(--ink);}
 .prose strong{color:var(--ink);font-weight:600;}
 .prose a{color:inherit;border-bottom:2px solid var(--red);}
 .prose a:hover{background:var(--tag);}
-.prose p:first-of-type::first-letter{font-family:var(--serif);float:left;font-size:3.4rem;line-height:.82;
+/* Drop cap is OPT-IN per paragraph (author marks a block with a leading "^ ",
+   which renders <p class="dropcap">) — never applied to every paragraph. */
+.prose p.dropcap::first-letter{font-family:var(--serif);float:left;font-size:3.4rem;line-height:.82;
   padding:6px 10px 0 0;color:var(--red);}
 
 .deflist{border-top:2px solid var(--rule-strong);}
