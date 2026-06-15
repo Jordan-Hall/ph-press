@@ -181,6 +181,41 @@ pub async fn create_draft(
     .map_err(|e| e.to_string())
 }
 
+/// Update an editable article's content (title/summary/body/kind/section). The
+/// engine rejects editing a published article (use corrections instead).
+pub async fn update_article(
+    username: &str,
+    id: i64,
+    title: &str,
+    summary: &str,
+    kind: &str,
+    section: &str,
+    body_text: &str,
+) -> Result<(), String> {
+    if title.trim().is_empty() {
+        return Err("a title is required".to_string());
+    }
+    let paras: Vec<&str> = body_text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let body_json = serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string());
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::update_article(
+        pool,
+        id,
+        title.trim(),
+        summary.trim(),
+        &body_json,
+        kind,
+        section,
+        username,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// The published corrections archive (newest first).
 pub async fn corrections() -> Result<Vec<ph_cms::Correction>, String> {
     let pool = db().await.map_err(|e| e.to_string())?;

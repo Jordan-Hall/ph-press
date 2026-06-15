@@ -531,6 +531,46 @@ pub async fn create_draft(
     Ok(id)
 }
 
+/// Update an editable (pre-publish) article's content, audited. Published,
+/// corrected and retracted articles are NOT editable here — published changes go
+/// through the corrections flow (equal prominence). State is unchanged.
+pub async fn update_article(
+    pool: &SqlitePool,
+    id: i64,
+    title: &str,
+    summary: &str,
+    body: &str,
+    kind: &str,
+    section: &str,
+    actor: &str,
+) -> Result<()> {
+    let article = get_article(pool, id)
+        .await?
+        .ok_or_else(|| CmsError::Bad(format!("no article {id}")))?;
+    if matches!(
+        article.state()?,
+        State::Published | State::Corrected | State::Retracted
+    ) {
+        return Err(CmsError::Forbidden(
+            "a published article is changed through a correction, not edited here".into(),
+        ));
+    }
+    sqlx::query(
+        "UPDATE article SET title = ?, summary = ?, body = ?, kind = ?, section = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(title)
+    .bind(summary)
+    .bind(body)
+    .bind(kind)
+    .bind(section)
+    .bind(now())
+    .bind(id)
+    .execute(pool)
+    .await?;
+    append_audit(pool, actor, "article.edit", &article.slug, "").await?;
+    Ok(())
+}
+
 pub async fn get_article(pool: &SqlitePool, id: i64) -> Result<Option<Article>> {
     Ok(
         sqlx::query_as::<_, Article>("SELECT * FROM article WHERE id = ?")

@@ -586,6 +586,39 @@ pub async fn published_feed() -> Result<Vec<FeedItem>, ServerFnError> {
     }
 }
 
+/// Update an editable article's content (pre-publish only; published changes go
+/// through corrections). Requires a valid session.
+#[server(endpoint = "desk_update")]
+pub async fn desk_update(
+    id: i64,
+    title: String,
+    summary: String,
+    kind: String,
+    section: String,
+    body: String,
+) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::update_article(
+            &session.username,
+            id,
+            &title,
+            &summary,
+            &kind,
+            &section,
+            &body,
+        )
+        .await
+        .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, title, summary, kind, section, body);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
 /// Preview ANY article by id (any state) — authenticated staff only, so an editor
 /// can read a draft before it is published.
 #[server(endpoint = "desk_preview")]
