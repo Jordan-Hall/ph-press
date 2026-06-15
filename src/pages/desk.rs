@@ -224,11 +224,18 @@ fn ArticlesPanel(user: DeskSession) -> Element {
                         .collect();
                     let all_n = v.len();
                     let mine_n = v.iter().filter(|a| a.byline == user.display_name).count();
+                    // Role-scoped review queue: what's awaiting THIS user's action.
+                    let queue = queue_states(&user.role);
+                    let queue_n = v
+                        .iter()
+                        .filter(|a| queue.contains(&a.state.as_str()))
+                        .count();
                     let filtered: Vec<DeskArticle> = v
                         .iter()
                         .filter(|a| match f.as_str() {
                             "" => true,
                             "mine" => a.byline == user.display_name,
+                            "queue" => queue.contains(&a.state.as_str()),
                             s => a.state == s,
                         })
                         .cloned()
@@ -239,6 +246,13 @@ fn ArticlesPanel(user: DeskSession) -> Element {
                                 class: if f.is_empty() { "desk-fchip on" } else { "desk-fchip" },
                                 onclick: move |_| filter.set(String::new()),
                                 "All " span { class: "desk-fcount", "{all_n}" }
+                            }
+                            if !queue.is_empty() && queue_n > 0 {
+                                button {
+                                    class: if f == "queue" { "desk-fchip needs on" } else { "desk-fchip needs" },
+                                    onclick: move |_| filter.set("queue".to_string()),
+                                    "Needs you " span { class: "desk-fcount", "{queue_n}" }
+                                }
                             }
                             if mine_n > 0 {
                                 button {
@@ -1137,6 +1151,18 @@ fn wrap_js(prefix: &str, suffix: &str, placeholder: &str) -> String {
     format!(
         "(function(){{var t=document.getElementById('ed-body');if(!t)return;var s=t.selectionStart,e=t.selectionEnd,v=t.value;var sel=v.slice(s,e)||'{placeholder}';t.value=v.slice(0,s)+'{prefix}'+sel+'{suffix}'+v.slice(e);t.dispatchEvent(new Event('input',{{bubbles:true}}));t.focus();var c=s+{p}+sel.length;t.selectionStart=c;t.selectionEnd=c;}})();"
     )
+}
+
+/// The lifecycle states awaiting THIS role's action (the "Needs you" queue).
+/// Writers act on their own drafts (covered by the "Mine" filter), so they get
+/// no queue chip here.
+fn queue_states(role: &str) -> &'static [&'static str] {
+    match role {
+        "legal" => &["legal_review"],
+        "editor" | "sub_editor" => &["submitted", "editorial_review"],
+        "admin" => &["submitted", "editorial_review", "legal_review", "scheduled"],
+        _ => &[],
+    }
 }
 
 fn role_label(role: &str) -> &'static str {
