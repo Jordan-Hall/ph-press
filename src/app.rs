@@ -9,7 +9,7 @@ use crate::components::{ClosingCta, SiteFooter};
 use crate::icons::svg;
 use crate::pages::{
     About, Article, Contact, Database, Desk, DeskPreview, Home, News, NotFound, Podcast, Privacy,
-    Standards, Watch,
+    Standards, Watch, WriteArticle,
 };
 
 #[derive(Routable, Clone, PartialEq)]
@@ -20,6 +20,8 @@ pub enum Route {
     Desk {},
     #[route("/desk/preview/:id")]
     DeskPreview { id: i64 },
+    #[route("/desk/edit/:id")]
+    WriteArticle { id: i64 },
     #[layout(Shell)]
     #[route("/")]
     Home {},

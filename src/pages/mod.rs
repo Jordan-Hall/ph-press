@@ -17,7 +17,7 @@ pub use about::About;
 pub use article::Article;
 pub use contact::Contact;
 pub use database::Database;
-pub use desk::{Desk, DeskPreview};
+pub use desk::{Desk, DeskPreview, WriteArticle};
 pub use home::Home;
 pub use news::News;
 pub use notfound::NotFound;

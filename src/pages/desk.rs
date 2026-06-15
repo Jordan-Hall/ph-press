@@ -8,9 +8,9 @@ use dioxus::prelude::*;
 
 use crate::api::{
     desk_add_correction, desk_articles, desk_complaint_status, desk_complaints, desk_corrections,
-    desk_create, desk_log_complaint, desk_preview, desk_transition, staff_change_password,
-    staff_login, staff_logout, staff_me, DeskArticle, DeskComplaint, DeskCorrection, DeskSession,
-    PreviewArticle,
+    desk_create, desk_log_complaint, desk_preview, desk_transition, desk_update,
+    staff_change_password, staff_login, staff_logout, staff_me, DeskArticle, DeskComplaint,
+    DeskCorrection, DeskSession, PreviewArticle,
 };
 use crate::app::Route;
 
@@ -164,7 +164,6 @@ fn ArticlesPanel() -> Element {
     let mut articles = use_signal(|| Option::<Vec<DeskArticle>>::None);
     let busy = use_signal(|| false);
     let mut err = use_signal(|| Option::<String>::None);
-    let mut show_new = use_signal(|| false);
 
     use_resource(move || async move {
         match desk_articles().await {
@@ -183,18 +182,8 @@ fn ArticlesPanel() -> Element {
                     if let Some(n) = count {
                         span { class: "desk-count", "{n} total" }
                     }
-                    button {
-                        class: "desk-btn sm",
-                        onclick: move |_| {
-                            let open = show_new();
-                            show_new.set(!open);
-                        },
-                        if show_new() { "Close" } else { "New draft" }
-                    }
+                    Link { class: "desk-btn sm", to: Route::WriteArticle { id: 0 }, "Write a story" }
                 }
-            }
-            if show_new() {
-                NewDraftForm { articles, busy }
             }
             if let Some(e) = err() {
                 p { class: "desk-error pad", "{e}" }
@@ -600,6 +589,9 @@ fn DeskRow(
                         "Preview ↗"
                     }
                 }
+                if a.state != "published" && a.state != "corrected" && a.state != "retracted" {
+                    Link { class: "desk-act", to: Route::WriteArticle { id: a.id }, "Edit ✎" }
+                }
                 if a.actions.is_empty() {
                     span { class: "desk-muted", "—" }
                 }
@@ -631,43 +623,120 @@ fn DeskRow(
     }
 }
 
+/// The editor page at /desk/edit/:id — id 0 = a new draft, else edit that article.
 #[component]
-fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal<bool>) -> Element {
-    let mut title = use_signal(String::new);
-    let mut summary = use_signal(String::new);
-    let mut body = use_signal(String::new);
-    let mut kind = use_signal(|| "Court report".to_string());
-    let mut section = use_signal(|| "Crime".to_string());
+pub fn WriteArticle(id: i64) -> Element {
+    rsx! {
+        document::Meta { name: "robots", content: "noindex, nofollow" }
+        document::Title { "Editor · Predator Hunters" }
+        div { class: "desk-root",
+            header { class: "desk-top",
+                div { class: "desk-top-in",
+                    div {
+                        p { class: "desk-eyebrow", "Editorial desk" }
+                        h1 { class: "desk-h1", if id == 0 { "Write a story" } else { "Edit story" } }
+                    }
+                    div { class: "desk-top-right",
+                        Link { class: "desk-btn ghost", to: Route::Desk {}, "← Desk" }
+                    }
+                }
+            }
+            main { class: "desk-main",
+                if id == 0 {
+                    EditorForm {
+                        edit_id: 0,
+                        init_title: String::new(),
+                        init_summary: String::new(),
+                        init_kind: "Court report".to_string(),
+                        init_section: "Crime".to_string(),
+                        init_body: String::new(),
+                    }
+                } else {
+                    WriteLoad { id }
+                }
+            }
+        }
+    }
+}
+
+/// Loads an existing article (any state) into the editor for editing.
+#[component]
+fn WriteLoad(id: i64) -> Element {
+    let res = use_resource(move || async move { desk_preview(id).await });
+    let g = res.read();
+    match g.as_ref() {
+        None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+        Some(Ok(Some(a))) => rsx! {
+            EditorForm {
+                edit_id: id,
+                init_title: a.title.clone(),
+                init_summary: a.summary.clone(),
+                init_kind: a.kind.clone(),
+                init_section: a.section.clone(),
+                init_body: a.body.join("\n"),
+            }
+        },
+        _ => rsx! {
+            p { class: "desk-error pad", "Could not load this article, or you are not signed in." }
+        },
+    }
+}
+
+/// The shared writer-first editor (Ghost/Medium feel). Creates a draft when
+/// edit_id is 0, otherwise saves changes to that article, then returns to /desk.
+#[component]
+fn EditorForm(
+    edit_id: i64,
+    init_title: String,
+    init_summary: String,
+    init_kind: String,
+    init_section: String,
+    init_body: String,
+) -> Element {
+    let mut title = use_signal(|| init_title.clone());
+    let mut summary = use_signal(|| init_summary.clone());
+    let mut body = use_signal(|| init_body.clone());
+    let mut kind = use_signal(|| init_kind.clone());
+    let mut section = use_signal(|| init_section.clone());
     let mut err = use_signal(|| Option::<String>::None);
+    let mut busy = use_signal(|| false);
+    let nav = navigator();
 
     let submit = move |evt: FormEvent| {
         evt.prevent_default();
         spawn(async move {
             busy.set(true);
             err.set(None);
-            match desk_create(title(), summary(), kind(), section(), body()).await {
-                Ok(list) => {
-                    articles.set(Some(list));
-                    title.set(String::new());
-                    summary.set(String::new());
-                    body.set(String::new());
+            let res = if edit_id == 0 {
+                desk_create(title(), summary(), kind(), section(), body())
+                    .await
+                    .map(|_| ())
+            } else {
+                desk_update(edit_id, title(), summary(), kind(), section(), body()).await
+            };
+            match res {
+                Ok(()) => {
+                    nav.push(Route::Desk {});
                 }
-                Err(e) => err.set(Some(e.to_string())),
+                Err(e) => {
+                    err.set(Some(e.to_string()));
+                    busy.set(false);
+                }
             }
-            busy.set(false);
         });
     };
 
-    // Live layout preview: same paragraph split the server applies, so the writer
-    // sees the article take shape as they type.
     let preview_paras: Vec<String> = body()
         .lines()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect();
+    let save_label = if edit_id == 0 {
+        "Create draft"
+    } else {
+        "Save changes"
+    };
 
-    // Writer-first editor: a calm, focused writing surface (Ghost/Medium feel) —
-    // big headline, a light meta row, the standfirst, then a roomy body.
     rsx! {
         form { class: "editor", onsubmit: submit,
             input {
@@ -737,7 +806,7 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
             }
             div { class: "editor-actions",
                 span { class: "editor-hint", "Saved as a draft \u{2014} it goes live only after editorial + legal review." }
-                button { class: "desk-btn", r#type: "submit", disabled: busy(), "Create draft" }
+                button { class: "desk-btn", r#type: "submit", disabled: busy(), "{save_label}" }
             }
         }
     }
@@ -755,7 +824,7 @@ pub fn DeskPreview(id: i64) -> Element {
         div { class: "desk-root",
             match guard.as_ref() {
                 None => rsx! { div { class: "desk-loading", "Loading preview…" } },
-                Some(Ok(Some(a))) => rsx! { PreviewBody { a: a.clone() } },
+                Some(Ok(Some(a))) => rsx! { PreviewBody { a: a.clone(), id } },
                 _ => rsx! {
                     div { class: "desk-login",
                         div { class: "desk-card",
@@ -771,12 +840,18 @@ pub fn DeskPreview(id: i64) -> Element {
 }
 
 #[component]
-fn PreviewBody(a: PreviewArticle) -> Element {
+fn PreviewBody(a: PreviewArticle, id: i64) -> Element {
+    let editable = a.state != "published" && a.state != "corrected" && a.state != "retracted";
     rsx! {
         div { class: "preview-banner",
             span { class: "preview-tag", "Preview" }
             span { class: "preview-state", "{state_label(&a.state)} — not the public version" }
-            Link { class: "preview-back", to: Route::Desk {}, "← Back to the desk" }
+            div { class: "preview-actions",
+                if editable {
+                    Link { class: "preview-edit", to: Route::WriteArticle { id }, "Edit ✎" }
+                }
+                Link { class: "preview-back", to: Route::Desk {}, "← Back to the desk" }
+            }
         }
         article {
             header { class: "page-head",
