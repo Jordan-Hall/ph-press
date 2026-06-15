@@ -2,3 +2,7 @@ target/
 dist/
 .dx/
 *.log
+
+# scratch build logs
+_ssg_build.txt
+_review_*.txt

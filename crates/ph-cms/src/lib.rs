@@ -197,74 +197,35 @@ impl Article {
 }
 
 // ===================== database =====================
-const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS staff_user (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL UNIQUE,
-  display_name TEXT NOT NULL,
-  role TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
-  totp_secret TEXT,
-  created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS article (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  slug TEXT NOT NULL UNIQUE,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  body TEXT NOT NULL,
-  byline TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'draft',
-  is_ai_assisted INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  published_at INTEGER
-);
-CREATE TABLE IF NOT EXISTS review_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  article_id INTEGER NOT NULL,
-  from_state TEXT NOT NULL,
-  to_state TEXT NOT NULL,
-  actor TEXT NOT NULL,
-  note TEXT NOT NULL DEFAULT '',
-  ts INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS correction (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  article_id INTEGER NOT NULL,
-  original TEXT NOT NULL,
-  corrected TEXT NOT NULL,
-  reason TEXT NOT NULL DEFAULT '',
-  ts INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS complaint (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  article_slug TEXT NOT NULL DEFAULT '',
-  complainant TEXT NOT NULL DEFAULT '',
-  body TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'received',
-  ts INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS audit (
-  seq INTEGER PRIMARY KEY,
-  ts INTEGER NOT NULL,
-  actor TEXT NOT NULL,
-  action TEXT NOT NULL,
-  subject TEXT NOT NULL,
-  detail TEXT NOT NULL,
-  prev_hash TEXT NOT NULL,
-  hash TEXT NOT NULL
-);
-"#;
-
 pub async fn connect(url: &str) -> Result<SqlitePool> {
     Ok(SqlitePoolOptions::new().max_connections(5).connect(url).await?)
 }
 
+/// Apply pending schema migrations (versioned in ./migrations, tracked in
+/// _sqlx_migrations). Each runs exactly once, so deploys never recreate or wipe
+/// existing data. Add schema changes as new migration files.
 pub async fn init(pool: &SqlitePool) -> Result<()> {
-    sqlx::raw_sql(SCHEMA).execute(pool).await?;
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(|e| CmsError::Bad(format!("migration failed: {e}")))?;
     Ok(())
+}
+
+/// Deliberately reset the named admin/user's password (operator takeover via
+/// deploy, gated by PH_ADMIN_RESET). Returns true if a row was updated.
+pub async fn reset_password(pool: &SqlitePool, username: &str, new_password: &str) -> Result<bool> {
+    let hash = auth::hash_password(new_password)?;
+    let res = sqlx::query("UPDATE staff_user SET password_hash = ? WHERE username = ?")
+        .bind(hash)
+        .bind(username)
+        .execute(pool)
+        .await?;
+    let changed = res.rows_affected() > 0;
+    if changed {
+        append_audit(pool, "system", "admin.password_reset", username, "via deploy").await?;
+    }
+    Ok(changed)
 }
 
 pub async fn count_users(pool: &SqlitePool) -> Result<i64> {
@@ -624,11 +585,17 @@ pub async fn open_and_setup(
     admin_user: &str,
     admin_display: &str,
     admin_pass: &str,
+    reset_admin: bool,
     seeds: &[ArticleSeed<'_>],
 ) -> Result<Db> {
     let pool = connect(url).await?;
     init(&pool).await?;
-    bootstrap_admin(&pool, admin_user, admin_display, admin_pass).await?;
+    let created = bootstrap_admin(&pool, admin_user, admin_display, admin_pass).await?;
+    // Never overwrite the admin on a normal deploy. Only reset the password when
+    // the operator explicitly asks (PH_ADMIN_RESET), i.e. a deliberate takeover.
+    if !created && reset_admin && !reset_password(&pool, admin_user, admin_pass).await? {
+        eprintln!("[ph-cms] PH_ADMIN_RESET set but no user '{admin_user}' to reset");
+    }
     seed_articles(&pool, seeds).await?;
     Ok(pool)
 }
@@ -720,6 +687,21 @@ mod tests {
         assert_eq!(seed_articles(&pool, &seeds).await.unwrap(), 2);
         assert_eq!(seed_articles(&pool, &seeds).await.unwrap(), 0); // idempotent
         assert_eq!(published_articles(&pool).await.unwrap().len(), 2);
+        assert!(audit_chain(&pool).await.unwrap().verify().is_ok());
+    }
+
+    #[tokio::test]
+    async fn admin_password_reset_is_deliberate() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        assert!(bootstrap_admin(&pool, "admin", "Admin", "old").await.unwrap());
+        // a later boot never overwrites the admin, even with a different password
+        assert!(!bootstrap_admin(&pool, "admin", "Admin", "different").await.unwrap());
+        assert!(authenticate(&pool, "admin", "old").await.is_ok());
+        // a deliberate reset (PH_ADMIN_RESET) does change it
+        assert!(reset_password(&pool, "admin", "new").await.unwrap());
+        assert!(authenticate(&pool, "admin", "old").await.is_err());
+        assert!(authenticate(&pool, "admin", "new").await.is_ok());
         assert!(audit_chain(&pool).await.unwrap().verify().is_ok());
     }
 }

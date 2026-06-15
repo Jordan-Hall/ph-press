@@ -97,9 +97,24 @@ jobs:
           IID: ${{ vars.AWS_INSTANCE_ID }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Editorial-admin credentials live ONLY in deploy config, never in the
+          # repo/image. PH_ADMIN_PASS (secret) seeds the first admin on the very
+          # first deploy and is then ignored on updates (bootstrap is create-once).
+          # To deliberately take over the account, set repo var PH_ADMIN_RESET=1
+          # for ONE deploy (rotate PH_ADMIN_PASS first), then clear it back to 0.
+          PH_ADMIN_USER: ${{ vars.PH_ADMIN_USER }}
+          PH_ADMIN_PASS: ${{ secrets.PH_ADMIN_PASS }}
+          PH_ADMIN_RESET: ${{ vars.PH_ADMIN_RESET }}
         run: |
           set -euo pipefail
           REF="${IMAGE}:${GITHUB_SHA}"
+          # Default the optional knobs so an unset repo var doesn't break -e.
+          PH_ADMIN_USER="${PH_ADMIN_USER:-admin}"
+          PH_ADMIN_RESET="${PH_ADMIN_RESET:-0}"
+          # Base64-wrap the password: the SSM command is JSON-in-shell, so a raw
+          # password containing ' " \ $ or newlines would break it. base64 is
+          # [A-Za-z0-9+/=] only — safe through both layers; the container decodes.
+          PH_ADMIN_PASS_B64="$(printf '%s' "${PH_ADMIN_PASS}" | base64 -w0)"
           # Bind loopback-only (127.0.0.1:8090) so the port is NOT exposed to the
           # network — only the edge Caddy on the same host reaches it. A /data
           # volume is mounted for forward-compat (future CMS db + uploaded media).
@@ -111,7 +126,7 @@ jobs:
             "mkdir -p /var/lib/ph-press && chmod 700 /var/lib/ph-press",
             "docker network create ph-net 2>/dev/null || true",
             "docker rm -f ph-press || true",
-            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data '${REF}'",
+            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data -e PH_ADMIN_USER='${PH_ADMIN_USER}' -e PH_ADMIN_PASS_B64='${PH_ADMIN_PASS_B64}' -e PH_ADMIN_RESET='${PH_ADMIN_RESET}' '${REF}'",
             "sleep 8",
             "docker ps --filter name=ph-press --format '{{.Status}}' | grep -q Up || { docker logs --tail 80 ph-press; exit 1; }",
             "curl -fsS http://127.0.0.1:8090/healthz || { docker logs --tail 80 ph-press; exit 1; }",

@@ -9,6 +9,12 @@
 set -e
 
 if [ -x /srvapp/server ]; then
+  # The admin password travels base64-wrapped (PH_ADMIN_PASS_B64) so any chars
+  # survive the deploy's JSON + shell quoting. Decode it just for the server.
+  if [ -n "${PH_ADMIN_PASS_B64:-}" ]; then
+    PH_ADMIN_PASS="$(printf '%s' "$PH_ADMIN_PASS_B64" | base64 -d 2>/dev/null || true)"
+    export PH_ADMIN_PASS
+  fi
   ( cd /srvapp && IP=127.0.0.1 PORT=3000 ./server ) &
   echo "started fullstack server on 127.0.0.1:3000"
 else

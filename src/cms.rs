@@ -18,14 +18,25 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
         let url = std::env::var("PH_DB")
             .unwrap_or_else(|_| "sqlite:/data/ph-press.db?mode=rwc".to_string());
         let admin_user = std::env::var("PH_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
-        let admin_pass = std::env::var("PH_ADMIN_PASS").unwrap_or_else(|_| {
-            let p = generated_password();
-            eprintln!("[ph-press] PH_ADMIN_PASS not set; generated first-admin password: {p}");
-            p
-        });
+        // Treat an empty value as unset: GitHub renders an unset secret as "" in
+        // the deploy env, and an empty password must never become a real login.
+        let admin_pass = std::env::var("PH_ADMIN_PASS")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                let p = generated_password();
+                eprintln!("[ph-press] PH_ADMIN_PASS not set; generated first-admin password: {p}");
+                p
+            });
+        // PH_ADMIN_RESET=1 (or true) on a deploy deliberately resets the admin
+        // password to PH_ADMIN_PASS (operator takeover). Otherwise the existing
+        // admin is never touched on an update.
+        let reset = std::env::var("PH_ADMIN_RESET")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let owned = seed_data();
         let seeds: Vec<ArticleSeed> = owned.iter().map(OwnedSeed::as_seed).collect();
-        ph_cms::open_and_setup(&url, &admin_user, "Administrator", &admin_pass, &seeds).await
+        ph_cms::open_and_setup(&url, &admin_user, "Administrator", &admin_pass, reset, &seeds).await
     })
     .await
 }
