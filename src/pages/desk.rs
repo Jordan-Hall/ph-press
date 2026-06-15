@@ -617,6 +617,7 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
     let mut title = use_signal(String::new);
     let mut summary = use_signal(String::new);
     let mut kind = use_signal(|| "Court report".to_string());
+    let mut section = use_signal(|| "Crime".to_string());
     let mut err = use_signal(|| Option::<String>::None);
 
     let submit = move |evt: FormEvent| {
@@ -624,7 +625,7 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
         spawn(async move {
             busy.set(true);
             err.set(None);
-            match desk_create(title(), summary(), kind()).await {
+            match desk_create(title(), summary(), kind(), section()).await {
                 Ok(list) => {
                     articles.set(Some(list));
                     title.set(String::new());
@@ -645,6 +646,15 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
                     placeholder: "Headline",
                     value: "{title}",
                     oninput: move |e| title.set(e.value()),
+                }
+                select {
+                    class: "desk-in",
+                    value: "{section}",
+                    onchange: move |e| section.set(e.value()),
+                    option { value: "Crime", "Crime" }
+                    option { value: "Courts", "Courts" }
+                    option { value: "Local", "Local" }
+                    option { value: "Community", "Community" }
                 }
                 select {
                     class: "desk-in",

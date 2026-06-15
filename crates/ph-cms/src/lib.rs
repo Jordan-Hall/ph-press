@@ -213,6 +213,7 @@ pub struct Article {
     pub body: String, // JSON array of paragraphs
     pub byline: String,
     pub kind: String,
+    pub section: String,
     pub state: String,
     pub is_ai_assisted: bool,
     pub created_at: i64,
@@ -452,10 +453,11 @@ pub async fn create_article(
     body: &str,
     byline: &str,
     kind: &str,
+    section: &str,
 ) -> Result<i64> {
     let t = now();
     let res = sqlx::query(
-        "INSERT INTO article (slug, title, summary, body, byline, kind, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO article (slug, title, summary, body, byline, kind, section, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(slug)
     .bind(title)
@@ -463,6 +465,7 @@ pub async fn create_article(
     .bind(body)
     .bind(byline)
     .bind(kind)
+    .bind(section)
     .bind(State::Draft.as_str())
     .bind(t)
     .bind(t)
@@ -513,6 +516,7 @@ pub async fn create_draft(
     body: &str,
     byline: &str,
     kind: &str,
+    section: &str,
     actor: &str,
 ) -> Result<i64> {
     let base = slugify(title);
@@ -522,7 +526,7 @@ pub async fn create_draft(
         slug = format!("{base}-{n}");
         n += 1;
     }
-    let id = create_article(pool, &slug, title, summary, body, byline, kind).await?;
+    let id = create_article(pool, &slug, title, summary, body, byline, kind, section).await?;
     append_audit(pool, actor, "article.create", &slug, "draft created").await?;
     Ok(id)
 }
@@ -873,6 +877,7 @@ pub struct ArticleSeed<'a> {
     pub body: &'a str, // JSON array of paragraphs
     pub byline: &'a str,
     pub kind: &'a str,
+    pub section: &'a str,
     pub published_at: i64,
 }
 
@@ -882,7 +887,7 @@ pub async fn seed_articles(pool: &SqlitePool, items: &[ArticleSeed<'_>]) -> Resu
     let mut inserted = 0u64;
     for a in items {
         let res = sqlx::query(
-            "INSERT OR IGNORE INTO article (slug, title, summary, body, byline, kind, state, created_at, updated_at, published_at) VALUES (?,?,?,?,?,?, 'published', ?, ?, ?)",
+            "INSERT OR IGNORE INTO article (slug, title, summary, body, byline, kind, section, state, created_at, updated_at, published_at) VALUES (?,?,?,?,?,?,?, 'published', ?, ?, ?)",
         )
         .bind(a.slug)
         .bind(a.title)
@@ -890,6 +895,7 @@ pub async fn seed_articles(pool: &SqlitePool, items: &[ArticleSeed<'_>]) -> Resu
         .bind(a.body)
         .bind(a.byline)
         .bind(a.kind)
+        .bind(a.section)
         .bind(a.published_at)
         .bind(a.published_at)
         .bind(a.published_at)
@@ -1009,6 +1015,7 @@ mod tests {
             "[]",
             "Jordan Upton",
             "Court report",
+            "Crime",
         )
         .await
         .unwrap();
@@ -1084,6 +1091,7 @@ mod tests {
                 body: "[]",
                 byline: "x",
                 kind: "Court report",
+                section: "Crime",
                 published_at: 1000,
             },
             ArticleSeed {
@@ -1093,6 +1101,7 @@ mod tests {
                 body: "[]",
                 byline: "x",
                 kind: "Court report",
+                section: "Crime",
                 published_at: 2000,
             },
         ];
@@ -1170,6 +1179,7 @@ mod tests {
             "[]",
             "Jordan",
             "Court report",
+            "Crime",
             "admin",
         )
         .await
@@ -1181,6 +1191,7 @@ mod tests {
             "[]",
             "Jordan",
             "Court report",
+            "Crime",
             "admin",
         )
         .await

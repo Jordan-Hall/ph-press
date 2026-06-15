@@ -144,6 +144,7 @@ pub async fn create_draft(
     title: &str,
     summary: &str,
     kind: &str,
+    section: &str,
 ) -> Result<i64, String> {
     if title.trim().is_empty() {
         return Err("a title is required".to_string());
@@ -156,6 +157,7 @@ pub async fn create_draft(
         "[]",
         byline,
         kind,
+        section,
         username,
     )
     .await
@@ -239,6 +241,7 @@ struct OwnedSeed {
     body: String, // JSON array of paragraphs
     byline: &'static str,
     kind: &'static str,
+    section: &'static str,
     published_at: i64,
 }
 impl OwnedSeed {
@@ -250,6 +253,7 @@ impl OwnedSeed {
             body: &self.body,
             byline: self.byline,
             kind: self.kind,
+            section: self.section,
             published_at: self.published_at,
         }
     }
@@ -265,6 +269,7 @@ fn seed_data() -> Vec<OwnedSeed> {
             body: serde_json::to_string(a.body).unwrap_or_else(|_| "[]".to_string()),
             byline: a.byline,
             kind: a.kind,
+            section: a.section,
             published_at: iso_to_unix(a.iso_date),
         })
         .collect()

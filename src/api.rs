@@ -223,18 +223,6 @@ fn ymd(unix: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// DB articles have no `section` column yet — derive a sensible topical section
-/// from the format so live feed cards still carry a kicker.
-#[cfg(feature = "server")]
-fn db_section(kind: &str) -> String {
-    match kind {
-        "Court report" | "Investigation" => "Crime",
-        "Announcement" | "Explainer" => "Community",
-        _ => "News",
-    }
-    .to_string()
-}
-
 // ---- endpoints --------------------------------------------------------------
 
 /// Count of publicly visible articles in the live CMS database. Confirms the DB
@@ -380,6 +368,7 @@ pub async fn desk_create(
     title: String,
     summary: String,
     kind: String,
+    section: String,
 ) -> Result<Vec<DeskArticle>, ServerFnError> {
     #[cfg(feature = "server")]
     {
@@ -390,6 +379,7 @@ pub async fn desk_create(
             &title,
             &summary,
             &kind,
+            &section,
         )
         .await
         .map_err(ServerFnError::new)?;
@@ -397,7 +387,7 @@ pub async fn desk_create(
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (title, summary, kind);
+        let _ = (title, summary, kind, section);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -561,14 +551,13 @@ pub async fn published_feed() -> Result<Vec<FeedItem>, ServerFnError> {
         Ok(arts
             .into_iter()
             .map(|a| {
-                let section = db_section(&a.kind);
                 let iso_date = ymd(a.published_at.unwrap_or(a.updated_at));
                 FeedItem {
                     slug: a.slug,
                     title: a.title,
                     summary: a.summary,
                     kind: a.kind,
-                    section,
+                    section: a.section,
                     byline: a.byline,
                     iso_date,
                 }
@@ -594,7 +583,6 @@ pub async fn public_article(slug: String) -> Result<Option<PublicArticle>, Serve
             return Ok(None);
         };
         let body: Vec<String> = serde_json::from_str(&a.body).unwrap_or_default();
-        let section = db_section(&a.kind);
         let iso_date = ymd(a.published_at.unwrap_or(a.updated_at));
         Ok(Some(PublicArticle {
             slug: a.slug,
@@ -602,7 +590,7 @@ pub async fn public_article(slug: String) -> Result<Option<PublicArticle>, Serve
             summary: a.summary,
             body,
             kind: a.kind,
-            section,
+            section: a.section,
             byline: a.byline,
             iso_date,
         }))
