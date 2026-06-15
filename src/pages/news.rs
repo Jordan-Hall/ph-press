@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use crate::api::published_feed;
 use crate::app::Route;
 use crate::assets::PH_LOGO;
-use crate::content::ARTICLES;
+use crate::content::{ARTICLES, SECTIONS};
 use crate::icons::svg;
 
 /// A unified news-list card, from either a compile-time seed or the live CMS feed.
@@ -28,6 +28,9 @@ struct Card {
 pub fn News() -> Element {
     // Live CMS feed (client-fetched on the web target; merged with the seeds).
     let feed = use_resource(move || published_feed());
+    // Active section filter (None = all). Client-side, so the SSG page still
+    // renders every story for crawlers; the filter just narrows what's shown.
+    let mut filter = use_signal(|| Option::<&'static str>::None);
 
     let mut cards: Vec<Card> = ARTICLES
         .iter()
@@ -64,6 +67,14 @@ pub fn News() -> Element {
     }
     cards.sort_by(|a, b| b.iso.cmp(&a.iso));
 
+    // Only offer a filter chip for sections that actually have stories, in the
+    // taxonomy's display order (matches the front page's section nav).
+    let present: Vec<&'static str> = SECTIONS
+        .iter()
+        .copied()
+        .filter(|s| cards.iter().any(|c| c.section == *s))
+        .collect();
+
     rsx! {
         crate::components::Seo {
             title: "News | Predator Hunters",
@@ -83,10 +94,30 @@ pub fn News() -> Element {
                 }
             }
         }
-        section { class: "section", style: "padding-top:clamp(20px,4vh,48px);",
+        // ---------- SECTION FILTER ----------
+        nav { class: "sec-nav", "aria-label": "Filter by section",
+            button {
+                class: if filter().is_none() { "sec-chip active" } else { "sec-chip" },
+                "aria-pressed": filter().is_none(),
+                onclick: move |_| filter.set(None),
+                "All"
+            }
+            for s in present.iter().copied() {
+                button {
+                    key: "{s}",
+                    class: if filter() == Some(s) { "sec-chip active" } else { "sec-chip" },
+                    "aria-pressed": filter() == Some(s),
+                    onclick: move |_| filter.set(Some(s)),
+                    "{s}"
+                }
+            }
+            Link { class: "sec-chip db", to: Route::Database {}, "Convictions" }
+        }
+
+        section { class: "section", style: "padding-top:clamp(16px,3vh,32px);",
             div { class: "wrap",
                 div { class: "research-list",
-                    for c in cards.iter() {
+                    for c in cards.iter().filter(|c| filter().is_none_or(|s| c.section == s)) {
                         Link {
                             key: "{c.slug}",
                             class: "r-row has-img reveal",
