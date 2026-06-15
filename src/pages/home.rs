@@ -1,14 +1,15 @@
-//! Home — the newsroom front page. DATA-DRIVEN: the lead is the newest article and
-//! the body is built from the section taxonomy (content::SECTIONS), so as articles
-//! are added — here or, later, via the CMS — the front page reorganises itself with
-//! no layout code to touch. Headline-led, press-standard, section-organised.
+//! Home — the newsroom front page. DATA-DRIVEN: the compile-time seeds are the
+//! baseline and the live CMS feed (published via /desk) is merged in, then the
+//! lead = newest and the body is built from the section taxonomy. So as stories
+//! are published the front page reorganises itself with no layout code to touch.
 
 use dioxus::prelude::*;
 
+use crate::api::published_feed;
 use crate::app::Route;
 use crate::assets::PH_LOGO;
 use crate::config;
-use crate::content::{in_section, Article, ARTICLES, SECTIONS};
+use crate::content::{ARTICLES, SECTIONS};
 use crate::icons::svg;
 
 /// (icon, title, description) — what the newsroom does.
@@ -35,6 +36,19 @@ const STRANDS: [(&str, &str, &str); 4] = [
     ),
 ];
 
+/// A unified front-page card, from a compile-time seed or the live CMS feed.
+#[derive(Clone, PartialEq)]
+struct Card {
+    slug: String,
+    title: String,
+    summary: String,
+    section: String,
+    byline: String,
+    date: String,
+    iso: String,
+    image: Option<String>,
+}
+
 /// kebab-case anchor id for a section name (e.g. "Crime" -> "s-crime").
 fn anchor(section: &str) -> String {
     format!("s-{}", section.to_lowercase().replace(' ', "-"))
@@ -42,23 +56,66 @@ fn anchor(section: &str) -> String {
 
 #[component]
 pub fn Home() -> Element {
-    let lead = &ARTICLES[0];
+    let feed = use_resource(move || published_feed());
 
-    // Build the populated sections (excluding the lead, which has its own slot),
-    // in SECTIONS display order. Empty sections simply don't render.
-    let sections: Vec<(&'static str, String, Vec<&'static Article>)> = SECTIONS
+    // Seeds first (full fidelity), then any published story that isn't a seed.
+    let mut cards: Vec<Card> = ARTICLES
         .iter()
-        .map(|s| {
-            let arts: Vec<&'static Article> = in_section(s)
-                .into_iter()
-                .filter(|a| a.slug != lead.slug)
-                .collect();
-            (*s, anchor(s), arts)
+        .map(|a| Card {
+            slug: a.slug.to_string(),
+            title: a.title.to_string(),
+            summary: a.summary.to_string(),
+            section: a.section.to_string(),
+            byline: a.byline.to_string(),
+            date: a.date.to_string(),
+            iso: a.iso_date.to_string(),
+            image: a.image.map(|s| s.to_string()),
+        })
+        .collect();
+    {
+        let g = feed.read();
+        if let Some(Ok(items)) = g.as_ref() {
+            for f in items {
+                if !ARTICLES.iter().any(|a| a.slug == f.slug) {
+                    cards.push(Card {
+                        slug: f.slug.clone(),
+                        title: f.title.clone(),
+                        summary: f.summary.clone(),
+                        section: f.section.clone(),
+                        byline: f.byline.clone(),
+                        date: f.iso_date.clone(),
+                        iso: f.iso_date.clone(),
+                        image: None,
+                    });
+                }
+            }
+        }
+    }
+    cards.sort_by(|a, b| b.iso.cmp(&a.iso));
+
+    // Lead with the newest hard-news story (a front page leads with news, not an
+    // announcement/explainer); those still appear in the Community cluster.
+    let lead_idx = cards
+        .iter()
+        .position(|c| c.section != "Community")
+        .unwrap_or(0);
+    let lead = cards[lead_idx].clone();
+    let rest: Vec<Card> = cards
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != lead_idx)
+        .map(|(_, c)| c.clone())
+        .collect();
+    // Populated sections (excluding the lead), in SECTIONS display order.
+    let sections: Vec<(&'static str, String, Vec<Card>)> = SECTIONS
+        .iter()
+        .map(|&s| {
+            let arts: Vec<Card> = rest.iter().filter(|c| c.section == s).cloned().collect();
+            (s, anchor(s), arts)
         })
         .filter(|(_, _, arts)| !arts.is_empty())
         .collect();
 
-    // NewsMediaOrganization JSON-LD for rich results / knowledge panel.
     let org_ld = format!(
         r#"{{"@context":"https://schema.org","@type":"NewsMediaOrganization","name":"{name}","url":"{base}","slogan":"{tagline}","sameAs":["https://www.facebook.com/Online.Stings","https://www.youtube.com/@JordanHall_dev","https://x.com/PredHunTers"]}}"#,
         name = config::SITE_NAME,
@@ -86,9 +143,9 @@ pub fn Home() -> Element {
         // ---------- LEAD ----------
         section { class: "section", style: "padding-top:clamp(10px,2vh,22px);",
             div { class: "wrap",
-                Link { class: "hero-lead", to: Route::Article { slug: lead.slug.to_string() },
-                    if let Some(src) = lead.image {
-                        img { class: "media", src: src, alt: "{lead.title}", loading: "lazy" }
+                Link { class: "hero-lead", to: Route::Article { slug: lead.slug.clone() },
+                    if let Some(src) = lead.image.as_ref() {
+                        img { class: "media", src: "{src}", alt: "{lead.title}", loading: "lazy" }
                     } else {
                         img { class: "media logo", src: PH_LOGO, alt: "{lead.title}", loading: "lazy" }
                     }
@@ -115,18 +172,18 @@ pub fn Home() -> Element {
                         Link { class: "sec-more", to: Route::News {}, "More" }
                     }
                     div { class: "cards",
-                        for a in arts.iter() {
-                            Link { key: "{a.slug}", class: "ncard", to: Route::Article { slug: a.slug.to_string() },
-                                if let Some(src) = a.image {
-                                    img { class: "media", src: src, alt: "{a.title}", loading: "lazy" }
+                        for c in arts.iter() {
+                            Link { key: "{c.slug}", class: "ncard", to: Route::Article { slug: c.slug.clone() },
+                                if let Some(src) = c.image.as_ref() {
+                                    img { class: "media", src: "{src}", alt: "{c.title}", loading: "lazy" }
                                 } else {
-                                    img { class: "media logo", src: PH_LOGO, alt: "{a.title}", loading: "lazy" }
+                                    img { class: "media logo", src: PH_LOGO, alt: "{c.title}", loading: "lazy" }
                                 }
                                 div { class: "ncard-body",
-                                    span { class: "kicker", "{a.section}" }
-                                    h3 { class: "hl", "{a.title}" }
-                                    p { "{a.summary}" }
-                                    div { class: "byline", "By {a.byline} · {a.date}" }
+                                    span { class: "kicker", "{c.section}" }
+                                    h3 { class: "hl", "{c.title}" }
+                                    p { "{c.summary}" }
+                                    div { class: "byline", "By {c.byline} · {c.date}" }
                                 }
                             }
                         }
