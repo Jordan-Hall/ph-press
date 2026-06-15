@@ -111,6 +111,17 @@ impl State {
     pub fn is_public(self) -> bool {
         matches!(self, State::Published | State::Corrected)
     }
+    /// Every lifecycle state, for enumerating valid transitions.
+    pub const ALL: [State; 8] = [
+        State::Draft,
+        State::Submitted,
+        State::EditorialReview,
+        State::LegalReview,
+        State::Scheduled,
+        State::Published,
+        State::Corrected,
+        State::Retracted,
+    ];
 }
 
 /// The gated transition table. Crucially, `Published` is only reachable via
@@ -138,6 +149,16 @@ pub fn can_transition(from: State, to: State, role: Role) -> bool {
         (Corrected, Retracted) => matches!(role, Editor | Admin),
         _ => false,
     }
+}
+
+/// The states this `role` may move an article to FROM `from` (excluding `from`
+/// itself). Drives the dashboard's per-article action buttons — the gate stays
+/// authoritative in `can_transition`, so the UI can never offer an illegal move.
+pub fn allowed_transitions(from: State, role: Role) -> Vec<State> {
+    State::ALL
+        .into_iter()
+        .filter(|&to| to != from && can_transition(from, to, role))
+        .collect()
 }
 
 // ===================== auth =====================
@@ -421,6 +442,62 @@ pub async fn create_article(
     Ok(res.last_insert_rowid())
 }
 
+/// URL-safe slug from a title: lowercase ASCII alphanumerics, single dashes.
+pub fn slugify(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut dash = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            dash = false;
+        } else if !out.is_empty() && !dash {
+            out.push('-');
+            dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "untitled".to_string()
+    } else {
+        out
+    }
+}
+
+async fn slug_exists(pool: &SqlitePool, slug: &str) -> Result<bool> {
+    let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM article WHERE slug = ?")
+        .bind(slug)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.is_some())
+}
+
+/// Create a Draft from a title (slug derived + de-duplicated), audited. `byline`
+/// is the article's credit; `actor` is the stable username recorded in the audit
+/// chain (so creation is attributable even if a display name later changes). The
+/// body is a JSON array of paragraph strings (same shape the public renderer reads).
+pub async fn create_draft(
+    pool: &SqlitePool,
+    title: &str,
+    summary: &str,
+    body: &str,
+    byline: &str,
+    kind: &str,
+    actor: &str,
+) -> Result<i64> {
+    let base = slugify(title);
+    let mut slug = base.clone();
+    let mut n = 2;
+    while slug_exists(pool, &slug).await? {
+        slug = format!("{base}-{n}");
+        n += 1;
+    }
+    let id = create_article(pool, &slug, title, summary, body, byline, kind).await?;
+    append_audit(pool, actor, "article.create", &slug, "draft created").await?;
+    Ok(id)
+}
+
 pub async fn get_article(pool: &SqlitePool, id: i64) -> Result<Option<Article>> {
     Ok(
         sqlx::query_as::<_, Article>("SELECT * FROM article WHERE id = ?")
@@ -589,7 +666,7 @@ pub async fn all_articles(pool: &SqlitePool) -> Result<Vec<Article>> {
 
 /// Public text search over published articles (title/summary/body), newest first.
 pub async fn search_articles(pool: &SqlitePool, q: &str) -> Result<Vec<Article>> {
-    let like = format!("%{}%", q.replace('%', "").replace('_', ""));
+    let like = format!("%{}%", q.replace(['%', '_'], ""));
     Ok(sqlx::query_as::<_, Article>(
         "SELECT * FROM article WHERE state IN ('published','corrected') AND (title LIKE ? OR summary LIKE ? OR body LIKE ?) ORDER BY COALESCE(published_at, updated_at) DESC",
     )
@@ -954,5 +1031,52 @@ mod tests {
         // logout invalidates
         destroy_session(&pool, &token).await.unwrap();
         assert!(validate_session(&pool, &token).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn create_draft_dedupes_slug_and_lists_actions() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+
+        let id1 = create_draft(
+            &pool,
+            "Court Report: R v Smith",
+            "s",
+            "[]",
+            "Jordan",
+            "Court report",
+            "admin",
+        )
+        .await
+        .unwrap();
+        let id2 = create_draft(
+            &pool,
+            "Court Report: R v Smith",
+            "s",
+            "[]",
+            "Jordan",
+            "Court report",
+            "admin",
+        )
+        .await
+        .unwrap();
+        assert_ne!(id1, id2);
+        let a1 = get_article(&pool, id1).await.unwrap().unwrap();
+        let a2 = get_article(&pool, id2).await.unwrap().unwrap();
+        assert_eq!(a1.slug, "court-report-r-v-smith");
+        assert_eq!(a2.slug, "court-report-r-v-smith-2");
+        assert_eq!(a1.state, "draft");
+
+        // A writer can only submit a draft; a legal reviewer cannot act on a draft.
+        assert_eq!(
+            allowed_transitions(State::Draft, Role::Writer),
+            vec![State::Submitted]
+        );
+        assert!(allowed_transitions(State::Draft, Role::Legal).is_empty());
+        // Publishing is reachable only from legal review, and only by legal/admin.
+        assert!(allowed_transitions(State::LegalReview, Role::Legal).contains(&State::Published));
+        assert!(
+            !allowed_transitions(State::EditorialReview, Role::Editor).contains(&State::Published)
+        );
     }
 }

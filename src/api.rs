@@ -23,7 +23,9 @@ pub struct DeskSession {
     pub role: String,
 }
 
-/// One row of the editorial dashboard (any lifecycle state).
+/// One row of the editorial dashboard (any lifecycle state). `actions` are the
+/// transitions THIS user may perform from the row's current state — computed
+/// server-side so the UI can never offer an illegal move.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeskArticle {
     pub id: i64,
@@ -34,6 +36,14 @@ pub struct DeskArticle {
     pub byline: String,
     pub updated_at: i64,
     pub is_ai_assisted: bool,
+    pub actions: Vec<DeskAction>,
+}
+
+/// One allowed lifecycle transition: the target state + a human button label.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskAction {
+    pub to: String,
+    pub label: String,
 }
 
 // ---- server-only cookie helpers ---------------------------------------------
@@ -74,6 +84,77 @@ async fn session_token() -> Option<String> {
             .strip_prefix(&format!("{SESSION_COOKIE}="))
             .map(str::to_string)
     })
+}
+
+/// Human label for a lifecycle action button.
+#[cfg(feature = "server")]
+fn action_label(from: ph_cms::State, to: ph_cms::State) -> &'static str {
+    use ph_cms::State::*;
+    match (from, to) {
+        (Draft, Submitted) => "Submit",
+        (Submitted, EditorialReview) => "Start review",
+        (Submitted, Draft) => "Return to draft",
+        (EditorialReview, LegalReview) => "Send to legal",
+        (EditorialReview, Draft) => "Return to draft",
+        (LegalReview, Scheduled) => "Approve + schedule",
+        (LegalReview, Published) => "Approve + publish",
+        (LegalReview, EditorialReview) => "Back to editorial",
+        (Scheduled, Published) => "Publish now",
+        (Published, Corrected) => "Mark corrected",
+        (Published, Retracted) => "Retract",
+        (Corrected, Retracted) => "Retract",
+        _ => to.as_str(),
+    }
+}
+
+/// Build the dashboard rows for a given role, attaching the per-article actions
+/// that role may perform (the gate stays authoritative in ph-cms).
+#[cfg(feature = "server")]
+async fn build_desk(role_str: &str) -> Result<Vec<DeskArticle>, ServerFnError> {
+    let role = ph_cms::Role::parse(role_str).map_err(ServerFnError::new)?;
+    let arts = crate::cms::all_articles()
+        .await
+        .map_err(ServerFnError::new)?;
+    Ok(arts
+        .into_iter()
+        .map(|a| {
+            let actions = ph_cms::State::parse(&a.state)
+                .ok()
+                .map(|st| {
+                    ph_cms::allowed_transitions(st, role)
+                        .into_iter()
+                        .map(|to| DeskAction {
+                            label: action_label(st, to).to_string(),
+                            to: to.as_str().to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            DeskArticle {
+                id: a.id,
+                slug: a.slug,
+                title: a.title,
+                state: a.state,
+                kind: a.kind,
+                byline: a.byline,
+                updated_at: a.updated_at,
+                is_ai_assisted: a.is_ai_assisted,
+                actions,
+            }
+        })
+        .collect())
+}
+
+/// Validate the session cookie or return an auth error. Server-only.
+#[cfg(feature = "server")]
+async fn require_session() -> Result<ph_cms::Session, ServerFnError> {
+    let token = session_token()
+        .await
+        .ok_or_else(|| ServerFnError::new("not authenticated"))?;
+    crate::cms::session_for(&token)
+        .await
+        .map_err(ServerFnError::new)?
+        .ok_or_else(|| ServerFnError::new("not authenticated"))
 }
 
 // ---- endpoints --------------------------------------------------------------
@@ -164,38 +245,64 @@ pub async fn staff_logout() -> Result<(), ServerFnError> {
     }
 }
 
-/// The editorial dashboard listing — every article in any state. Requires a valid
-/// session; returns an auth error otherwise.
+/// The editorial dashboard listing — every article in any state, with the
+/// actions this user may perform. Requires a valid session.
 #[server(endpoint = "desk_articles")]
 pub async fn desk_articles() -> Result<Vec<DeskArticle>, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        let token = session_token()
-            .await
-            .ok_or_else(|| ServerFnError::new("not authenticated"))?;
-        crate::cms::session_for(&token)
-            .await
-            .map_err(ServerFnError::new)?
-            .ok_or_else(|| ServerFnError::new("not authenticated"))?;
-        let arts = crate::cms::all_articles()
-            .await
-            .map_err(ServerFnError::new)?;
-        Ok(arts
-            .into_iter()
-            .map(|a| DeskArticle {
-                id: a.id,
-                slug: a.slug,
-                title: a.title,
-                state: a.state,
-                kind: a.kind,
-                byline: a.byline,
-                updated_at: a.updated_at,
-                is_ai_assisted: a.is_ai_assisted,
-            })
-            .collect())
+        let session = require_session().await?;
+        build_desk(&session.role).await
     }
     #[cfg(not(feature = "server"))]
     {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Apply a lifecycle transition to an article, then return the refreshed list.
+/// The role gate (publish only via legal sign-off) is enforced server-side.
+#[server(endpoint = "desk_transition")]
+pub async fn desk_transition(id: i64, to: String) -> Result<Vec<DeskArticle>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::transition(&session.username, id, &to)
+            .await
+            .map_err(ServerFnError::new)?;
+        build_desk(&session.role).await
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, to);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Create a new Draft authored by the current user, then return the refreshed list.
+#[server(endpoint = "desk_create")]
+pub async fn desk_create(
+    title: String,
+    summary: String,
+    kind: String,
+) -> Result<Vec<DeskArticle>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::create_draft(
+            &session.username,
+            &session.display_name,
+            &title,
+            &summary,
+            &kind,
+        )
+        .await
+        .map_err(ServerFnError::new)?;
+        build_desk(&session.role).await
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (title, summary, kind);
         Err(ServerFnError::new("server only"))
     }
 }

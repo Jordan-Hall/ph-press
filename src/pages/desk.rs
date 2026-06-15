@@ -1,12 +1,15 @@
 //! `/desk` — the staff editorial console. Deliberately NOT at `/admin`; it is
 //! noindex, unlinked from the public site, and absent from the sitemap. Renders a
-//! login form until authenticated, then a read-only editorial dashboard listing
-//! every article and its lifecycle state. Lifecycle actions (submit/review/
-//! publish) land in a later increment; this is the auth backbone + dashboard.
+//! login form until authenticated, then the editorial dashboard: create drafts
+//! and move articles through the role-gated lifecycle (the gate — publish only via
+//! legal sign-off — is enforced server-side; the UI only shows allowed actions).
 
 use dioxus::prelude::*;
 
-use crate::api::{desk_articles, staff_login, staff_logout, staff_me, DeskArticle, DeskSession};
+use crate::api::{
+    desk_articles, desk_create, desk_transition, staff_login, staff_logout, staff_me, DeskArticle,
+    DeskSession,
+};
 
 /// Auth state for the console shell.
 #[derive(Clone, PartialEq)]
@@ -98,7 +101,17 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
 
 #[component]
 fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
-    let articles = use_resource(move || async move { desk_articles().await.unwrap_or_default() });
+    let mut articles = use_signal(|| Option::<Vec<DeskArticle>>::None);
+    let busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_new = use_signal(|| false);
+
+    use_resource(move || async move {
+        match desk_articles().await {
+            Ok(list) => articles.set(Some(list)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
 
     let logout = move |_| {
         spawn(async move {
@@ -108,6 +121,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
     };
 
     let rows = articles.read().clone();
+    let count = rows.as_ref().map(|v| v.len());
     rsx! {
         header { class: "desk-top",
             div { class: "desk-top-in",
@@ -125,14 +139,31 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
             section { class: "desk-panel",
                 div { class: "desk-panel-head",
                     h2 { "Articles" }
-                    match &rows {
-                        Some(v) => rsx! { span { class: "desk-count", "{v.len()} total" } },
-                        None => rsx! {},
+                    div { class: "desk-head-right",
+                        if let Some(n) = count {
+                            span { class: "desk-count", "{n} total" }
+                        }
+                        button {
+                            class: "desk-btn sm",
+                            onclick: move |_| {
+                                let open = show_new();
+                                show_new.set(!open);
+                            },
+                            if show_new() { "Close" } else { "New draft" }
+                        }
                     }
                 }
+                if show_new() {
+                    NewDraftForm { articles, busy }
+                }
+                if let Some(e) = err() {
+                    p { class: "desk-error pad", "{e}" }
+                }
                 match rows {
-                    None => rsx! { p { class: "desk-muted", "Loading articles…" } },
-                    Some(v) if v.is_empty() => rsx! { p { class: "desk-muted", "No articles yet." } },
+                    None => rsx! { p { class: "desk-muted pad", "Loading articles…" } },
+                    Some(v) if v.is_empty() => rsx! {
+                        p { class: "desk-muted pad", "No articles yet. Create the first draft." }
+                    },
                     Some(v) => rsx! {
                         table { class: "desk-table",
                             thead {
@@ -142,11 +173,12 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                                     th { "Kind" }
                                     th { "Byline" }
                                     th { "Updated" }
+                                    th { "Actions" }
                                 }
                             }
                             tbody {
                                 for a in v {
-                                    DeskRow { key: "{a.id}", a }
+                                    DeskRow { key: "{a.id}", a, articles, busy, err }
                                 }
                             }
                         }
@@ -158,7 +190,13 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
 }
 
 #[component]
-fn DeskRow(a: DeskArticle) -> Element {
+fn DeskRow(
+    a: DeskArticle,
+    mut articles: Signal<Option<Vec<DeskArticle>>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+) -> Element {
+    let id = a.id;
     rsx! {
         tr {
             td {
@@ -173,6 +211,94 @@ fn DeskRow(a: DeskArticle) -> Element {
             td { class: "desk-muted", "{a.kind}" }
             td { class: "desk-muted", "{a.byline}" }
             td { class: "desk-muted", "{ymd(a.updated_at)}" }
+            td { class: "desk-actions",
+                if a.actions.is_empty() {
+                    span { class: "desk-muted", "—" }
+                }
+                for act in a.actions.clone() {
+                    button {
+                        key: "{act.to}",
+                        class: if act.to == "retracted" { "desk-act danger" } else { "desk-act" },
+                        disabled: busy(),
+                        onclick: {
+                            let to = act.to.clone();
+                            move |_| {
+                                let to = to.clone();
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_transition(id, to).await {
+                                        Ok(list) => articles.set(Some(list)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            }
+                        },
+                        "{act.label}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal<bool>) -> Element {
+    let mut title = use_signal(String::new);
+    let mut summary = use_signal(String::new);
+    let mut kind = use_signal(|| "Court report".to_string());
+    let mut err = use_signal(|| Option::<String>::None);
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            match desk_create(title(), summary(), kind()).await {
+                Ok(list) => {
+                    articles.set(Some(list));
+                    title.set(String::new());
+                    summary.set(String::new());
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        form { class: "desk-new", onsubmit: submit,
+            div { class: "desk-new-row",
+                input {
+                    class: "desk-in",
+                    r#type: "text",
+                    placeholder: "Headline",
+                    value: "{title}",
+                    oninput: move |e| title.set(e.value()),
+                }
+                select {
+                    class: "desk-in",
+                    value: "{kind}",
+                    onchange: move |e| kind.set(e.value()),
+                    option { value: "Court report", "Court report" }
+                    option { value: "Investigation", "Investigation" }
+                    option { value: "Explainer", "Explainer" }
+                    option { value: "Announcement", "Announcement" }
+                    option { value: "News", "News" }
+                }
+            }
+            input {
+                class: "desk-in full",
+                r#type: "text",
+                placeholder: "One-line summary",
+                value: "{summary}",
+                oninput: move |e| summary.set(e.value()),
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error", "{e}" }
+            }
+            button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Create draft" }
         }
     }
 }

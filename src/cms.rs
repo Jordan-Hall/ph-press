@@ -95,6 +95,47 @@ pub async fn all_articles() -> Result<Vec<ph_cms::Article>, String> {
     ph_cms::all_articles(pool).await.map_err(|e| e.to_string())
 }
 
+/// Apply a lifecycle transition as `username`. The actor is reloaded from the DB
+/// so the role gate uses the CURRENT role; ph_cms::transition enforces the gate
+/// (publish only via legal sign-off), logs the review, and audits.
+pub async fn transition(username: &str, id: i64, to_state: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = ph_cms::find_user(pool, username)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "user not found".to_string())?;
+    let to = ph_cms::State::parse(to_state).map_err(|_| "unknown target state".to_string())?;
+    ph_cms::transition(pool, id, to, &user, "via /desk")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Create a Draft authored by the current user (body starts empty). `byline` is
+/// the article credit (display name); `username` is the stable audit actor.
+pub async fn create_draft(
+    username: &str,
+    byline: &str,
+    title: &str,
+    summary: &str,
+    kind: &str,
+) -> Result<i64, String> {
+    if title.trim().is_empty() {
+        return Err("a title is required".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::create_draft(
+        pool,
+        title.trim(),
+        summary.trim(),
+        "[]",
+        byline,
+        kind,
+        username,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 struct OwnedSeed {
     slug: &'static str,
     title: &'static str,
