@@ -161,14 +161,19 @@ pub async fn preview_article(id: i64) -> Result<Option<ph_cms::Article>, String>
 /// Apply a lifecycle transition as `username`. The actor is reloaded from the DB
 /// so the role gate uses the CURRENT role; ph_cms::transition enforces the gate
 /// (publish only via legal sign-off), logs the review, and audits.
-pub async fn transition(username: &str, id: i64, to_state: &str) -> Result<(), String> {
+pub async fn transition(username: &str, id: i64, to_state: &str, note: &str) -> Result<(), String> {
     let pool = db().await.map_err(|e| e.to_string())?;
     let user = ph_cms::find_user(pool, username)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "user not found".to_string())?;
     let to = ph_cms::State::parse(to_state).map_err(|_| "unknown target state".to_string())?;
-    ph_cms::transition(pool, id, to, &user, "via /desk")
+    let note = if note.trim().is_empty() {
+        "via /desk"
+    } else {
+        note.trim()
+    };
+    ph_cms::transition(pool, id, to, &user, note)
         .await
         .map_err(|e| e.to_string())
 }

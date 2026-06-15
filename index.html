@@ -342,6 +342,14 @@ html[data-theme="light"] .media.logo,html[data-theme="light"] .r-thumb.logo{back
 a.mappop-link{font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--red);text-decoration:none;}
 a.mappop-link:hover{text-decoration:underline;}
 
+/* IMPRESS pre-publish checklist modal */
+.modal-scrim{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;}
+.modal{width:100%;max-width:480px;background:var(--paper-2);border:1px solid var(--rule-2);border-radius:var(--r-xl);padding:26px 26px 22px;box-shadow:0 30px 70px rgba(0,0,0,.5);}
+.modal-title{font-family:var(--serif);font-size:21px;color:var(--ink);margin:6px 0 4px;}
+.modal-check{display:flex;gap:11px;align-items:flex-start;padding:11px 0;border-top:1px solid var(--rule);font-size:14px;line-height:1.5;color:var(--ink-2);cursor:pointer;}
+.modal-check input{margin-top:3px;flex:none;width:16px;height:16px;accent-color:var(--red);}
+.modal-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:18px;}
+
 /* ===== /desk editorial console (its own chrome, theme-aware) ===== */
 .desk-root{min-height:100vh;background:var(--sunk);color:var(--ink);font-family:var(--sans);}
 .desk-loading{display:flex;min-height:100vh;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:14px;}

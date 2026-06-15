@@ -396,18 +396,22 @@ pub async fn desk_articles() -> Result<Vec<DeskArticle>, ServerFnError> {
 /// Apply a lifecycle transition to an article, then return the refreshed list.
 /// The role gate (publish only via legal sign-off) is enforced server-side.
 #[server(endpoint = "desk_transition")]
-pub async fn desk_transition(id: i64, to: String) -> Result<Vec<DeskArticle>, ServerFnError> {
+pub async fn desk_transition(
+    id: i64,
+    to: String,
+    note: String,
+) -> Result<Vec<DeskArticle>, ServerFnError> {
     #[cfg(feature = "server")]
     {
         let session = require_session().await?;
-        crate::cms::transition(&session.username, id, &to)
+        crate::cms::transition(&session.username, id, &to, &note)
             .await
             .map_err(ServerFnError::new)?;
         build_desk(&session.role).await
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (id, to);
+        let _ = (id, to, note);
         Err(ServerFnError::new("server only"))
     }
 }

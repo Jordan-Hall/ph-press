@@ -169,6 +169,8 @@ fn ArticlesPanel() -> Element {
     let mut articles = use_signal(|| Option::<Vec<DeskArticle>>::None);
     let busy = use_signal(|| false);
     let mut err = use_signal(|| Option::<String>::None);
+    // (article id, target state, button label) of a publish awaiting IMPRESS sign-off.
+    let pending = use_signal(|| Option::<(i64, String, String)>::None);
 
     use_resource(move || async move {
         match desk_articles().await {
@@ -212,12 +214,13 @@ fn ArticlesPanel() -> Element {
                         }
                         tbody {
                             for a in v {
-                                DeskRow { key: "{a.id}", a, articles, busy, err }
+                                DeskRow { key: "{a.id}", a, articles, busy, err, pending }
                             }
                         }
                     }
                 },
             }
+            PublishGate { pending, articles, busy, err }
         }
     }
 }
@@ -658,11 +661,83 @@ fn complaint_label(status: &str) -> &str {
 }
 
 #[component]
+/// IMPRESS pre-publish checklist. Shown when an editor moves a story to Published
+/// or Scheduled; the confirmations are recorded in the review log + audit trail as
+/// the sign-off note. Publishing is blocked until all are ticked.
+#[component]
+fn PublishGate(
+    mut pending: Signal<Option<(i64, String, String)>>,
+    mut articles: Signal<Option<Vec<DeskArticle>>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+) -> Element {
+    let mut c1 = use_signal(|| false);
+    let mut c2 = use_signal(|| false);
+    let mut c3 = use_signal(|| false);
+
+    let p = pending.read().clone();
+    let Some((id, to, label)) = p else {
+        return rsx! {};
+    };
+    let ready = c1() && c2() && c3();
+
+    let confirm = move |_| {
+        if !(c1() && c2() && c3()) {
+            return;
+        }
+        let to = to.clone();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            let note = "IMPRESS sign-off: case concluded (no active proceedings); public interest + accuracy checked; AI-assistance + pre-charge naming reviewed";
+            match desk_transition(id, to, note.to_string()).await {
+                Ok(list) => {
+                    articles.set(Some(list));
+                    pending.set(None);
+                    c1.set(false);
+                    c2.set(false);
+                    c3.set(false);
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "modal-scrim", onclick: move |_| pending.set(None),
+            div { class: "modal", onclick: move |e| e.stop_propagation(),
+                p { class: "desk-eyebrow", "Pre-publish checks" }
+                h3 { class: "modal-title", "Going public: {label}" }
+                p { class: "desk-muted", style: "margin:0 0 14px;", "Confirm our published standards before this story goes live:" }
+                label { class: "modal-check",
+                    input { r#type: "checkbox", checked: c1(), onchange: move |e| c1.set(e.checked()) }
+                    span { "The case is concluded — no active proceedings (Contempt of Court Act 1981)." }
+                }
+                label { class: "modal-check",
+                    input { r#type: "checkbox", checked: c2(), onchange: move |e| c2.set(e.checked()) }
+                    span { "There is a clear public interest and the piece is accurate against the record." }
+                }
+                label { class: "modal-check",
+                    input { r#type: "checkbox", checked: c3(), onchange: move |e| c3.set(e.checked()) }
+                    span { "Any AI assistance is labelled; no one is named before charge without justification." }
+                }
+                div { class: "modal-actions",
+                    button { class: "desk-btn ghost", onclick: move |_| pending.set(None), "Cancel" }
+                    button { class: "desk-btn", disabled: !ready || busy(), onclick: confirm, "Confirm + publish" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn DeskRow(
     a: DeskArticle,
     mut articles: Signal<Option<Vec<DeskArticle>>>,
     mut busy: Signal<bool>,
     mut err: Signal<Option<String>>,
+    mut pending: Signal<Option<(i64, String, String)>>,
 ) -> Element {
     let id = a.id;
     rsx! {
@@ -710,17 +785,25 @@ fn DeskRow(
                         disabled: busy(),
                         onclick: {
                             let to = act.to.clone();
+                            let label = act.label.clone();
                             move |_| {
                                 let to = to.clone();
-                                spawn(async move {
-                                    busy.set(true);
-                                    err.set(None);
-                                    match desk_transition(id, to).await {
-                                        Ok(list) => articles.set(Some(list)),
-                                        Err(e) => err.set(Some(e.to_string())),
-                                    }
-                                    busy.set(false);
-                                });
+                                let label = label.clone();
+                                // Going public (publish/schedule) opens the IMPRESS
+                                // pre-publish checklist; other moves apply at once.
+                                if to == "published" || to == "scheduled" {
+                                    pending.set(Some((id, to, label)));
+                                } else {
+                                    spawn(async move {
+                                        busy.set(true);
+                                        err.set(None);
+                                        match desk_transition(id, to, String::new()).await {
+                                            Ok(list) => articles.set(Some(list)),
+                                            Err(e) => err.set(Some(e.to_string())),
+                                        }
+                                        busy.set(false);
+                                    });
+                                }
                             }
                         },
                         "{act.label}"
