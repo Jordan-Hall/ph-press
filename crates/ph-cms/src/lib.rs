@@ -465,6 +465,99 @@ pub async fn transition(
     Ok(())
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Correction {
+    pub id: i64,
+    pub article_id: i64,
+    pub original: String,
+    pub corrected: String,
+    pub reason: String,
+    pub ts: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Complaint {
+    pub id: i64,
+    pub article_slug: String,
+    pub complainant: String,
+    pub body: String,
+    pub status: String,
+    pub ts: i64,
+}
+
+/// Publicly visible articles (Published or Corrected), newest first.
+pub async fn published_articles(pool: &SqlitePool) -> Result<Vec<Article>> {
+    Ok(sqlx::query_as::<_, Article>(
+        "SELECT * FROM article WHERE state IN ('published','corrected') ORDER BY COALESCE(published_at, updated_at) DESC",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Public text search over published articles (title/summary/body), newest first.
+pub async fn search_articles(pool: &SqlitePool, q: &str) -> Result<Vec<Article>> {
+    let like = format!("%{}%", q.replace('%', "").replace('_', ""));
+    Ok(sqlx::query_as::<_, Article>(
+        "SELECT * FROM article WHERE state IN ('published','corrected') AND (title LIKE ? OR summary LIKE ? OR body LIKE ?) ORDER BY COALESCE(published_at, updated_at) DESC",
+    )
+    .bind(&like)
+    .bind(&like)
+    .bind(&like)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Record a published correction (both versions kept) + audit it.
+pub async fn add_correction(
+    pool: &SqlitePool,
+    article_id: i64,
+    original: &str,
+    corrected: &str,
+    reason: &str,
+) -> Result<i64> {
+    let res = sqlx::query(
+        "INSERT INTO correction (article_id, original, corrected, reason, ts) VALUES (?,?,?,?,?)",
+    )
+    .bind(article_id)
+    .bind(original)
+    .bind(corrected)
+    .bind(reason)
+    .bind(now())
+    .execute(pool)
+    .await?;
+    append_audit(pool, "system", "article.correction", &article_id.to_string(), reason).await?;
+    Ok(res.last_insert_rowid())
+}
+
+/// The published corrections archive, newest first.
+pub async fn list_corrections(pool: &SqlitePool) -> Result<Vec<Correction>> {
+    Ok(
+        sqlx::query_as::<_, Correction>("SELECT * FROM correction ORDER BY ts DESC")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// Log a reader complaint (kept on record) + audit it.
+pub async fn log_complaint(
+    pool: &SqlitePool,
+    article_slug: &str,
+    complainant: &str,
+    body: &str,
+) -> Result<i64> {
+    let res = sqlx::query(
+        "INSERT INTO complaint (article_slug, complainant, body, status, ts) VALUES (?,?,?,'received',?)",
+    )
+    .bind(article_slug)
+    .bind(complainant)
+    .bind(body)
+    .bind(now())
+    .execute(pool)
+    .await?;
+    append_audit(pool, "system", "complaint.received", article_slug, "").await?;
+    Ok(res.last_insert_rowid())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,5 +618,14 @@ mod tests {
         let chain = audit_chain(&pool).await.unwrap();
         assert!(chain.entries().len() >= 4);
         assert!(chain.verify().is_ok());
+
+        // corrections archive, complaints, public listing + search
+        add_correction(&pool, id, "old text", "new text", "fixed a detail").await.unwrap();
+        assert_eq!(list_corrections(&pool).await.unwrap().len(), 1);
+        log_complaint(&pool, "test-case", "anon", "you got X wrong").await.unwrap();
+        assert_eq!(published_articles(&pool).await.unwrap().len(), 1);
+        assert_eq!(search_articles(&pool, "Test").await.unwrap().len(), 1);
+        assert_eq!(search_articles(&pool, "zzznomatch").await.unwrap().len(), 0);
+        assert!(audit_chain(&pool).await.unwrap().verify().is_ok());
     }
 }
