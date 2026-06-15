@@ -85,7 +85,7 @@ pub fn About() -> Element {
                     div { class: "card reveal",
                         div { class: "card-ic", dangerous_inner_html: svg("eye-off") }
                         h3 { "What we are not" }
-                        p { "We are not the police, not a surveillance company, and not in it for a show. As a rule we do not name anyone before they are charged. We act only on what we can verify, and we work alongside the police, not in their place." }
+                        p { "We are not the police, not a surveillance company, and not in it for a show. As a rule we do not name anyone before they are charged. We act only on what we can verify, and we work independently of any police force." }
                     }
                 }
                 div { style: "margin-top:28px; display:flex; gap:12px; flex-wrap:wrap;",

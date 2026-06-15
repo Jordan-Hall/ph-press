@@ -4,9 +4,10 @@
 //! the wasm hydrates. Crawlers / link-preview bots / no-JS get the full body.
 //!
 //! EDITORIAL VOICE (load-bearing): independent court-reporting journalism. We
-//! run online decoy operations and hand evidence to the police; we never name
-//! anyone before they are charged, and we report only on cases concluded in
-//! court, from the public record. No public face-recognition.
+//! run online decoy operations and report INDEPENDENTLY of any police force —
+//! never claim we "work alongside" or "hand evidence to" the police (we don't).
+//! We never name anyone before they are charged, and we report only on cases
+//! concluded in court, from the public record. No public face-recognition.
 
 mod api;
 mod app;

@@ -127,7 +127,7 @@ pub const ARTICLES: &[Article] = &[
             "Today we are opening our newsroom properly.",
             "From here we will break local news of all kinds, not only the headline crimes. We will report concluded cases from the public court record. We are building a public database so a community can look up offenders who have been convicted, by name, area and offence. And where information can help bring someone to justice, we will keep appealing for it, with a reward.",
             "Some things will never change. We protect our sources. We keep them anonymous, and we only act on what we can stand up. As a rule we do not name anyone before they are charged, unless there is a strong public interest and we can confirm it. On the cases we cover, we stick to the record.",
-            "We were limited in what we could do in 2025. In 2026 this became a core part of who we are. We are independent and self-funded, we work alongside the police rather than in their place, and we are working towards registration with IMPRESS, the UK's approved press regulator, so you can hold us to a published standard. If you have a story, information, or want to support the work, get in touch. If a child is in immediate danger, call 999.",
+            "We were limited in what we could do in 2025. In 2026 this became a core part of who we are. We are independent and self-funded, we work independently of any police force, and we are working towards registration with IMPRESS, the UK's approved press regulator, so you can hold us to a published standard. If you have a story, information, or want to support the work, get in touch. If a child is in immediate danger, call 999.",
         ],
         video: None,
         youtube: None,
