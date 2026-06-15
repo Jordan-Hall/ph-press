@@ -658,6 +658,14 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
         });
     };
 
+    // Live layout preview: same paragraph split the server applies, so the writer
+    // sees the article take shape as they type.
+    let preview_paras: Vec<String> = body()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
     // Writer-first editor: a calm, focused writing surface (Ghost/Medium feel) —
     // big headline, a light meta row, the standfirst, then a roomy body.
     rsx! {
@@ -698,12 +706,23 @@ fn NewDraftForm(mut articles: Signal<Option<Vec<DeskArticle>>>, mut busy: Signal
                 value: "{summary}",
                 oninput: move |e| summary.set(e.value()),
             }
-            textarea {
-                class: "editor-body",
-                rows: "14",
-                placeholder: "Write the story. Leave a blank line — or a new line — between paragraphs.",
-                value: "{body}",
-                oninput: move |e| body.set(e.value()),
+            div { class: "editor-split",
+                textarea {
+                    class: "editor-body",
+                    rows: "16",
+                    placeholder: "Write the story. Leave a blank line — or a new line — between paragraphs.",
+                    value: "{body}",
+                    oninput: move |e| body.set(e.value()),
+                }
+                div { class: "editor-preview",
+                    span { class: "editor-prev-label", "Live preview" }
+                    if preview_paras.is_empty() {
+                        p { class: "editor-prev-empty", "Your article will appear here as you write." }
+                    }
+                    for (i , para) in preview_paras.iter().enumerate() {
+                        p { key: "{i}", "{para}" }
+                    }
+                }
             }
             if let Some(e) = err() {
                 p { class: "desk-error", "{e}" }
