@@ -54,7 +54,27 @@ UK's approved press regulator. Accuracy, corrections, a complaints process, an
 active-proceedings gate (Contempt of Court Act 1981) and transparency are built into the
 editorial workflow. See [`/standards`](https://predatorhunters.co.uk/standards).
 
+## Run your own newsroom
+
+This is open source. Take the code and stand up your own independent local
+newsroom:
+
+1. Fork the repo and clone it.
+2. Replace the branding in `assets/` + `deploy/static/` (logo, favicon, fonts, OG
+   cards via `tools/og/gen.mjs`), and the name/copy (search for "Predator Hunters").
+3. Put your own articles in `src/content.rs` (or use the editorial CMS once it is
+   wired in), set your domain in `src/components.rs` / `index.html`, and adjust
+   `deploy/` (Dockerfile, Caddyfile, the workflow) for your host + domain.
+4. `dx serve` to preview, `dx build --fullstack --ssg --release` to build, and deploy
+   the container (see **[deploy/README.md](deploy/README.md)**).
+
+You run your own instance, under your own name, and you are responsible for your
+own editorial standards and legal compliance (defamation, contempt of court, data
+protection, and any press regulation where you operate).
+
 ## Licence
 
-© Predator Hunters. All rights reserved. Public for transparency and free CI; not an
-invitation to reuse the brand, content, or reporting.
+The **source code** is MIT licensed — see [LICENSE](LICENSE). The **"Predator
+Hunters" name and logo, and all published journalism, court reports, media and
+conviction-database entries** are not covered by that licence and remain all
+rights reserved. In short: take the platform, not our brand or our stories.
