@@ -23,7 +23,8 @@ pub struct Article {
     pub byline: &'static str,
     pub date: &'static str,            // human, e.g. "June 2026"
     pub iso_date: &'static str,        // for <time>/JSON-LD, e.g. "2026-06-14"
-    pub kind: &'static str, // "Court report" | "Investigation" | "Announcement" | "Explainer"
+    pub kind: &'static str, // format: "Court report" | "Investigation" | "Announcement" | "Explainer"
+    pub section: &'static str, // topical section: one of SECTIONS (Crime/Courts/Local/Community)
     pub body: &'static [&'static str], // paragraphs
     pub video: Option<Video>, // self-hosted video (og:video inline play)
     pub youtube: Option<&'static str>, // youtube id → youtube-nocookie embed
@@ -45,6 +46,7 @@ impl Article {
 pub const ARTICLES: &[Article] = &[
     Article {
         slug: "kieron-willans-guilty",
+        section: "Crime",
         title: "Leicester man Kieron Willans sentenced over indecent images of children",
         summary: "Kieron Willans, from Leicester, has been given a suspended sentence after being found guilty of making indecent photographs of a child. He had been caught with more than 50 indecent images.",
         byline: "Scott Taylor",
@@ -63,6 +65,7 @@ pub const ARTICLES: &[Article] = &[
     },
     Article {
         slug: "jamie-wallace-guilty",
+        section: "Crime",
         title: "Jamie Wallace pleads guilty to 122 Category A child abuse images",
         summary: "Jamie Wallace has pleaded guilty to possessing 122 Category A indecent images of children, the most serious type. We put it to him.",
         byline: "Jordan Upton",
@@ -79,6 +82,7 @@ pub const ARTICLES: &[Article] = &[
     },
     Article {
         slug: "david-coote-convicted",
+        section: "Crime",
         title: "Former Premier League referee David Coote convicted of child abuse image",
         summary: "David Coote, the former Premier League referee, has been convicted of making a Category A indecent image of a child and given a suspended sentence. We put it to him on camera.",
         byline: "Jordan Upton",
@@ -98,6 +102,7 @@ pub const ARTICLES: &[Article] = &[
     },
     Article {
         slug: "ben-fass-confronted-nuneaton",
+        section: "Crime",
         title: "Convicted child sex offender Ben Fass confronted after relocating to Nuneaton",
         summary: "We tracked down a convicted child sex offender who had relocated to the Nuneaton area and put it to him about his life since release.",
         byline: "Jordan Upton",
@@ -115,6 +120,7 @@ pub const ARTICLES: &[Article] = &[
     },
     Article {
         slug: "predator-hunters-launches-its-newsroom",
+        section: "Community",
         title: "Predator Hunters launches its newsroom",
         summary: "We are opening our newsroom: independent local reporting, court coverage from the public record, reward appeals for information on serious crimes, and a public conviction database. Here is what we do, and the standards you can hold us to.",
         byline: "Jordan Upton",
@@ -135,6 +141,7 @@ pub const ARTICLES: &[Article] = &[
     },
     Article {
         slug: "how-we-report",
+        section: "Community",
         title: "How we report, and the lines we won't cross",
         summary: "How a group known for confronting offenders can also be a publisher people trust: we keep the frontline work and the reporting apart, and we never name anyone before a charge.",
         byline: "Jordan Upton",
@@ -155,6 +162,7 @@ pub const ARTICLES: &[Article] = &[
     },
     Article {
         slug: "why-a-public-conviction-database",
+        section: "Community",
         title: "Why we built a public conviction database",
         summary: "Court records are public but scattered. We think a community has a right to see what the courts have decided, in one place, in plain terms, drawn from the public record.",
         byline: "Jordan Upton",
@@ -176,6 +184,16 @@ pub const ARTICLES: &[Article] = &[
 
 pub fn by_slug(slug: &str) -> Option<&'static Article> {
     ARTICLES.iter().find(|a| a.slug == slug)
+}
+
+/// Topical sections, in front-page display order. The home + news pages render
+/// from these dynamically, so adding an article with a section (here or, later,
+/// via the CMS) populates the section automatically — no layout code to touch.
+pub const SECTIONS: &[&str] = &["Crime", "Courts", "Local", "Community"];
+
+/// Published articles in a section, newest first (ARTICLES is already newest-first).
+pub fn in_section(section: &str) -> Vec<&'static Article> {
+    ARTICLES.iter().filter(|a| a.section == section).collect()
 }
 
 /// A public conviction-database entry. Drawn from a concluded court case and

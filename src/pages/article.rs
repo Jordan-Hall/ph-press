@@ -29,8 +29,8 @@ fn news_jsonld(a: &Art) -> String {
         })
         .unwrap_or_default();
     format!(
-        "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"datePublished\":\"{}\",\"image\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}{}}}",
-        json_esc(a.title), json_esc(a.summary), a.iso_date, img, json_esc(a.byline), video
+        "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"articleSection\":\"{}\",\"datePublished\":\"{}\",\"image\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}{}}}",
+        json_esc(a.title), json_esc(a.summary), json_esc(a.section), a.iso_date, img, json_esc(a.byline), video
     )
 }
 
@@ -82,6 +82,8 @@ pub fn Article(slug: String) -> Element {
         dioxus::document::Meta { property: "og:url", content: "{url}" }
         dioxus::document::Meta { property: "og:image", content: "{img}" }
         dioxus::document::Meta { property: "article:published_time", content: "{a.iso_date}" }
+        dioxus::document::Meta { property: "article:section", content: "{a.section}" }
+        dioxus::document::Meta { property: "article:author", content: "{a.byline}" }
         if has_video {
             // Video share card — a shared link plays the video inline on Facebook etc.
             dioxus::document::Meta { property: "og:video", content: "{mp4_abs}" }
@@ -106,7 +108,7 @@ pub fn Article(slug: String) -> Element {
         article {
             header { class: "page-head",
                 div { class: "wrap", style: "max-width:760px;",
-                    p { class: "eyebrow rise d1", "{a.kind}" }
+                    p { class: "eyebrow rise d1", "{a.section} · {a.kind}" }
                     h1 { class: "rise d2", "{a.title}" }
                     p { class: "lede rise d3", "{a.summary}" }
                     div { class: "rise d4", style: "margin-top:18px; display:flex; gap:14px; align-items:center; font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);",

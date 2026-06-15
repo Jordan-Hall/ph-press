@@ -1,12 +1,13 @@
-//! Home — the newsroom front page. A lead story, a secondary story grid, a
-//! "Latest" rail, then what the newsroom does. Headline-led, not a marketing
-//! hero. Positioning: independent LOCAL news + investigations + court reporting
-//! + reward appeals + source protection + a public conviction database.
+//! Home — the newsroom front page. DATA-DRIVEN: the lead is the newest article and
+//! the body is built from the section taxonomy (content::SECTIONS), so as articles
+//! are added — here or, later, via the CMS — the front page reorganises itself with
+//! no layout code to touch. Headline-led, press-standard, section-organised.
 
 use dioxus::prelude::*;
 
 use crate::app::Route;
-use crate::content::ARTICLES;
+use crate::config;
+use crate::content::{in_section, Article, ARTICLES, SECTIONS};
 use crate::icons::svg;
 
 /// (icon, title, description) — what the newsroom does.
@@ -33,10 +34,37 @@ const STRANDS: [(&str, &str, &str); 4] = [
     ),
 ];
 
+/// kebab-case anchor id for a section name (e.g. "Crime" -> "s-crime").
+fn anchor(section: &str) -> String {
+    format!("s-{}", section.to_lowercase().replace(' ', "-"))
+}
+
 #[component]
 pub fn Home() -> Element {
     let lead = &ARTICLES[0];
-    let rest = &ARTICLES[1..];
+
+    // Build the populated sections (excluding the lead, which has its own slot),
+    // in SECTIONS display order. Empty sections simply don't render.
+    let sections: Vec<(&'static str, String, Vec<&'static Article>)> = SECTIONS
+        .iter()
+        .map(|s| {
+            let arts: Vec<&'static Article> = in_section(s)
+                .into_iter()
+                .filter(|a| a.slug != lead.slug)
+                .collect();
+            (*s, anchor(s), arts)
+        })
+        .filter(|(_, _, arts)| !arts.is_empty())
+        .collect();
+
+    // NewsMediaOrganization JSON-LD for rich results / knowledge panel.
+    let org_ld = format!(
+        r#"{{"@context":"https://schema.org","@type":"NewsMediaOrganization","name":"{name}","url":"{base}","slogan":"{tagline}","sameAs":["https://www.facebook.com/Online.Stings","https://www.youtube.com/@JordanHall_dev","https://x.com/PredHunTers"]}}"#,
+        name = config::SITE_NAME,
+        base = config::BASE_URL,
+        tagline = config::TAGLINE,
+    );
+
     rsx! {
         crate::components::Seo {
             title: "Predator Hunters: independent local news, investigations and court reporting",
@@ -44,17 +72,25 @@ pub fn Home() -> Element {
             path: "/",
             image: "/og.png",
         }
+        document::Script { r#type: "application/ld+json", dangerous_inner_html: org_ld }
 
-        // ---------- FRONT PAGE ----------
-        section { class: "section", style: "padding-top:clamp(14px,2.5vh,28px);",
+        // ---------- SECTION NAV ----------
+        nav { class: "sec-nav", "aria-label": "Sections",
+            for (sec , anch , _) in sections.iter() {
+                a { key: "{sec}", class: "sec-chip", href: "#{anch}", "{sec}" }
+            }
+            Link { class: "sec-chip db", to: Route::Database {}, "Convictions" }
+        }
+
+        // ---------- LEAD ----------
+        section { class: "section", style: "padding-top:clamp(10px,2vh,22px);",
             div { class: "wrap",
-                // lead story
                 Link { class: "hero-lead", to: Route::Article { slug: lead.slug.to_string() },
                     if lead.image.is_some() {
                         img { class: "media", src: lead.image.unwrap_or(""), alt: "{lead.title}", loading: "lazy" }
                     }
                     div {
-                        span { class: "kicker", "{lead.kind}" }
+                        span { class: "kicker", "{lead.section}" }
                         h1 { class: "hl", "{lead.title}" }
                         p { class: "standfirst", "{lead.summary}" }
                         div { class: "byline",
@@ -64,28 +100,55 @@ pub fn Home() -> Element {
                         }
                     }
                 }
-                // latest grid
-                div { class: "section-label", span { class: "sec-index", "Latest" } }
-                div { class: "cards",
-                    for a in rest {
-                        Link { key: "{a.slug}", class: "ncard", to: Route::Article { slug: a.slug.to_string() },
-                            if a.image.is_some() {
-                                img { class: "media", src: a.image.unwrap_or(""), alt: "{a.title}", loading: "lazy" }
-                            }
-                            div { class: "ncard-body",
-                                span { class: "kicker", "{a.kind}" }
-                                h3 { class: "hl", "{a.title}" }
-                                p { "{a.summary}" }
-                                div { class: "byline", "By {a.byline} · {a.date}" }
+            }
+        }
+
+        // ---------- SECTION CLUSTERS (data-driven) ----------
+        for (sec , anch , arts) in sections.iter() {
+            section { key: "{sec}", id: "{anch}", class: "section sec-block",
+                div { class: "wrap",
+                    div { class: "section-label",
+                        span { class: "sec-index", "{sec}" }
+                        Link { class: "sec-more", to: Route::News {}, "More" }
+                    }
+                    div { class: "cards",
+                        for a in arts.iter() {
+                            Link { key: "{a.slug}", class: "ncard", to: Route::Article { slug: a.slug.to_string() },
+                                if a.image.is_some() {
+                                    img { class: "media", src: a.image.unwrap_or(""), alt: "{a.title}", loading: "lazy" }
+                                }
+                                div { class: "ncard-body",
+                                    span { class: "kicker", "{a.section}" }
+                                    h3 { class: "hl", "{a.title}" }
+                                    p { "{a.summary}" }
+                                    div { class: "byline", "By {a.byline} · {a.date}" }
+                                }
                             }
                         }
                     }
                 }
-                div { style: "margin-top:26px;",
-                    Link { class: "btn btn-ghost", to: Route::News {},
-                        "All news"
-                        span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+            }
+        }
+
+        section { class: "section", style: "padding-top:0;",
+            div { class: "wrap",
+                Link { class: "btn btn-ghost", to: Route::News {},
+                    "All news"
+                    span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+                }
+            }
+        }
+
+        // ---------- DATABASE TEASER ----------
+        section { class: "section",
+            div { class: "wrap",
+                Link { class: "db-teaser reveal", to: Route::Database {},
+                    div {
+                        span { class: "kicker", "Public record" }
+                        h2 { class: "hl", "Search the conviction database" }
+                        p { "Look up the people we have reported on once their case concluded, by name, area or offence. Court-sourced, post-conviction, and correctable." }
                     }
+                    span { class: "db-teaser-go", dangerous_inner_html: svg("arrow-up-right") }
                 }
             }
         }
