@@ -23,6 +23,10 @@ dioxus = { version = "0.8.0-alpha.0", features = ["router", "fullstack"] }
 # targets (the client deserializes the responses), so it is a direct, non-optional
 # dep. serde itself is tiny on wasm; only sqlx/CMS stays server-gated.
 serde = { version = "1", features = ["derive"] }
+# Native-Rust WYSIWYG editor (taino-edit) Dioxus-0.8 adapter for the /desk editor.
+# Non-optional (the editor renders on web AND is pre-rendered as an empty host by
+# the SSG/native build); the web-sys editor itself is target-gated to wasm32.
+taino-edit-dx = { path = "crates/taino-edit-dx" }
 # Editorial CMS (SQLite). Optional + only enabled by the `server` feature, so the
 # wasm/web build never tries to compile sqlx.
 ph-cms = { path = "crates/ph-cms", optional = true }
@@ -35,4 +39,4 @@ serde_json = { version = "1", optional = true }
 # ph-offender) join as members as WS2/WS3 land. These are server-side only and
 # are NOT pulled into the wasm/web build (kept off the default feature path).
 [workspace]
-members = ["crates/ph-audit", "crates/ph-cms", "crates/ph-crawl"]
+members = ["crates/ph-audit", "crates/ph-cms", "crates/ph-crawl", "crates/taino-edit-dx"]
