@@ -64,7 +64,7 @@ fn map_js() -> String {
   if(window.__phmap){return;} window.__phmap=true;
   var m=L.map('phmap',{scrollWheelZoom:false}).setView([52.55,-1.30],8);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'(c) OpenStreetMap contributors'}).addTo(m);
-  var ic=L.icon({iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',iconSize:[25,41],iconAnchor:[12,41],popupAnchor:[1,-34],shadowSize:[41,41]});
+  var ic=L.icon({iconUrl:'/vendor/leaflet/images/marker-icon.png',iconRetinaUrl:'/vendor/leaflet/images/marker-icon-2x.png',shadowUrl:'/vendor/leaflet/images/marker-shadow.png',iconSize:[25,41],iconAnchor:[12,41],popupAnchor:[1,-34],shadowSize:[41,41]});
   "#;
     let tail = "\n})();";
     format!("{head}{markers}{tail}")
@@ -101,9 +101,11 @@ pub fn Database() -> Element {
             path: "/database",
             image: "/og.png",
         }
-        // Leaflet (privacy-respecting OpenStreetMap tiles).
-        dioxus::document::Link { rel: "stylesheet", href: "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" }
-        dioxus::document::Script { src: "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", defer: true }
+        // Leaflet — SELF-HOSTED (no third-party CDN, so the CSP stays 'self'; no
+        // visitor IP leaks to unpkg). Only the map TILES come from the OpenStreetMap
+        // tile service (a map-data service, not a script — can't be self-hosted).
+        dioxus::document::Link { rel: "stylesheet", href: "/vendor/leaflet/leaflet.css" }
+        dioxus::document::Script { src: "/vendor/leaflet/leaflet.js", defer: true }
 
         header { class: "page-head",
             div { class: "wrap",

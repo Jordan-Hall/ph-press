@@ -59,10 +59,13 @@
 		# hydration (client-side navigation silently breaks). 'unsafe-inline' is
 		# for the first-party inline scripts (flash-free theme-init + the Dioxus
 		# wasm-bootstrap blocks); 'wasm-unsafe-eval' for wasm compilation. Fonts
-		# are self-hosted (/fonts/*.woff2 → font-src 'self'). frame-src allows the
-		# privacy-respecting youtube-nocookie player on /watch; img-src allows its
-		# thumbnails. media-src 'self' blob: for self-hosted video playback.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https: https://i.ytimg.com https://unpkg.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; media-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		# are self-hosted (/fonts/*.woff2 → font-src 'self'). Leaflet (the map) and
+		# the ToastUI editor are ALSO self-hosted now (/vendor/* → covered by
+		# script-src/style-src 'self'), so NO third-party CDN is allowed (unpkg
+		# removed). frame-src allows the privacy-respecting youtube-nocookie player
+		# on /watch; img-src keeps `https:` for editor-pasted article images + the
+		# OpenStreetMap tile service. media-src 'self' blob: for self-hosted video.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: https://i.ytimg.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org; media-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		-Server
 	}
 }
