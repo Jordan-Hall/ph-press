@@ -12,6 +12,14 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 /// depend on sqlx directly.
 pub type Db = SqlitePool;
 
+/// The PUBLIC crawler-ingest pipeline (sources, leads, conviction database) and
+/// the PRIVATE court-watch store live in their own modules. They are split so the
+/// active-proceedings firewall is a module boundary: `courtwatch` (live/upcoming
+/// proceedings) never writes into `ingest` (post-conviction / public), and
+/// `ingest` never reads `courtwatch`.
+pub mod courtwatch;
+pub mod ingest;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CmsError {
     #[error("database error: {0}")]

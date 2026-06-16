@@ -855,3 +855,485 @@ pub async fn public_article(slug: String) -> Result<Option<PublicArticle>, Serve
         Ok(None)
     }
 }
+
+// ---- crawler intake + conviction database + court-watch --------------------
+
+/// A crawled LEAD as the Intake desk sees it. Everything here is UNVERIFIED
+/// machine output; the editor turns a lead into our own report via the lifecycle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskLead {
+    pub id: i64,
+    pub source_key: String,
+    pub url: String,
+    pub title: String,
+    pub snippet: String,
+    pub offence_category: String,
+    pub image_url: String,
+    pub image_attribution: String,
+    pub status: String,
+    pub promoted_article_id: Option<i64>,
+    pub created_at: i64,
+}
+
+/// A conviction-database entry as the desk sees it (any status).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskConviction {
+    pub id: i64,
+    pub name: String,
+    pub area: String,
+    pub offence: String,
+    pub outcome: String,
+    pub date: String,
+    pub iso_date: String,
+    pub lat: f64,
+    pub lng: f64,
+    pub article_id: Option<i64>,
+    pub article_slug: String,
+    pub source_url: String,
+    pub source_name: String,
+    pub status: String,
+}
+
+/// A private court-watch entry (never public).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskWatch {
+    pub id: i64,
+    pub court: String,
+    pub case_ref: String,
+    pub hearing_date: String,
+    pub hearing_type: String,
+    pub offence_category: String,
+    pub source_url: String,
+    pub notes: String,
+    pub status: String,
+}
+
+/// A published conviction as the PUBLIC `/database` page sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicConviction {
+    pub name: String,
+    pub area: String,
+    pub offence: String,
+    pub outcome: String,
+    pub date: String,
+    pub iso_date: String,
+    pub article_slug: String,
+    pub source_url: String,
+    pub source_name: String,
+    pub lat: f64,
+    pub lng: f64,
+}
+
+#[cfg(feature = "server")]
+fn to_leads(v: Vec<ph_cms::ingest::IngestItem>) -> Vec<DeskLead> {
+    v.into_iter()
+        .map(|l| DeskLead {
+            id: l.id,
+            source_key: l.source_key,
+            url: l.url,
+            title: l.title,
+            snippet: l.snippet,
+            offence_category: l.offence_category,
+            image_url: l.image_url,
+            image_attribution: l.image_attribution,
+            status: l.status,
+            promoted_article_id: l.promoted_article_id,
+            created_at: l.created_at,
+        })
+        .collect()
+}
+
+#[cfg(feature = "server")]
+fn to_convictions(v: Vec<ph_cms::ingest::Conviction>) -> Vec<DeskConviction> {
+    v.into_iter()
+        .map(|c| DeskConviction {
+            id: c.id,
+            name: c.name,
+            area: c.area,
+            offence: c.offence,
+            outcome: c.outcome,
+            date: c.date,
+            iso_date: c.iso_date,
+            lat: c.lat,
+            lng: c.lng,
+            article_id: c.article_id,
+            article_slug: c.article_slug,
+            source_url: c.source_url,
+            source_name: c.source_name,
+            status: c.status,
+        })
+        .collect()
+}
+
+#[cfg(feature = "server")]
+fn to_watch(v: Vec<ph_cms::courtwatch::CourtWatch>) -> Vec<DeskWatch> {
+    v.into_iter()
+        .map(|w| DeskWatch {
+            id: w.id,
+            court: w.court,
+            case_ref: w.case_ref,
+            hearing_date: w.hearing_date,
+            hearing_type: w.hearing_type,
+            offence_category: w.offence_category,
+            source_url: w.source_url,
+            notes: w.notes,
+            status: w.status,
+        })
+        .collect()
+}
+
+/// Every crawled lead (any status), newest first — the Intake desk.
+#[server(endpoint = "desk_leads")]
+pub async fn desk_leads() -> Result<Vec<DeskLead>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(to_leads(
+            crate::cms::leads(None).await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Promote a lead into a Draft article (legal-gated lifecycle), then refresh.
+#[server(endpoint = "desk_promote_lead")]
+pub async fn desk_promote_lead(
+    id: i64,
+    kind: String,
+    section: String,
+) -> Result<Vec<DeskLead>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::promote_lead(&session.username, id, &kind, &section)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_leads(
+            crate::cms::leads(None).await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, kind, section);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Dismiss a lead (not relevant / can't verify), then refresh.
+#[server(endpoint = "desk_dismiss_lead")]
+pub async fn desk_dismiss_lead(id: i64) -> Result<Vec<DeskLead>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::set_lead_status(&session.username, id, "dismissed")
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_leads(
+            crate::cms::leads(None).await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = id;
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Every conviction-database entry (any status), newest first.
+#[server(endpoint = "desk_convictions")]
+pub async fn desk_convictions() -> Result<Vec<DeskConviction>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(to_convictions(
+            crate::cms::convictions(None)
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Create a draft conviction entry, then refresh the list.
+#[server(endpoint = "desk_create_conviction")]
+#[allow(clippy::too_many_arguments)]
+pub async fn desk_create_conviction(
+    name: String,
+    area: String,
+    offence: String,
+    outcome: String,
+    date: String,
+    iso_date: String,
+    lat: f64,
+    lng: f64,
+    article_id: Option<i64>,
+    article_slug: String,
+    source_url: String,
+    source_name: String,
+) -> Result<Vec<DeskConviction>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::create_conviction(
+            &session.username,
+            &name,
+            &area,
+            &offence,
+            &outcome,
+            &date,
+            &iso_date,
+            lat,
+            lng,
+            article_id,
+            &article_slug,
+            &source_url,
+            &source_name,
+        )
+        .await
+        .map_err(ServerFnError::new)?;
+        Ok(to_convictions(
+            crate::cms::convictions(None)
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (
+            name,
+            area,
+            offence,
+            outcome,
+            date,
+            iso_date,
+            lat,
+            lng,
+            article_id,
+            article_slug,
+            source_url,
+            source_name,
+        );
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Edit a draft conviction entry, then refresh the list.
+#[server(endpoint = "desk_update_conviction")]
+#[allow(clippy::too_many_arguments)]
+pub async fn desk_update_conviction(
+    id: i64,
+    name: String,
+    area: String,
+    offence: String,
+    outcome: String,
+    date: String,
+    iso_date: String,
+    lat: f64,
+    lng: f64,
+    article_id: Option<i64>,
+    article_slug: String,
+    source_url: String,
+    source_name: String,
+) -> Result<Vec<DeskConviction>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::update_conviction(
+            &session.username,
+            id,
+            &name,
+            &area,
+            &offence,
+            &outcome,
+            &date,
+            &iso_date,
+            lat,
+            lng,
+            article_id,
+            &article_slug,
+            &source_url,
+            &source_name,
+        )
+        .await
+        .map_err(ServerFnError::new)?;
+        Ok(to_convictions(
+            crate::cms::convictions(None)
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (
+            id,
+            name,
+            area,
+            offence,
+            outcome,
+            date,
+            iso_date,
+            lat,
+            lng,
+            article_id,
+            article_slug,
+            source_url,
+            source_name,
+        );
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Publish or retract a conviction (publish requires a linked, published report).
+#[server(endpoint = "desk_set_conviction_status")]
+pub async fn desk_set_conviction_status(
+    id: i64,
+    status: String,
+) -> Result<Vec<DeskConviction>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::set_conviction_status(&session.username, id, &status)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_convictions(
+            crate::cms::convictions(None)
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, status);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// The private court-watch list (soonest first). Requires a session.
+#[server(endpoint = "desk_courtwatch")]
+pub async fn desk_courtwatch() -> Result<Vec<DeskWatch>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(to_watch(
+            crate::cms::court_watch(None)
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Add a court-watch entry by hand, then refresh.
+#[server(endpoint = "desk_add_watch")]
+#[allow(clippy::too_many_arguments)]
+pub async fn desk_add_watch(
+    court: String,
+    case_ref: String,
+    hearing_date: String,
+    hearing_type: String,
+    offence_category: String,
+    source_url: String,
+    notes: String,
+) -> Result<Vec<DeskWatch>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::add_watch(
+            &session.username,
+            &court,
+            &case_ref,
+            &hearing_date,
+            &hearing_type,
+            &offence_category,
+            &source_url,
+            &notes,
+        )
+        .await
+        .map_err(ServerFnError::new)?;
+        Ok(to_watch(
+            crate::cms::court_watch(None)
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (
+            court,
+            case_ref,
+            hearing_date,
+            hearing_type,
+            offence_category,
+            source_url,
+            notes,
+        );
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Update a court-watch entry's status (+ optional note), then refresh.
+#[server(endpoint = "desk_courtwatch_update")]
+pub async fn desk_courtwatch_update(
+    id: i64,
+    status: String,
+    note: String,
+) -> Result<Vec<DeskWatch>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::set_watch_status(&session.username, id, &status, &note)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_watch(
+            crate::cms::court_watch(None)
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, status, note);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Published conviction-database entries — the PUBLIC `/database` read. No
+/// session required.
+#[server(endpoint = "conviction_db")]
+pub async fn conviction_db() -> Result<Vec<PublicConviction>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let rows = crate::cms::published_convictions()
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(rows
+            .into_iter()
+            .map(|c| PublicConviction {
+                name: c.name,
+                area: c.area,
+                offence: c.offence,
+                outcome: c.outcome,
+                date: c.date,
+                iso_date: c.iso_date,
+                article_slug: c.article_slug,
+                source_url: c.source_url,
+                source_name: c.source_name,
+                lat: c.lat,
+                lng: c.lng,
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Ok(Vec::new())
+    }
+}

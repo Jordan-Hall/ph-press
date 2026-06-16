@@ -7,10 +7,13 @@
 use dioxus::prelude::*;
 
 use crate::api::{
-    desk_add_correction, desk_add_staff, desk_articles, desk_audit, desk_complaint_status,
-    desk_complaints, desk_corrections, desk_create, desk_log_complaint, desk_preview, desk_staff,
+    desk_add_correction, desk_add_staff, desk_add_watch, desk_articles, desk_audit,
+    desk_complaint_status, desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
+    desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
+    desk_log_complaint, desk_preview, desk_promote_lead, desk_set_conviction_status, desk_staff,
     desk_transition, desk_update, staff_change_password, staff_login, staff_logout, staff_me,
-    DeskArticle, DeskComplaint, DeskCorrection, DeskSession, PreviewArticle, StaffMember,
+    DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskWatch,
+    PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 
@@ -105,10 +108,13 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
     Articles,
+    Intake,
+    Database,
     Complaints,
     Corrections,
     Staff,
     Audit,
+    CourtWatch,
     Settings,
 }
 
@@ -145,22 +151,28 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
             }
             nav { class: "desk-tabs", "aria-label": "Sections",
                 button { class: tab_class(Tab::Articles), onclick: move |_| tab.set(Tab::Articles), "Articles" }
+                button { class: tab_class(Tab::Intake), onclick: move |_| tab.set(Tab::Intake), "Intake" }
+                button { class: tab_class(Tab::Database), onclick: move |_| tab.set(Tab::Database), "Database" }
                 button { class: tab_class(Tab::Complaints), onclick: move |_| tab.set(Tab::Complaints), "Complaints" }
                 button { class: tab_class(Tab::Corrections), onclick: move |_| tab.set(Tab::Corrections), "Corrections" }
                 if user.role == "admin" {
                     button { class: tab_class(Tab::Staff), onclick: move |_| tab.set(Tab::Staff), "Staff" }
                     button { class: tab_class(Tab::Audit), onclick: move |_| tab.set(Tab::Audit), "Audit" }
                 }
+                button { class: tab_class(Tab::CourtWatch), onclick: move |_| tab.set(Tab::CourtWatch), "Court watch" }
                 button { class: tab_class(Tab::Settings), onclick: move |_| tab.set(Tab::Settings), "Settings" }
             }
         }
         main { class: "desk-main",
             match active {
                 Tab::Articles => rsx! { ArticlesPanel { user: user.clone() } },
+                Tab::Intake => rsx! { IntakePanel {} },
+                Tab::Database => rsx! { DatabasePanel {} },
                 Tab::Complaints => rsx! { ComplaintsPanel {} },
                 Tab::Corrections => rsx! { CorrectionsPanel {} },
                 Tab::Staff => rsx! { StaffPanel {} },
                 Tab::Audit => rsx! { AuditPanel {} },
+                Tab::CourtWatch => rsx! { CourtWatchPanel {} },
                 Tab::Settings => rsx! { SettingsPanel {} },
             }
         }
@@ -1311,4 +1323,601 @@ fn ymd(unix: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn offence_label(cat: &str) -> &str {
+    match cat {
+        "child" => "Child",
+        "sexual" => "Sexual",
+        "other" => "Other",
+        _ => "Unclassified",
+    }
+}
+
+fn lead_status_label(status: &str) -> &str {
+    match status {
+        "new" => "New",
+        "triaged" => "Triaged",
+        "promoted" => "Promoted",
+        "dismissed" => "Dismissed",
+        _ => status,
+    }
+}
+
+fn watch_status_label(status: &str) -> &str {
+    match status {
+        "watching" => "Watching",
+        "attending" => "Attending",
+        "transcript_requested" => "Transcript requested",
+        "closed" => "Closed",
+        _ => status,
+    }
+}
+
+fn hearing_label(kind: &str) -> &str {
+    match kind {
+        "trial" => "Trial",
+        "appeal" => "Appeal",
+        "sentencing" => "Sentencing",
+        _ => "Listing",
+    }
+}
+
+// ===================== Intake (crawled leads) =====================
+
+#[component]
+fn IntakePanel() -> Element {
+    let mut items = use_signal(|| Option::<Vec<DeskLead>>::None);
+    let busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_handled = use_signal(|| false);
+    // Format + section a promoted lead's draft is created under.
+    let kind = use_signal(|| "Court report".to_string());
+    let section = use_signal(|| "Crime".to_string());
+
+    use_resource(move || async move {
+        match desk_leads().await {
+            Ok(v) => items.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let rows = items.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Intake — external sources" }
+                button {
+                    class: "desk-btn sm",
+                    onclick: move |_| {
+                        let open = show_handled();
+                        show_handled.set(!open);
+                    },
+                    if show_handled() { "Hide handled" } else { "Show handled" }
+                }
+            }
+            p { class: "desk-muted pad",
+                "Unverified leads crawled from court judgments and news. Promote a lead to start "
+                "our own report (it enters the normal draft → legal → publish flow) or dismiss it. "
+                "Always verify against the court record; never republish a source's text or photo."
+            }
+            div { class: "desk-new-row", style: "padding:0 14px 10px;",
+                label { class: "desk-muted", "Promote as: " }
+                select {
+                    class: "desk-in",
+                    value: "{kind}",
+                    oninput: {
+                        let mut kind = kind;
+                        move |e: FormEvent| kind.set(e.value())
+                    },
+                    option { value: "Court report", "Court report" }
+                    option { value: "Investigation", "Investigation" }
+                    option { value: "Explainer", "Explainer" }
+                    option { value: "News", "News" }
+                }
+                select {
+                    class: "desk-in",
+                    value: "{section}",
+                    oninput: {
+                        let mut section = section;
+                        move |e: FormEvent| section.set(e.value())
+                    },
+                    option { value: "Crime", "Crime" }
+                    option { value: "Courts", "Courts" }
+                    option { value: "Local", "Local" }
+                    option { value: "Community", "Community" }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match rows {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some(v) => {
+                    let visible: Vec<DeskLead> = v
+                        .into_iter()
+                        .filter(|l| show_handled() || matches!(l.status.as_str(), "new" | "triaged"))
+                        .collect();
+                    if visible.is_empty() {
+                        rsx! { p { class: "desk-muted pad", "No leads awaiting triage." } }
+                    } else {
+                        rsx! {
+                            table { class: "desk-table",
+                                thead { tr { th { "Lead" } th { "Source" } th { "Category" } th { "Status" } th { "Actions" } } }
+                                tbody {
+                                    for l in visible {
+                                        IntakeRow { key: "{l.id}", lead: l, items, busy, err, kind, section }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn IntakeRow(
+    lead: DeskLead,
+    mut items: Signal<Option<Vec<DeskLead>>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+    kind: Signal<String>,
+    section: Signal<String>,
+) -> Element {
+    let id = lead.id;
+    let actionable = matches!(lead.status.as_str(), "new" | "triaged");
+    rsx! {
+        tr {
+            td { class: "desk-wrap",
+                a { href: "{lead.url}", target: "_blank", rel: "noopener noreferrer", "{lead.title}" }
+                if !lead.snippet.is_empty() {
+                    p { class: "desk-muted", "{lead.snippet}" }
+                }
+                if !lead.image_url.is_empty() {
+                    p { class: "desk-muted", "Source image (reference, not for republication): {lead.image_attribution}" }
+                }
+            }
+            td { class: "desk-muted", "{lead.source_key}" }
+            td { span { class: "desk-state", "{offence_label(&lead.offence_category)}" } }
+            td {
+                span { class: "desk-state", "{lead_status_label(&lead.status)}" }
+                if let Some(aid) = lead.promoted_article_id {
+                    div { class: "desk-muted", "→ draft #{aid}" }
+                }
+            }
+            td { class: "desk-muted",
+                div { "{ymd(lead.created_at)}" }
+                if actionable {
+                    div { class: "desk-actions",
+                        button {
+                            class: "desk-act",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_promote_lead(id, kind(), section()).await {
+                                        Ok(v) => items.set(Some(v)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "Promote to draft"
+                        }
+                        button {
+                            class: "desk-act",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_dismiss_lead(id).await {
+                                        Ok(v) => items.set(Some(v)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "Dismiss"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ===================== Database (conviction entries) =====================
+
+#[component]
+fn DatabasePanel() -> Element {
+    let mut items = use_signal(|| Option::<Vec<DeskConviction>>::None);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_new = use_signal(|| false);
+    let mut name = use_signal(String::new);
+    let mut area = use_signal(String::new);
+    let mut offence = use_signal(String::new);
+    let mut outcome = use_signal(String::new);
+    let mut date = use_signal(String::new);
+    let mut iso_date = use_signal(String::new);
+    let mut lat = use_signal(String::new);
+    let mut lng = use_signal(String::new);
+    let mut article_slug = use_signal(String::new);
+    let mut article_id = use_signal(String::new);
+    let mut source_url = use_signal(String::new);
+    let mut source_name = use_signal(String::new);
+
+    use_resource(move || async move {
+        match desk_convictions().await {
+            Ok(v) => items.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            let aid = article_id().trim().parse::<i64>().ok();
+            let latf = lat().trim().parse::<f64>().unwrap_or(0.0);
+            let lngf = lng().trim().parse::<f64>().unwrap_or(0.0);
+            match desk_create_conviction(
+                name(),
+                area(),
+                offence(),
+                outcome(),
+                date(),
+                iso_date(),
+                latf,
+                lngf,
+                aid,
+                article_slug(),
+                source_url(),
+                source_name(),
+            )
+            .await
+            {
+                Ok(v) => {
+                    items.set(Some(v));
+                    name.set(String::new());
+                    area.set(String::new());
+                    offence.set(String::new());
+                    outcome.set(String::new());
+                    date.set(String::new());
+                    iso_date.set(String::new());
+                    lat.set(String::new());
+                    lng.set(String::new());
+                    article_slug.set(String::new());
+                    article_id.set(String::new());
+                    source_url.set(String::new());
+                    source_name.set(String::new());
+                    show_new.set(false);
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    let rows = items.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Conviction database" }
+                button {
+                    class: "desk-btn sm",
+                    onclick: move |_| {
+                        let open = show_new();
+                        show_new.set(!open);
+                    },
+                    if show_new() { "Close" } else { "Add entry" }
+                }
+            }
+            p { class: "desk-muted pad",
+                "Post-conviction entries for the public database. An entry only goes public once "
+                "our own report on it is published, and it cites the court-record / news source."
+            }
+            if show_new() {
+                form { class: "desk-new", onsubmit: submit,
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Name", value: "{name}", oninput: move |e| name.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Area (optional)", value: "{area}", oninput: move |e| area.set(e.value()) }
+                    }
+                    input { class: "desk-in full", r#type: "text", placeholder: "Offence", value: "{offence}", oninput: move |e| offence.set(e.value()) }
+                    input { class: "desk-in full", r#type: "text", placeholder: "Outcome / sentence", value: "{outcome}", oninput: move |e| outcome.set(e.value()) }
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Date e.g. May 2026", value: "{date}", oninput: move |e| date.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "ISO date e.g. 2026-05-21", value: "{iso_date}", oninput: move |e| iso_date.set(e.value()) }
+                    }
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Latitude (0 if unknown)", value: "{lat}", oninput: move |e| lat.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Longitude (0 if unknown)", value: "{lng}", oninput: move |e| lng.set(e.value()) }
+                    }
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Our report slug (links + enables publish)", value: "{article_slug}", oninput: move |e| article_slug.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Our report id (optional — slug is enough)", value: "{article_id}", oninput: move |e| article_id.set(e.value()) }
+                    }
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Source URL (court record / news)", value: "{source_url}", oninput: move |e| source_url.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Source name", value: "{source_name}", oninput: move |e| source_name.set(e.value()) }
+                    }
+                    button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Create draft entry" }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match rows {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some(v) if v.is_empty() => rsx! { p { class: "desk-muted pad", "No database entries yet." } },
+                Some(v) => rsx! {
+                    table { class: "desk-table",
+                        thead { tr { th { "Name" } th { "Offence" } th { "Area" } th { "Status" } th { "Source" } th { "Actions" } } }
+                        tbody {
+                            for c in v {
+                                ConvictionRow { key: "{c.id}", c, items, busy, err }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn ConvictionRow(
+    c: DeskConviction,
+    mut items: Signal<Option<Vec<DeskConviction>>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+) -> Element {
+    let id = c.id;
+    let nexts: Vec<(&str, &str)> = match c.status.as_str() {
+        "draft" => vec![("published", "Publish")],
+        "published" => vec![("retracted", "Retract")],
+        _ => vec![],
+    };
+    let area = if c.area.is_empty() {
+        "—".to_string()
+    } else {
+        c.area.clone()
+    };
+    rsx! {
+        tr {
+            td { class: "desk-wrap", "{c.name}" }
+            td { class: "desk-muted", "{c.offence}" }
+            td { class: "desk-muted", "{area}" }
+            td { span { class: "desk-state", "{state_label(&c.status)}" } }
+            td { class: "desk-muted",
+                if c.source_url.is_empty() {
+                    "—"
+                } else {
+                    a { href: "{c.source_url}", target: "_blank", rel: "noopener noreferrer", "{c.source_name}" }
+                }
+            }
+            td { class: "desk-muted",
+                div { class: "desk-actions",
+                    for (to, label) in nexts {
+                        button {
+                            key: "{to}",
+                            class: "desk-act",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_set_conviction_status(id, to.to_string()).await {
+                                        Ok(v) => items.set(Some(v)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "{label}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ===================== Court watch (PRIVATE) =====================
+
+#[component]
+fn CourtWatchPanel() -> Element {
+    let mut items = use_signal(|| Option::<Vec<DeskWatch>>::None);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut show_new = use_signal(|| false);
+    let mut court = use_signal(String::new);
+    let mut case_ref = use_signal(String::new);
+    let mut hearing_date = use_signal(String::new);
+    let mut hearing_type = use_signal(|| "listing".to_string());
+    let mut offence_category = use_signal(|| "child".to_string());
+    let mut source_url = use_signal(String::new);
+    let mut notes = use_signal(String::new);
+
+    use_resource(move || async move {
+        match desk_courtwatch().await {
+            Ok(v) => items.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            match desk_add_watch(
+                court(),
+                case_ref(),
+                hearing_date(),
+                hearing_type(),
+                offence_category(),
+                source_url(),
+                notes(),
+            )
+            .await
+            {
+                Ok(v) => {
+                    items.set(Some(v));
+                    court.set(String::new());
+                    case_ref.set(String::new());
+                    hearing_date.set(String::new());
+                    source_url.set(String::new());
+                    notes.set(String::new());
+                    show_new.set(false);
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    let rows = items.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Court watch" }
+                button {
+                    class: "desk-btn sm",
+                    onclick: move |_| {
+                        let open = show_new();
+                        show_new.set(!open);
+                    },
+                    if show_new() { "Close" } else { "Add hearing" }
+                }
+            }
+            p { class: "desk-muted pad",
+                "PRIVATE. Upcoming and appeal hearings to attend or request a transcript for. "
+                "This is live-proceedings intelligence — it is never published and never feeds "
+                "the public database."
+            }
+            if show_new() {
+                form { class: "desk-new", onsubmit: submit,
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Court", value: "{court}", oninput: move |e| court.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Case reference", value: "{case_ref}", oninput: move |e| case_ref.set(e.value()) }
+                    }
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "text", placeholder: "Hearing date", value: "{hearing_date}", oninput: move |e| hearing_date.set(e.value()) }
+                        select {
+                            class: "desk-in",
+                            value: "{hearing_type}",
+                            oninput: move |e: FormEvent| hearing_type.set(e.value()),
+                            option { value: "listing", "Listing" }
+                            option { value: "trial", "Trial" }
+                            option { value: "appeal", "Appeal" }
+                            option { value: "sentencing", "Sentencing" }
+                        }
+                        select {
+                            class: "desk-in",
+                            value: "{offence_category}",
+                            oninput: move |e: FormEvent| offence_category.set(e.value()),
+                            option { value: "child", "Child" }
+                            option { value: "sexual", "Sexual" }
+                            option { value: "other", "Other" }
+                        }
+                    }
+                    input { class: "desk-in full", r#type: "text", placeholder: "Source / listing URL", value: "{source_url}", oninput: move |e| source_url.set(e.value()) }
+                    textarea { class: "desk-in full", rows: "2", placeholder: "Notes (who is attending, transcript ref…)", value: "{notes}", oninput: move |e| notes.set(e.value()) }
+                    button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Add to watch list" }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match rows {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some(v) if v.is_empty() => rsx! { p { class: "desk-muted pad", "Nothing on the watch list." } },
+                Some(v) => rsx! {
+                    table { class: "desk-table",
+                        thead { tr { th { "Court / case" } th { "Hearing" } th { "Category" } th { "Status" } th { "Actions" } } }
+                        tbody {
+                            for w in v {
+                                WatchRow { key: "{w.id}", w, items, busy, err }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn WatchRow(
+    w: DeskWatch,
+    mut items: Signal<Option<Vec<DeskWatch>>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+) -> Element {
+    let id = w.id;
+    let nexts: Vec<(&str, &str)> = match w.status.as_str() {
+        "watching" => vec![
+            ("attending", "Attend"),
+            ("transcript_requested", "Request transcript"),
+            ("closed", "Close"),
+        ],
+        "attending" => vec![
+            ("transcript_requested", "Request transcript"),
+            ("closed", "Close"),
+        ],
+        "transcript_requested" => vec![("closed", "Close")],
+        _ => vec![],
+    };
+    rsx! {
+        tr {
+            td { class: "desk-wrap",
+                strong { "{w.court}" }
+                if !w.case_ref.is_empty() {
+                    div { class: "desk-muted", "{w.case_ref}" }
+                }
+                if !w.notes.is_empty() {
+                    p { class: "desk-muted", "{w.notes}" }
+                }
+                if !w.source_url.is_empty() {
+                    a { href: "{w.source_url}", target: "_blank", rel: "noopener noreferrer", "Listing" }
+                }
+            }
+            td { class: "desk-muted",
+                div { "{w.hearing_date}" }
+                span { class: "desk-state", "{hearing_label(&w.hearing_type)}" }
+            }
+            td { span { class: "desk-state", "{offence_label(&w.offence_category)}" } }
+            td { span { class: "desk-state", "{watch_status_label(&w.status)}" } }
+            td { class: "desk-muted",
+                div { class: "desk-actions",
+                    for (to, label) in nexts {
+                        button {
+                            key: "{to}",
+                            class: "desk-act",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_courtwatch_update(id, to.to_string(), String::new()).await {
+                                        Ok(v) => items.set(Some(v)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "{label}"
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

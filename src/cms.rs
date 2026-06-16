@@ -45,7 +45,7 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
             .unwrap_or(false);
         let owned = seed_data();
         let seeds: Vec<ArticleSeed> = owned.iter().map(OwnedSeed::as_seed).collect();
-        ph_cms::open_and_setup(
+        let pool = ph_cms::open_and_setup(
             &url,
             &admin_user,
             "Administrator",
@@ -53,7 +53,10 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
             reset,
             &seeds,
         )
-        .await
+        .await?;
+        // Start the crawler once the DB is ready (no-op unless PH_CRAWL_ENABLED).
+        maybe_start_crawler(pool.clone());
+        Ok(pool)
     })
     .await
 }
@@ -415,4 +418,299 @@ pub async fn change_password(username: &str, current: &str, new: &str) -> Result
             ph_cms::CmsError::Auth => "the current password is incorrect".to_string(),
             other => other.to_string(),
         })
+}
+
+// ===================== crawler ingest + court-watch =====================
+// Glue over ph_cms::ingest (PUBLIC leads + conviction database) and
+// ph_cms::courtwatch (PRIVATE upcoming/appeal hearings). The two stores never
+// cross (the active-proceedings firewall lives in ph-cms).
+
+/// Reload the actor as a StaffUser so the engine's role gate uses the current role.
+async fn actor_user(pool: &ph_cms::Db, actor: &str) -> Result<ph_cms::StaffUser, String> {
+    ph_cms::find_user(pool, actor)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "user not found".to_string())
+}
+
+/// Crawled leads (optionally filtered by status), newest first — the Intake desk.
+pub async fn leads(status: Option<&str>) -> Result<Vec<ph_cms::ingest::IngestItem>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::ingest::list_leads(pool, status)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Promote a lead into a Draft article (ordinary legal-gated lifecycle).
+pub async fn promote_lead(actor: &str, id: i64, kind: &str, section: &str) -> Result<i64, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    ph_cms::ingest::promote_lead(pool, id, &user, kind, section)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Set a lead's triage status (triaged / dismissed).
+pub async fn set_lead_status(actor: &str, id: i64, status: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::ingest::set_lead_status(pool, id, status, actor)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Conviction-database entries (optionally filtered by status), newest first.
+pub async fn convictions(status: Option<&str>) -> Result<Vec<ph_cms::ingest::Conviction>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::ingest::list_convictions(pool, status)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Published conviction entries — the PUBLIC `/database` read.
+pub async fn published_convictions() -> Result<Vec<ph_cms::ingest::Conviction>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::ingest::published_convictions(pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn build_conviction(
+    name: &str,
+    area: &str,
+    offence: &str,
+    outcome: &str,
+    date: &str,
+    iso_date: &str,
+    lat: f64,
+    lng: f64,
+    article_id: Option<i64>,
+    article_slug: &str,
+    source_url: &str,
+    source_name: &str,
+) -> ph_cms::ingest::NewConviction {
+    ph_cms::ingest::NewConviction {
+        name: name.trim().to_string(),
+        area: area.trim().to_string(),
+        offence: offence.trim().to_string(),
+        outcome: outcome.trim().to_string(),
+        date: date.trim().to_string(),
+        iso_date: iso_date.trim().to_string(),
+        lat,
+        lng,
+        article_id,
+        article_slug: article_slug.trim().to_string(),
+        source_url: source_url.trim().to_string(),
+        source_name: source_name.trim().to_string(),
+    }
+}
+
+/// Create a draft conviction entry.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_conviction(
+    actor: &str,
+    name: &str,
+    area: &str,
+    offence: &str,
+    outcome: &str,
+    date: &str,
+    iso_date: &str,
+    lat: f64,
+    lng: f64,
+    article_id: Option<i64>,
+    article_slug: &str,
+    source_url: &str,
+    source_name: &str,
+) -> Result<i64, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    let c = build_conviction(
+        name,
+        area,
+        offence,
+        outcome,
+        date,
+        iso_date,
+        lat,
+        lng,
+        article_id,
+        article_slug,
+        source_url,
+        source_name,
+    );
+    ph_cms::ingest::create_conviction(pool, &c, &user)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Edit a draft conviction entry.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_conviction(
+    actor: &str,
+    id: i64,
+    name: &str,
+    area: &str,
+    offence: &str,
+    outcome: &str,
+    date: &str,
+    iso_date: &str,
+    lat: f64,
+    lng: f64,
+    article_id: Option<i64>,
+    article_slug: &str,
+    source_url: &str,
+    source_name: &str,
+) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    let c = build_conviction(
+        name,
+        area,
+        offence,
+        outcome,
+        date,
+        iso_date,
+        lat,
+        lng,
+        article_id,
+        article_slug,
+        source_url,
+        source_name,
+    );
+    ph_cms::ingest::update_conviction(pool, &c, id, &user)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Publish or retract a conviction (publish requires a linked, published report).
+pub async fn set_conviction_status(actor: &str, id: i64, status: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    ph_cms::ingest::set_conviction_status(pool, id, status, &user)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Private court-watch entries (optionally filtered by status), soonest first.
+pub async fn court_watch(
+    status: Option<&str>,
+) -> Result<Vec<ph_cms::courtwatch::CourtWatch>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::courtwatch::list_watch(pool, status)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Add a court-watch entry by hand (e.g. a tip). Synthesises a unique id so the
+/// dedupe key never collides with crawled rows.
+#[allow(clippy::too_many_arguments)]
+pub async fn add_watch(
+    actor: &str,
+    court: &str,
+    case_ref: &str,
+    hearing_date: &str,
+    hearing_type: &str,
+    offence_category: &str,
+    source_url: &str,
+    notes: &str,
+) -> Result<i64, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let _ = actor_user(pool, actor).await?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let w = ph_cms::courtwatch::NewWatch {
+        court: court.trim().to_string(),
+        case_ref: case_ref.trim().to_string(),
+        hearing_date: hearing_date.trim().to_string(),
+        hearing_type: hearing_type.trim().to_string(),
+        offence_category: offence_category.trim().to_string(),
+        source_key: "manual".to_string(),
+        external_id: format!("manual-{nanos}"),
+        source_url: source_url.trim().to_string(),
+        notes: notes.trim().to_string(),
+    };
+    ph_cms::courtwatch::insert_watch(pool, &w)
+        .await
+        .map(|o| o.unwrap_or(0))
+        .map_err(|e| e.to_string())
+}
+
+/// Update a court-watch entry's status (attending / transcript requested / closed).
+pub async fn set_watch_status(
+    actor: &str,
+    id: i64,
+    status: &str,
+    note: &str,
+) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    ph_cms::courtwatch::set_watch_status(pool, id, status, note, &user)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ===================== crawler boot =====================
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Parse a `key|label|url;key|label|url` env list into source configs of `kind`.
+fn parse_sources(raw: &str, kind: &str) -> Vec<ph_crawl::SourceConfig> {
+    raw.split(';')
+        .filter_map(|entry| {
+            let parts: Vec<&str> = entry.split('|').map(str::trim).collect();
+            if parts.len() == 3 && !parts[0].is_empty() && !parts[2].is_empty() {
+                Some(ph_crawl::SourceConfig::new(
+                    parts[0], kind, parts[1], parts[2],
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Start the background crawl loop once, if `PH_CRAWL_ENABLED` is set. Sources
+/// are configured per kind as `key|label|url` lists:
+///   PH_CRAWL_CASELAW_FEEDS     (Find Case Law Atom feed → public leads)
+///   PH_CRAWL_NEWS_FEEDS        (news RSS/Atom → public leads)
+///   PH_CRAWL_COURTWATCH_FEEDS  (court-listing pages → PRIVATE court-watch)
+/// Interval via PH_CRAWL_INTERVAL_SECS (default 3600, min 60). OFF by default so
+/// there is never surprise outbound traffic.
+fn maybe_start_crawler(pool: ph_cms::Db) {
+    if !env_flag("PH_CRAWL_ENABLED") {
+        return;
+    }
+    let mut sources = Vec::new();
+    if let Ok(v) = std::env::var("PH_CRAWL_CASELAW_FEEDS") {
+        sources.extend(parse_sources(&v, "caselaw"));
+    }
+    if let Ok(v) = std::env::var("PH_CRAWL_NEWS_FEEDS") {
+        sources.extend(parse_sources(&v, "news"));
+    }
+    if let Ok(v) = std::env::var("PH_CRAWL_COURTWATCH_FEEDS") {
+        sources.extend(parse_sources(&v, "courtwatch"));
+    }
+    if sources.is_empty() {
+        eprintln!("[ph-press] PH_CRAWL_ENABLED set but no *_FEEDS configured; crawler idle");
+        return;
+    }
+    let secs = std::env::var("PH_CRAWL_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(3600)
+        .max(60);
+    let ua = std::env::var("PH_CRAWL_USER_AGENT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| ph_crawl::DEFAULT_USER_AGENT.to_string());
+    eprintln!(
+        "[ph-press] starting crawler: {} source(s), every {secs}s",
+        sources.len()
+    );
+    ph_crawl::spawn(pool, sources, std::time::Duration::from_secs(secs), ua);
 }
