@@ -24,6 +24,10 @@ use dioxus::prelude::*;
 #[doc(no_inline)]
 pub use taino_edit_core::{EditorState, KeyPress, Keymap, Node, Schema, Transaction, Transform};
 
+// Markdown ↔ editor bridge (schema/keymap/parse/serialise) — both targets.
+mod bridge;
+pub use bridge::{markdown_to_doc, newsroom_keymap, newsroom_schema, state_to_markdown};
+
 /// A take-once container for the optional `keymap` prop. `Keymap` is not
 /// `Clone + PartialEq` (Dioxus props must be), so it lives behind a shared cell
 /// and is moved into the view once, at mount. The prop always compares equal so

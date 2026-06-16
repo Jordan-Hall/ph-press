@@ -13,6 +13,21 @@ use crate::api::{
     DeskArticle, DeskComplaint, DeskCorrection, DeskSession, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
+// Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
+// bridge keeps markdown canonical; TainoEditor is an empty host off-wasm (SSG).
+use taino_edit_dx::{
+    markdown_to_doc, newsroom_keymap, newsroom_schema, state_to_markdown, EditorState, KeymapProp,
+    TainoEditor,
+};
+
+/// Which editor surface the writer is using.
+#[derive(Clone, Copy, PartialEq)]
+enum EdMode {
+    /// The native-Rust WYSIWYG editor (taino-edit).
+    Visual,
+    /// The raw markdown source editor (toolbar + live preview).
+    Markdown,
+}
 
 /// Auth state for the console shell.
 #[derive(Clone, PartialEq)]
@@ -1069,6 +1084,29 @@ fn EditorForm(
         });
     };
 
+    // ---- editor mode: Visual (WYSIWYG) vs Markdown source ----
+    let mut mode = use_signal(|| EdMode::Visual);
+    // Built once: the article schema (shared by the editor, keymap + markdown
+    // parser), the rich-editor document seeded from the markdown, and the keymap.
+    // Markdown stays canonical — `body` is what is saved and publicly rendered.
+    let schema = use_hook(newsroom_schema);
+    let mut ed_state = use_signal({
+        let schema = schema.clone();
+        let init = init_body.clone();
+        move || EditorState::new(markdown_to_doc(&schema, &init), schema.clone())
+    });
+    let keymap = use_hook({
+        let schema = schema.clone();
+        move || KeymapProp::new(newsroom_keymap(&schema))
+    });
+    // Visual-mode edits flow back into the canonical markdown `body` (which the
+    // hidden #ed-body textarea + the save path read).
+    use_effect(move || {
+        if mode() == EdMode::Visual {
+            body.set(state_to_markdown(&ed_state.read()));
+        }
+    });
+
     let preview_paras: Vec<String> = body()
         .lines()
         .map(|l| l.trim().to_string())
@@ -1138,16 +1176,59 @@ fn EditorForm(
                 value: "{summary}",
                 oninput: move |e| summary.set(e.value()),
             }
-            div { class: "editor-toolbar",
-                button { r#type: "button", class: "tb b", title: "Bold", onclick: move |_| { let _ = document::eval(&wrap_js("**", "**", "bold")); }, "B" }
-                button { r#type: "button", class: "tb i", title: "Italic", onclick: move |_| { let _ = document::eval(&wrap_js("*", "*", "italic")); }, "i" }
-                button { r#type: "button", class: "tb", title: "Link", onclick: move |_| { let _ = document::eval(&wrap_js("[", "](https://)", "link text")); }, "Link" }
-                button { r#type: "button", class: "tb", title: "Heading", onclick: move |_| { let _ = document::eval(&wrap_js("## ", "", "Heading")); }, "H" }
-                button { r#type: "button", class: "tb", title: "Image (paste a URL)", onclick: move |_| { let _ = document::eval(&wrap_js("![", "](https://)", "image caption")); }, "Image" }
-                button { r#type: "button", class: "tb", title: "Drop cap — large first letter on this paragraph", onclick: move |_| { let _ = document::eval(&wrap_js("^ ", "", "Lead paragraph")); }, "Drop cap" }
-                span { class: "editor-hint2", "Markdown: **bold**, *italic*, [text](url), ![caption](image-url), ## heading, - bullet, ^ drop cap" }
+            // ---- editor mode toggle (Visual WYSIWYG ↔ Markdown source) ----
+            div { class: "editor-modebar",
+                button {
+                    r#type: "button",
+                    class: if mode() == EdMode::Visual { "em-tab on" } else { "em-tab" },
+                    onclick: move |_| {
+                        // Entering Visual: seed the editor from the latest markdown.
+                        let s = schema.clone();
+                        ed_state.set(EditorState::new(markdown_to_doc(&s, &body()), s));
+                        mode.set(EdMode::Visual);
+                    },
+                    "\u{2726} Visual"
+                }
+                button {
+                    r#type: "button",
+                    class: if mode() == EdMode::Markdown { "em-tab on" } else { "em-tab" },
+                    onclick: move |_| mode.set(EdMode::Markdown),
+                    "\u{2261} Markdown"
+                }
+                span { class: "editor-hint2",
+                    if mode() == EdMode::Visual {
+                        "Visual editor \u{2014} format as you type (Ctrl/Cmd-B, -I, -Z). Saved as markdown."
+                    } else {
+                        "Markdown source \u{2014} **bold**, *italic*, [text](url), ![caption](img), ## heading, - bullet, ^ drop cap."
+                    }
+                }
             }
-            div { class: "editor-split",
+
+            // ---- Visual mode: native-Rust WYSIWYG. Mounted once (so it keeps its
+            // keymap); hidden — not unmounted — when editing the markdown source. ----
+            div {
+                class: "editor-rich",
+                style: if mode() == EdMode::Visual { "" } else { "display:none;" },
+                TainoEditor { state: ed_state, keymap: keymap.clone() }
+            }
+
+            // ---- Markdown mode: the source-insert toolbar ----
+            if mode() == EdMode::Markdown {
+                div { class: "editor-toolbar",
+                    button { r#type: "button", class: "tb b", title: "Bold", onclick: move |_| { let _ = document::eval(&wrap_js("**", "**", "bold")); }, "B" }
+                    button { r#type: "button", class: "tb i", title: "Italic", onclick: move |_| { let _ = document::eval(&wrap_js("*", "*", "italic")); }, "i" }
+                    button { r#type: "button", class: "tb", title: "Link", onclick: move |_| { let _ = document::eval(&wrap_js("[", "](https://)", "link text")); }, "Link" }
+                    button { r#type: "button", class: "tb", title: "Heading", onclick: move |_| { let _ = document::eval(&wrap_js("## ", "", "Heading")); }, "H" }
+                    button { r#type: "button", class: "tb", title: "Image (paste a URL)", onclick: move |_| { let _ = document::eval(&wrap_js("![", "](https://)", "image caption")); }, "Image" }
+                    button { r#type: "button", class: "tb", title: "Drop cap — large first letter on this paragraph", onclick: move |_| { let _ = document::eval(&wrap_js("^ ", "", "Lead paragraph")); }, "Drop cap" }
+                }
+            }
+
+            // ---- The markdown source textarea: the editor in Markdown mode; the
+            // hidden bridge to the canonical `body` (read by save) in Visual mode. ----
+            div {
+                class: "editor-split",
+                style: if mode() == EdMode::Visual { "display:none;" } else { "" },
                 textarea {
                     id: "ed-body",
                     class: "editor-body",

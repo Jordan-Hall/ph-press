@@ -461,6 +461,28 @@ a.mappop-link:hover{text-decoration:underline;}
 .editor-prev-label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
 .editor-preview p{font-family:var(--serif);font-size:16px;line-height:1.7;color:var(--ink);margin:0 0 14px;}
 .editor-prev-empty{color:var(--faint)!important;font-style:italic;}
+/* Editor mode toggle (Visual ↔ Markdown) */
+.editor-modebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:14px 0 8px;}
+.em-tab{cursor:pointer;background:var(--paper-2);border:1px solid var(--rule-2);color:var(--ink-2);border-radius:var(--r-md);font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:7px 14px;transition:.15s;}
+.em-tab:hover{border-color:var(--red);color:var(--ink);}
+.em-tab.on{background:var(--red);color:var(--on-red);border-color:var(--red);}
+.editor-rich{margin:4px 0;}
+/* taino-edit WYSIWYG surface — themed via the same vars so light/dark adapt */
+.taino-editor{min-height:320px;background:var(--paper-2);border:1px solid var(--rule-2);border-radius:var(--r-md);padding:16px 18px;color:var(--ink);font-family:var(--serif);font-size:16px;line-height:1.72;outline:0;}
+.taino-editor:focus-within{border-color:var(--red);}
+.taino-editor h1,.taino-editor h2,.taino-editor h3{font-family:var(--serif);color:var(--ink);line-height:1.2;margin:18px 0 8px;}
+.taino-editor h1{font-size:1.6rem;}
+.taino-editor h2{font-size:1.35rem;}
+.taino-editor h3{font-size:1.15rem;}
+.taino-editor p{margin:0 0 12px;}
+.taino-editor ul,.taino-editor ol{margin:10px 0;padding-left:1.4em;}
+.taino-editor li::marker{color:var(--red);}
+.taino-editor a{color:var(--ink);border-bottom:2px solid var(--red);}
+.taino-editor blockquote{margin:14px 0;padding-left:16px;border-left:3px solid var(--red);font-style:italic;}
+.taino-editor code{font-family:var(--mono);font-size:.92em;background:var(--sunk);padding:1px 5px;border-radius:4px;}
+.taino-editor pre{background:var(--sunk);padding:12px 14px;border-radius:6px;overflow:auto;}
+.taino-editor pre code{background:none;padding:0;}
+.taino-editor img{max-width:100%;height:auto;border-radius:4px;}
 @media(max-width:760px){.editor-split{grid-template-columns:1fr;}}
 .editor-body:focus,.editor-sub:focus,.editor-title:focus{outline:0;}
 .editor-body:focus{border-color:var(--red);box-shadow:0 0 0 3px var(--tag);}
