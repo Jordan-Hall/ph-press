@@ -6,9 +6,45 @@
 
 use dioxus::prelude::*;
 
+use crate::api::{conviction_db, PublicConviction};
 use crate::app::Route;
 use crate::content::{by_slug, CONVICTIONS};
 use crate::icons::svg;
+
+/// A unified conviction row for the public list — from the compile-time record or
+/// the live database. Both link to our published report; database entries also
+/// carry the court-record / news source they were drawn from.
+struct Entry {
+    name: String,
+    area: String,
+    offence: String,
+    outcome: String,
+    date: String,
+    article_slug: String,
+}
+
+impl Entry {
+    fn from_static(c: &'static crate::content::Conviction) -> Self {
+        Entry {
+            name: c.name.to_string(),
+            area: c.area.to_string(),
+            offence: c.offence.to_string(),
+            outcome: c.outcome.to_string(),
+            date: c.date.to_string(),
+            article_slug: c.article.to_string(),
+        }
+    }
+    fn from_public(c: &PublicConviction) -> Self {
+        Entry {
+            name: c.name.clone(),
+            area: c.area.clone(),
+            offence: c.offence.clone(),
+            outcome: c.outcome.clone(),
+            date: c.date.clone(),
+            article_slug: c.article_slug.clone(),
+        }
+    }
+}
 
 /// Escape a string for embedding inside a single-quoted JS string literal.
 fn js1(s: &str) -> String {
@@ -73,19 +109,30 @@ fn map_js() -> String {
 #[component]
 pub fn Database() -> Element {
     let mut query = use_signal(String::new);
+    // Published entries from the live database are merged with the compile-time
+    // record below. Compile-time entries render server-side (crawlable); database
+    // entries load on the client after hydration.
+    let mut db = use_signal(Vec::<PublicConviction>::new);
+    use_resource(move || async move {
+        if let Ok(v) = conviction_db().await {
+            db.set(v);
+        }
+    });
     let q = query().to_lowercase();
     let q = q.trim();
-    let matches: Vec<&'static crate::content::Conviction> = CONVICTIONS
-        .iter()
-        .filter(|c| {
+    let mut entries: Vec<Entry> = CONVICTIONS.iter().map(Entry::from_static).collect();
+    entries.extend(db.read().iter().map(Entry::from_public));
+    let total = entries.len();
+    let matches: Vec<Entry> = entries
+        .into_iter()
+        .filter(|e| {
             q.is_empty()
-                || c.name.to_lowercase().contains(q)
-                || c.area.to_lowercase().contains(q)
-                || c.offence.to_lowercase().contains(q)
+                || e.name.to_lowercase().contains(q)
+                || e.area.to_lowercase().contains(q)
+                || e.offence.to_lowercase().contains(q)
         })
         .collect();
     let count = matches.len();
-    let total = CONVICTIONS.len();
     let result_note = if q.is_empty() {
         format!("{total} convictions on the record")
     } else if count == 0 {
@@ -148,18 +195,18 @@ pub fn Database() -> Element {
 
                 // entries
                 div { class: "research-list",
-                    for c in matches.iter() {
-                        Link { key: "{c.name}", class: "r-row reveal", to: Route::Article { slug: c.article.to_string() },
+                    for e in matches.iter() {
+                        Link { key: "{e.name}-{e.article_slug}", class: "r-row reveal", to: Route::Article { slug: e.article_slug.clone() },
                             div {
-                                span { class: "r-num", "{c.offence}" }
-                                h3 { class: "hl", "{c.name}" }
+                                span { class: "r-num", "{e.offence}" }
+                                h3 { class: "hl", "{e.name}" }
                                 p { class: "r-desc",
-                                    if c.area.is_empty() { "Area not stated by the court. " } else { "{c.area}. " }
-                                    "{c.outcome}."
+                                    if e.area.is_empty() { "Area not stated by the court. " } else { "{e.area}. " }
+                                    "{e.outcome}."
                                 }
                             }
                             div { class: "r-meta",
-                                span { class: "byline", "{c.date}" }
+                                span { class: "byline", "{e.date}" }
                                 span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
                             }
                         }

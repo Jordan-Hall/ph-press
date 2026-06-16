@@ -1,0 +1,25 @@
+[package]
+name = "ph-crawl"
+version = "0.1.0"
+edition = "2021"
+description = "Court/news crawler for PH Press: polite source adapters (Find Case Law, news RSS, court listings) that file approval-gated leads + private court-watch entries via ph-cms."
+publish = false
+
+# SERVER-ONLY. Pulled by ph-press behind its `server` feature; never in the
+# wasm/web build. Permissive deps only (MIT/Apache/ISC) — no GPL.
+
+[dependencies]
+ph-cms = { path = "../ph-cms" }
+# rustls/ring TLS — matches the stack already in the workspace lockfile, avoids
+# OpenSSL/native-tls in the Linux Docker build.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "charset"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = "0.36"        # RSS/Atom feed parsing (MIT)
+scraper = "0.20"          # HTML court-listing parsing (ISC/MIT)
+url = "2"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
