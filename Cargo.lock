@@ -4107,8 +4107,18 @@ dependencies = [
  "dioxus",
  "taino-edit-core",
  "taino-edit-dom",
+ "taino-edit-extensions",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "taino-edit-extensions"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad971a05d644c5a92a706036c1bbc3aab80e927b26c50bec646e1c453769f62d"
+dependencies = [
+ "taino-edit-core",
 ]
 
 [[package]]
