@@ -60,3 +60,33 @@ Cloudflare (proxied, Full strict)
    loopback-only.
 
 No `BULWARK_CF_DNS_TOKEN` is needed here (the edge container holds it for the apex cert).
+
+## Crawler (optional, off by default)
+
+The court/news crawler (`ph-crawl`) files approval-gated **leads** into `/desk → Intake`
+and private hearings into `/desk → Court watch`. It is **off unless `PH_CRAWL_ENABLED=1`**,
+so there is never surprise outbound traffic. Configure sources as `key|label|url` lists
+(entries separated by `;`) per kind, set on the container's `production` environment:
+
+| Env | Purpose |
+|---|---|
+| `PH_CRAWL_ENABLED` | `1`/`true` to run the background loop |
+| `PH_CRAWL_CASELAW_FEEDS` | National Archives **Find Case Law** Atom feed(s) → public leads. The sanctioned Atom feed only — never bulk-crawl (their policy). |
+| `PH_CRAWL_NEWS_FEEDS` | UK national / local news **RSS/Atom** feeds → public leads (concluded cases only) |
+| `PH_CRAWL_COURTWATCH_FEEDS` | Court-listing pages (gov.uk hearing lists; a paid CourtServe media feed) → **private** court-watch. Honour each source's ToS. |
+| `PH_CRAWL_INTERVAL_SECS` | poll interval, default `3600`, min `60` |
+| `PH_CRAWL_USER_AGENT` | override the identifying crawler UA (default contactable `PHPressBot/...`) |
+
+Example:
+
+```
+PH_CRAWL_ENABLED=1
+PH_CRAWL_CASELAW_FEEDS=caselaw|Find Case Law|https://caselaw.nationalarchives.gov.uk/atom.xml?query=...
+PH_CRAWL_NEWS_FEEDS=bbc-leic|BBC Leicester|https://feeds.bbci.co.uk/news/england/leicester/rss.xml
+PH_CRAWL_COURTWATCH_FEEDS=govuk-lists|gov.uk hearing lists|https://www.gov.uk/...
+```
+
+The crawler honours robots.txt, rate-limits per host, and identifies itself. Nothing it
+files is ever auto-published: leads become our own legal-gated reports, and court-watch
+is private and never crosses into the public pipeline (the active-proceedings firewall).
+Any paid source credentials (e.g. CourtServe) belong in deploy env, never in the repo.

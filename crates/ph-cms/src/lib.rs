@@ -12,6 +12,14 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 /// depend on sqlx directly.
 pub type Db = SqlitePool;
 
+/// The PUBLIC crawler-ingest pipeline (sources, leads, conviction database) and
+/// the PRIVATE court-watch store live in their own modules. They are split so the
+/// active-proceedings firewall is a module boundary: `courtwatch` (live/upcoming
+/// proceedings) never writes into `ingest` (post-conviction / public), and
+/// `ingest` never reads `courtwatch`.
+pub mod courtwatch;
+pub mod ingest;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CmsError {
     #[error("database error: {0}")]
@@ -590,6 +598,15 @@ pub async fn get_article(pool: &SqlitePool, id: i64) -> Result<Option<Article>> 
     )
 }
 
+/// Serialises the read-then-insert in [`append_audit`]. Without it, two
+/// concurrent appends on different pooled connections (the pool allows several)
+/// can read the same chain tip and collide on the `seq` primary key — now
+/// reachable because the background crawler appends audit rows concurrently with
+/// request handlers and the public complaint form. The whole product is one
+/// process/container and the audit path is low-frequency, so a process-wide async
+/// lock held across the SELECT+INSERT is sufficient and cheap.
+static AUDIT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Append a record to the hash-chained audit log (reads the current tip first).
 pub async fn append_audit(
     pool: &SqlitePool,
@@ -598,6 +615,9 @@ pub async fn append_audit(
     subject: &str,
     detail: &str,
 ) -> Result<()> {
+    // Hold the lock across the read-then-insert so the chain tip can't be read by
+    // two writers at once (see AUDIT_LOCK).
+    let _guard = AUDIT_LOCK.lock().await;
     let (seq, prev_hash): (i64, String) = sqlx::query_as(
         "SELECT COALESCE(MAX(seq)+1,0), COALESCE((SELECT hash FROM audit ORDER BY seq DESC LIMIT 1), ?) FROM audit",
     )

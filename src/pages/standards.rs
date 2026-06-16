@@ -29,98 +29,99 @@ const STANDARDS: [(&str, &str); 13] = [
 #[component]
 pub fn Standards() -> Element {
     rsx! {
-        crate::components::Seo {
-            title: "Standards, complaints & corrections | Predator Hunters",
-            description: "Our editorial standards, complaints process, corrections policy and transparency. Independent court-reporting journalism, working towards IMPRESS registration.",
-            path: "/standards",
-            image: "/og.png",
-        }
-        header { class: "page-head",
-            div { class: "wrap",
-                p { class: "eyebrow rise d1", "Standards" }
-                h1 { class: "rise d2",
-                    "How we report, and "
-                    span { class: "grad-text", "how to hold us to it." }
-                }
-                p { class: "lede rise d3",
-                    "We are an independent publisher working towards registration with IMPRESS, the UK's approved press regulator. These are the standards we hold ourselves to and the ways you can raise a concern."
-                }
+            crate::components::Seo {
+                title: "Standards, complaints & corrections | Predator Hunters",
+                description: "Our editorial standards, complaints process, corrections policy and transparency. Independent court-reporting journalism, working towards IMPRESS registration.",
+                path: "/standards",
+                image: "/og.png",
             }
-        }
-
-        section { class: "section", style: "padding-top:clamp(20px,4vh,48px);",
-            div { class: "wrap",
-                div { class: "sec-head", span { class: "sec-index", "Our standards" } h2 { "The lines we report by." } }
-                dl { class: "deflist reveal",
-                    for (term , def) in STANDARDS {
-                        div { key: "{term}", class: "def", dt { "{term}" } dd { "{def}" } }
+            header { class: "page-head",
+                div { class: "wrap",
+                    p { class: "eyebrow rise d1", "Standards" }
+                    h1 { class: "rise d2",
+                        "How we report, and "
+                        span { class: "grad-text", "how to hold us to it." }
+                    }
+                    p { class: "lede rise d3",
+                        "We are an independent publisher working towards registration with IMPRESS, the UK's approved press regulator. These are the standards we hold ourselves to and the ways you can raise a concern."
                     }
                 }
             }
-        }
 
-        // ---------- COMPLAINTS PROCEDURE ----------
-        section { class: "section",
-            div { class: "wrap",
-                div { class: "sec-head", span { class: "sec-index", "Complaints" } h2 { "If we get it wrong, hold us to it." } }
-                div { class: "prose reveal",
-                    p { "If you think we have fallen short of the standards above, tell us and we will look into it. You do not need a lawyer, and it does not cost anything." }
-                }
-                dl { class: "deflist reveal", style: "margin-top:18px;",
-                    div { class: "def", dt { "How to complain" } dd { "Email complaints@predatorhunters.co.uk with the article or video, the date, and what you believe is inaccurate or unfair." } }
-                    div { class: "def", dt { "Who handles it" } dd { "One of our editors-in-chief, Jordan Upton or Scott Taylor, and where possible not the person responsible for the item." } }
-                    div { class: "def", dt { "How long it takes" } dd { "We acknowledge your complaint within 7 days and aim to give you a decision within 21 days. If it needs longer, we will tell you why." } }
-                    div { class: "def", dt { "If we got it wrong" } dd { "We correct or clarify it quickly, with prominence equal to the original, and we keep both versions on the record." } }
-                    div { class: "def", dt { "If you are not satisfied" } dd { "You can take your complaint to our independent press regulator. We keep a record of every complaint we receive." } }
-                }
-                ComplaintForm {}
-            }
-        }
-
-        // ---------- CORRECTIONS ARCHIVE ----------
-        section { class: "section",
-            div { class: "wrap",
-                div { class: "sec-head", span { class: "sec-index", "Corrections" } h2 { "Our corrections, in the open." } }
-                div { class: "prose reveal",
-                    p { "When we get something significantly wrong we correct it quickly, with prominence equal to the original, and we keep both the correction and what we first published on the record. Every correction we make is listed here." }
-                }
-                div { class: "card reveal", style: "margin-top:18px; max-width:680px;",
-                    div { class: "card-ic", dangerous_inner_html: svg("check") }
-                    h3 { "No corrections yet" }
-                    p { "We have not had to publish a correction so far. When we do, it will appear here with the date and what changed." }
-                }
-            }
-        }
-
-        // ---------- WHISTLEBLOWING + CONSCIENCE ----------
-        section { class: "section",
-            div { class: "wrap",
-                div { class: "sec-head", span { class: "sec-index", "Speaking up" } h2 { "Whistleblowing and conscience." } }
-                div { class: "grid-2",
-                    div { class: "card reveal",
-                        div { class: "card-ic", dangerous_inner_html: svg("shield") }
-                        h3 { "Whistleblowing" }
-                        p { "Anyone who works with us can raise a concern about wrongdoing, including anything that falls short of these standards, safely and in confidence. Email confidential@predatorhunters.co.uk and we will protect your identity." }
+            section { class: "section", style: "padding-top:clamp(20px,4vh,48px);",
+                div { class: "wrap",
+                    div { class: "sec-head", span { class: "sec-index", "Our standards" } h2 { "The lines we report by." } }
+                    dl { class: "deflist reveal",
+                        for (term , def) in STANDARDS {
+                            div { key: "{term}", class: "def", dt { "{term}" } dd { "{def}" } }
+                        }
                     }
-                    div { class: "card reveal",
+                }
+            }
+
+            // ---------- COMPLAINTS PROCEDURE ----------
+            section { class: "section",
+                div { class: "wrap",
+                    div { class: "sec-head", span { class: "sec-index", "Complaints" } h2 { "If we get it wrong, hold us to it." } }
+                    div { class: "prose reveal",
+                        p { "If you think we have fallen short of the standards above, tell us and we will look into it. You do not need a lawyer, and it does not cost anything." }
+                    }
+                    dl { class: "deflist reveal", style: "margin-top:18px;",
+                        div { class: "def", dt { "How to complain" } dd { "Email complaints@predatorhunters.co.uk with the article or video, the date, and what you believe is inaccurate or unfair." } }
+                        div { class: "def", dt { "Who handles it" } dd { "One of our editors-in-chief, Jordan Upton or Scott Taylor, and where possible not the person responsible for the item." } }
+                        div { class: "def", dt { "How long it takes" } dd { "We acknowledge your complaint within 7 days and aim to give you a decision within 21 days. If it needs longer, we will tell you why." } }
+                        div { class: "def", dt { "If we got it wrong" } dd { "We correct or clarify it quickly, with prominence equal to the original, and we keep both versions on the record." } }
+                        div { class: "def", dt { "If you are not satisfied" } dd { "You can take your complaint to our independent press regulator. We keep a record of every complaint we receive." } }
+                    }
+                    ComplaintForm {}
+                }
+            }
+
+            // ---------- CORRECTIONS ARCHIVE ----------
+            section { class: "section",
+                div { class: "wrap",
+                    div { class: "sec-head", span { class: "sec-index", "Corrections" } h2 { "Our corrections, in the open." } }
+                    div { class: "prose reveal",
+                        p { "When we get something significantly wrong we correct it quickly, with prominence equal to the original, and we keep both the correction and what we first published on the record. Every correction we make is listed here." }
+                    }
+                    div { class: "card reveal", style: "margin-top:18px; max-width:680px;",
                         div { class: "card-ic", dangerous_inner_html: svg("check") }
-                        h3 { "Conscience clause" }
-                        p { "No one who works with us will be made to act against this code or against their own conscience, and no one will be penalised for refusing to." }
+                        h3 { "No corrections yet" }
+                        p { "We have not had to publish a correction so far. When we do, it will appear here with the date and what changed." }
                     }
                 }
             }
-        }
 
-        section { class: "section",
-            div { class: "wrap",
-                div { class: "sec-head", span { class: "sec-index", "Who we are" } h2 { "Transparency." } }
-                div { class: "prose reveal",
-                    p { "Predator Hunters is a small, independent local newsroom, reporting since 2022. It has two editors-in-chief, Jordan Upton and Scott Taylor, and is self-funded, mainly by Jordan Upton, with Scott Taylor contributing when needed. We cover local news and investigations, report from the courts, and offer rewards for information on serious crimes. We are not owned by, and do not act for, any police force or political party." }
-                    p { "We are working towards registration with IMPRESS. Until that is complete we hold ourselves to the standards above and operate the same complaints and corrections process. We will publish our regulator details and trustmark here once registration is in place." }
+            // ---------- WHISTLEBLOWING + CONSCIENCE ----------
+            section { class: "section",
+                div { class: "wrap",
+                    div { class: "sec-head", span { class: "sec-index", "Speaking up" } h2 { "Whistleblowing and conscience." } }
+                    div { class: "grid-2",
+                        div { class: "card reveal",
+                            div { class: "card-ic", dangerous_inner_html: svg("shield") }
+                            h3 { "Whistleblowing" }
+                            p { "Anyone who works with us can raise a concern about wrongdoing, including anything that falls short of these standards, safely and in confidence. Email confidential@predatorhunters.co.uk and we will protect your identity." }
+                        }
+                        div { class: "card reveal",
+                            div { class: "card-ic", dangerous_inner_html: svg("check") }
+                            h3 { "Conscience clause" }
+                            p { "No one who works with us will be made to act against this code or against their own conscience, and no one will be penalised for refusing to." }
+                        }
+                    }
+                }
+            }
+
+            section { class: "section",
+                div { class: "wrap",
+                    div { class: "sec-head", span { class: "sec-index", "Who we are" } h2 { "Transparency." } }
+                    div { class: "prose reveal",
+                        p { "Predator Hunters is a small, independent local newsroom, reporting since 2022. It has two editors-in-chief, Jordan Upton and Scott Taylor, and is self-funded, mainly by Jordan Upton, with Scott Taylor contributing when needed. We cover local news and investigations, report from the courts, and offer rewards for information on serious crimes. We are not owned by, and do not act for, any police force or political party." }
+                        p { "We are working towards registration with IMPRESS. Until that is complete we hold ourselves to the standards above and operate the same complaints and corrections process. We will publish our regulator details and trustmark here once registration is in place." }
+                        p { "We monitor public sources \u{2014} court judgments and news reports \u{2014} to find concluded cases that fall within what we cover. Anything found this way is treated only as an unverified lead: an editor checks it against the public court record, clears any reporting restrictions, and writes our own report, which still goes through legal sign-off before publication. We do not republish another outlet's text or photographs, and every database entry links to our own report and cites the record it was drawn from." }
+    }
                 }
             }
         }
-    }
 }
 
 /// Public complaint form — submits straight into the /desk Complaints inbox.
