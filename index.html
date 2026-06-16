@@ -243,6 +243,14 @@ a.card:hover,.card.reveal:hover{border-color:var(--ink);}
 .prose strong{color:var(--ink);font-weight:600;}
 .prose a{color:inherit;border-bottom:2px solid var(--red);}
 .prose a:hover{background:var(--tag);}
+.prose em{font-style:italic;}
+.prose h2{font-family:var(--serif);font-size:clamp(1.4rem,2.4vw,1.85rem);line-height:1.15;color:var(--ink);margin:34px 0 12px;letter-spacing:-.015em;}
+.prose h3{font-family:var(--serif);font-size:1.3rem;line-height:1.2;color:var(--ink);margin:26px 0 10px;}
+.prose ul,.prose ol{margin:14px 0;padding-left:1.3em;}
+.prose ul+ul{margin-top:0;}              /* consecutive single-item bullets read as one list */
+.prose li{font-size:1.1rem;line-height:1.7;color:var(--ink-2);margin:4px 0;}
+.prose li::marker{color:var(--red);}
+.prose blockquote{margin:22px 0;padding:6px 0 6px 20px;border-left:3px solid var(--red);font-family:var(--serif);font-style:italic;font-size:1.15rem;line-height:1.5;color:var(--ink);}
 /* Drop cap is OPT-IN per paragraph (author marks a block with a leading "^ ",
    which renders <p class="dropcap">) — never applied to every paragraph. */
 .prose p.dropcap::first-letter{font-family:var(--serif);float:left;font-size:3.4rem;line-height:.82;
