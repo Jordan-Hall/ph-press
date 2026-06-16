@@ -15,6 +15,9 @@ serde_json = "1"
 argon2 = { version = "0.5", features = ["std"] }
 sha2 = "0.10"
 thiserror = "2"
+# `sync` only — a process-wide async lock serialises audit-chain appends. sqlx
+# already pulls the tokio runtime; this just enables tokio::sync::Mutex here.
+tokio = { version = "1", features = ["sync"] }
 ph-audit = { path = "../ph-audit" }
 
 [dev-dependencies]
