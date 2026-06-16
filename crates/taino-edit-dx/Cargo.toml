@@ -1,0 +1,26 @@
+# Dioxus 0.8 adapter for taino-edit (the native-Rust WYSIWYG editor).
+# Ported from upstream `taino-edit-dioxus` 0.5.3 (MIT/Apache,
+# github.com/juanma-dev/taino-edit) from Dioxus 0.6 → 0.8-alpha, and TARGET-GATED:
+# the web-sys editor only compiles for wasm32, so the SSG/native (server) build
+# compiles to an empty editor host that the wasm client hydrates. The framework-
+# agnostic engine (taino-edit-core / -dom) is used unchanged from crates.io.
+[package]
+name = "taino-edit-dx"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# MUST match the host app's Dioxus so Element/Signal/Component are the same types.
+dioxus = { version = "0.8.0-alpha.0", default-features = false, features = ["html", "signals", "hooks", "macro"] }
+# The doc model + markdown/HTML serialisers — pure Rust, builds on every target.
+taino-edit-core = "0.5"
+
+# The DOM bridge + web-sys live only in the browser build.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+taino-edit-dom = "0.5"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "Element", "HtmlElement", "Node", "Event", "EventTarget",
+    "KeyboardEvent", "InputEvent", "CompositionEvent", "ClipboardEvent", "DataTransfer",
+] }
