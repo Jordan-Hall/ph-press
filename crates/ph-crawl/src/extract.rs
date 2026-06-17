@@ -262,7 +262,10 @@ pub fn extracted(
     m.insert("offence_category".into(), cat.as_str().into());
     m.insert("case_status".into(), status.as_str().into());
     m.insert("restrictions_review".into(), cat.is_relevant().into());
-    m.insert("identification_risk".into(), identification_risk(text).into());
+    m.insert(
+        "identification_risk".into(),
+        identification_risk(text).into(),
+    );
     m
 }
 

@@ -300,6 +300,50 @@ pub async fn promote_lead(
     Ok(article_id)
 }
 
+/// Promote a lead into BOTH a draft article and a linked draft conviction entry
+/// (prefilled name/offence/source). The editor writes + publishes the report,
+/// which then lets the conviction be published. Returns `(article_id,
+/// conviction_id)`.
+pub async fn promote_lead_to_conviction(
+    pool: &SqlitePool,
+    lead_id: i64,
+    actor: &StaffUser,
+    kind: &str,
+    section: &str,
+) -> Result<(i64, i64)> {
+    // Capture lead fields before promote_lead flips its status.
+    let lead = get_lead(pool, lead_id)
+        .await?
+        .ok_or_else(|| CmsError::Bad(format!("no lead {lead_id}")))?;
+    let offence = match lead.offence_category.as_str() {
+        "child" => "Offence against a child",
+        "sexual" => "Sexual offence",
+        _ => "Offence",
+    }
+    .to_string();
+    let name = lead.title.clone();
+    let source_url = lead.url.clone();
+    let source_name = lead.source_key.clone();
+
+    let article_id = promote_lead(pool, lead_id, actor, kind, section).await?;
+    let article_slug = crate::get_article(pool, article_id)
+        .await?
+        .map(|a| a.slug)
+        .unwrap_or_default();
+
+    let conv = NewConviction {
+        name,
+        offence,
+        article_id: Some(article_id),
+        article_slug,
+        source_url,
+        source_name,
+        ..Default::default()
+    };
+    let conviction_id = create_conviction(pool, &conv, actor).await?;
+    Ok((article_id, conviction_id))
+}
+
 // ===================== convictions (public DB) =====================
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]

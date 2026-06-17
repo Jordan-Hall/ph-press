@@ -873,6 +873,9 @@ pub struct DeskLead {
     pub status: String,
     pub promoted_article_id: Option<i64>,
     pub created_at: i64,
+    /// Machine hint that a victim may be identifiable (a stronger reporting-
+    /// restriction prompt for the reviewer). Parsed from `extracted_json`.
+    pub id_risk: bool,
 }
 
 /// A conviction-database entry as the desk sees it (any status).
@@ -927,18 +930,25 @@ pub struct PublicConviction {
 #[cfg(feature = "server")]
 fn to_leads(v: Vec<ph_cms::ingest::IngestItem>) -> Vec<DeskLead> {
     v.into_iter()
-        .map(|l| DeskLead {
-            id: l.id,
-            source_key: l.source_key,
-            url: l.url,
-            title: l.title,
-            snippet: l.snippet,
-            offence_category: l.offence_category,
-            image_url: l.image_url,
-            image_attribution: l.image_attribution,
-            status: l.status,
-            promoted_article_id: l.promoted_article_id,
-            created_at: l.created_at,
+        .map(|l| {
+            let id_risk = serde_json::from_str::<serde_json::Value>(&l.extracted_json)
+                .ok()
+                .and_then(|v| v.get("identification_risk").and_then(|b| b.as_bool()))
+                .unwrap_or(false);
+            DeskLead {
+                id: l.id,
+                source_key: l.source_key,
+                url: l.url,
+                title: l.title,
+                snippet: l.snippet,
+                offence_category: l.offence_category,
+                image_url: l.image_url,
+                image_attribution: l.image_attribution,
+                status: l.status,
+                promoted_article_id: l.promoted_article_id,
+                created_at: l.created_at,
+                id_risk,
+            }
         })
         .collect()
 }
@@ -1335,5 +1345,80 @@ pub async fn conviction_db() -> Result<Vec<PublicConviction>, ServerFnError> {
     #[cfg(not(feature = "server"))]
     {
         Ok(Vec::new())
+    }
+}
+
+/// A configured crawl source as the desk Sources view sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskSource {
+    pub key: String,
+    pub kind: String,
+    pub label: String,
+    pub url: String,
+    pub enabled: bool,
+    pub last_polled_at: Option<i64>,
+}
+
+/// Promote a lead into a draft article AND a linked draft conviction, then refresh.
+#[server(endpoint = "desk_promote_lead_conviction")]
+pub async fn desk_promote_lead_conviction(
+    id: i64,
+    kind: String,
+    section: String,
+) -> Result<Vec<DeskLead>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::promote_lead_to_conviction(&session.username, id, &kind, &section)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_leads(
+            crate::cms::leads(None).await.map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, kind, section);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// The configured crawl sources + their last-poll times. Requires a session.
+#[server(endpoint = "desk_sources")]
+pub async fn desk_sources() -> Result<Vec<DeskSource>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(crate::cms::sources()
+            .await
+            .map_err(ServerFnError::new)?
+            .into_iter()
+            .map(|s| DeskSource {
+                key: s.key,
+                kind: s.kind,
+                label: s.label,
+                url: s.url,
+                enabled: s.enabled,
+                last_polled_at: s.last_polled_at,
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Trigger one crawl pass now (background). Admin only.
+#[server(endpoint = "desk_poll_now")]
+pub async fn desk_poll_now() -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_admin().await?;
+        crate::cms::crawl_now().await.map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
     }
 }

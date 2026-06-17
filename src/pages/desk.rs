@@ -10,10 +10,11 @@ use crate::api::{
     desk_add_correction, desk_add_staff, desk_add_watch, desk_articles, desk_audit,
     desk_complaint_status, desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
     desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
-    desk_log_complaint, desk_preview, desk_promote_lead, desk_set_conviction_status, desk_staff,
+    desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
+    desk_promote_lead_conviction, desk_set_conviction_status, desk_sources, desk_staff,
     desk_transition, desk_update, staff_change_password, staff_login, staff_logout, staff_me,
-    DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskWatch,
-    PreviewArticle, StaffMember,
+    DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskSource,
+    DeskWatch, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -1456,6 +1457,8 @@ fn IntakePanel() -> Element {
     // Format + section a promoted lead's draft is created under.
     let kind = use_signal(|| "Court report".to_string());
     let section = use_signal(|| "Crime".to_string());
+    let mut sources = use_signal(|| Option::<Vec<DeskSource>>::None);
+    let mut polling = use_signal(|| false);
 
     use_resource(move || async move {
         match desk_leads().await {
@@ -1463,25 +1466,72 @@ fn IntakePanel() -> Element {
             Err(e) => err.set(Some(e.to_string())),
         }
     });
+    use_resource(move || async move {
+        if let Ok(v) = desk_sources().await {
+            sources.set(Some(v));
+        }
+    });
+
+    let poll_now = move |_| {
+        spawn(async move {
+            polling.set(true);
+            err.set(None);
+            match desk_poll_now().await {
+                Ok(()) => {
+                    // Give the background pass a moment, then reload leads.
+                    if let Ok(v) = desk_leads().await {
+                        items.set(Some(v));
+                    }
+                    if let Ok(v) = desk_sources().await {
+                        sources.set(Some(v));
+                    }
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            polling.set(false);
+        });
+    };
 
     let rows = items.read().clone();
+    let srcs = sources.read().clone();
     rsx! {
         section { class: "desk-panel",
             div { class: "desk-panel-head",
                 h2 { "Intake — external sources" }
-                button {
-                    class: "desk-btn sm",
-                    onclick: move |_| {
-                        let open = show_handled();
-                        show_handled.set(!open);
-                    },
-                    if show_handled() { "Hide handled" } else { "Show handled" }
+                div { class: "desk-actions",
+                    button { class: "desk-btn sm", disabled: polling(), onclick: poll_now,
+                        if polling() { "Polling…" } else { "Poll now" }
+                    }
+                    button {
+                        class: "desk-btn sm",
+                        onclick: move |_| {
+                            let open = show_handled();
+                            show_handled.set(!open);
+                        },
+                        if show_handled() { "Hide handled" } else { "Show handled" }
+                    }
                 }
             }
             p { class: "desk-muted pad",
                 "Unverified leads crawled from court judgments and news. Promote a lead to start "
                 "our own report (it enters the normal draft → legal → publish flow) or dismiss it. "
                 "Always verify against the court record; never republish a source's text or photo."
+            }
+            if let Some(s) = srcs {
+                p { class: "desk-muted pad", style: "font-family:var(--mono); font-size:.72rem;",
+                    if s.is_empty() {
+                        "No sources configured (set PH_CRAWL_ENABLED + feeds, or Poll now to seed presets)."
+                    } else {
+                        "Sources: "
+                    }
+                    for src in s.iter() {
+                        span { key: "{src.key}", style: "margin-right:12px;",
+                            "{src.key} ("
+                            if let Some(t) = src.last_polled_at { "{ymd(t)}" } else { "never" }
+                            ")"
+                        }
+                    }
+                }
             }
             div { class: "desk-new-row", style: "padding:0 14px 10px;",
                 label { class: "desk-muted", "Promote as: " }
@@ -1563,7 +1613,15 @@ fn IntakeRow(
                 }
             }
             td { class: "desk-muted", "{lead.source_key}" }
-            td { span { class: "desk-state", "{offence_label(&lead.offence_category)}" } }
+            td {
+                span { class: "desk-state", "{offence_label(&lead.offence_category)}" }
+                if matches!(lead.offence_category.as_str(), "sexual" | "child") {
+                    div { class: "desk-muted", title: "Sexual-offence and child cases carry automatic anonymity duties — clear before publishing.", "\u{26a0} check restrictions" }
+                }
+                if lead.id_risk {
+                    div { class: "desk-muted", title: "Wording suggests a victim could be identifiable.", "\u{26a0} ID risk" }
+                }
+            }
             td {
                 span { class: "desk-state", "{lead_status_label(&lead.status)}" }
                 if let Some(aid) = lead.promoted_article_id {
@@ -1589,6 +1647,22 @@ fn IntakeRow(
                                 });
                             },
                             "Promote to draft"
+                        }
+                        button {
+                            class: "desk-act",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_promote_lead_conviction(id, kind(), section()).await {
+                                        Ok(v) => items.set(Some(v)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "Promote + DB entry"
                         }
                         button {
                             class: "desk-act",
