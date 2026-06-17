@@ -1,0 +1,22 @@
+# Vendored from rust-web-markdown (MIT, github.com/rambip/rust-web-markdown),
+# dioxus-markdown 0.1.0, ported from Dioxus 0.7.2 → 0.8-alpha. The framework-
+# agnostic engine (web-framework-markdown: pulldown-cmark + syntect) is vendored
+# alongside, unchanged. `maths` (katex) is OFF — not needed for news articles.
+[package]
+name = "dioxus-markdown"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/rambip/rust-web-markdown"
+description = "A dynamic markdown component for Dioxus (0.8 port for PH Press)."
+publish = false
+
+[dependencies]
+# Must match the host app's Dioxus so Element/Signal/Props are the same types.
+dioxus = { version = "0.8.0-alpha.0", default-features = false, features = ["html", "signals", "hooks", "macro"] }
+web-framework-markdown = { version = "0.1.0", path = "../web-framework-markdown", default-features = false }
+
+[features]
+default = []
+debug = ["web-framework-markdown/debug"]
+maths = ["web-framework-markdown/maths"]

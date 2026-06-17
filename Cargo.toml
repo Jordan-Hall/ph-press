@@ -27,6 +27,10 @@ serde = { version = "1", features = ["derive"] }
 # Non-optional (the editor renders on web AND is pre-rendered as an empty host by
 # the SSG/native build); the web-sys editor itself is target-gated to wasm32.
 taino-edit-dx = { path = "crates/taino-edit-dx" }
+# Markdown editor crate (the "Source" editor mode): textarea + this live renderer.
+# Vendored from rust-web-markdown (MIT) and ported 0.7→0.8; non-optional (web + the
+# SSG host). web-framework-markdown (its engine) joins as a transitive path dep.
+dioxus-markdown = { path = "crates/dioxus-markdown" }
 # Editorial CMS (SQLite). Optional + only enabled by the `server` feature, so the
 # wasm/web build never tries to compile sqlx.
 ph-cms = { path = "crates/ph-cms", optional = true }
@@ -39,4 +43,4 @@ serde_json = { version = "1", optional = true }
 # ph-offender) join as members as WS2/WS3 land. These are server-side only and
 # are NOT pulled into the wasm/web build (kept off the default feature path).
 [workspace]
-members = ["crates/ph-audit", "crates/ph-cms", "crates/ph-crawl", "crates/taino-edit-dx"]
+members = ["crates/ph-audit", "crates/ph-cms", "crates/ph-crawl", "crates/taino-edit-dx", "crates/web-framework-markdown", "crates/dioxus-markdown"]
