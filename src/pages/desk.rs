@@ -23,6 +23,9 @@ use taino_edit_dx::{
     markdown_to_doc, newsroom_keymap, newsroom_schema, state_to_markdown, EditorState, KeymapProp,
     TainoEditor,
 };
+// The Source mode's live preview is rendered by the dioxus-markdown crate (not our
+// md.rs). preserve_html=false so staff markdown can't inject raw HTML.
+use dioxus_markdown::Markdown;
 
 /// Which editor surface the writer is using.
 #[derive(Clone, Copy, PartialEq)]
@@ -1120,11 +1123,6 @@ fn EditorForm(
         }
     });
 
-    let preview_paras: Vec<String> = body()
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
     let save_label = if edit_id == 0 {
         "Create draft"
     } else {
@@ -1252,13 +1250,8 @@ fn EditorForm(
                     oninput: move |e| body.set(e.value()),
                 }
                 div { class: "editor-preview prose",
-                    span { class: "editor-prev-label", "Live preview" }
-                    if preview_paras.is_empty() {
-                        p { class: "editor-prev-empty", "Your article will appear here as you write." }
-                    }
-                    for (i , para) in preview_paras.iter().enumerate() {
-                        div { key: "{i}", dangerous_inner_html: crate::md::block_html(para) }
-                    }
+                    span { class: "editor-prev-label", "Live preview · dioxus-markdown" }
+                    Markdown { src: body, preserve_html: false }
                 }
             }
             div { class: "editor-meters",

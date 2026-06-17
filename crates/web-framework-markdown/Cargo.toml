@@ -1,0 +1,30 @@
+[package]
+name = "web-framework-markdown"
+version = "0.1.0"
+edition = "2021"
+description = "An abstract API to create markdown components in any rust framework"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rambip/rust-web-markdown"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+web-sys = { version = "0.3.61", features = ["MouseEvent"] }
+syntect = { version = "5.0.0", default-features = false, features = [
+    "default-fancy",
+] }
+lazy_static = "1.4.0"
+pulldown-cmark = "0.13.0"
+regex = "1.12"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+katex-rs = { version = "0.2", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+katex-rs = { version = "0.2", optional = true }
+
+[features]
+default = []
+debug = []
+maths = ["katex-rs"]
