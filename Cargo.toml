@@ -32,7 +32,7 @@ taino-edit-dx = { path = "crates/taino-edit-dx" }
 ph-cms = { path = "crates/ph-cms", optional = true }
 # Court/news crawler (server-only). Pulls reqwest/quick-xml/scraper; behind `server`.
 ph-crawl = { path = "crates/ph-crawl", optional = true }
-tokio = { version = "1", features = ["sync"], optional = true }
+tokio = { version = "1", features = ["sync", "rt"], optional = true }
 serde_json = { version = "1", optional = true }
 
 # Standalone repo (PH Press) — owns its tree. Backend crates (ph-cms,

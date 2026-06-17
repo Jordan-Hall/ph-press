@@ -49,7 +49,11 @@ fn record_to_lead(r: feed::FeedRecord) -> Option<RawLead> {
             format!("{}/data.xml", r.link.trim_end_matches('/')).into(),
         );
     }
-    let title = if case_name.is_empty() { r.title } else { case_name };
+    let title = if case_name.is_empty() {
+        r.title
+    } else {
+        case_name
+    };
     Some(RawLead {
         external_id,
         url: r.link,

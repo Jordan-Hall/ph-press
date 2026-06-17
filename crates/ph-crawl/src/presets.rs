@@ -53,11 +53,15 @@ mod tests {
     fn presets_are_well_formed() {
         for s in caselaw() {
             assert_eq!(s.kind, "caselaw");
-            assert!(s.url.starts_with("https://caselaw.nationalarchives.gov.uk/atom.xml"));
+            assert!(s
+                .url
+                .starts_with("https://caselaw.nationalarchives.gov.uk/atom.xml"));
         }
         let news = news();
         assert_eq!(news.len(), 3);
-        assert!(news.iter().all(|s| s.kind == "news" && s.url.contains("bbci.co.uk")));
+        assert!(news
+            .iter()
+            .all(|s| s.kind == "news" && s.url.contains("bbci.co.uk")));
         assert_eq!(news[0].label, "BBC News — Leicester");
     }
 }

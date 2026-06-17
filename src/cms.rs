@@ -676,7 +676,11 @@ fn parse_sources(raw: &str, kind: &str) -> Vec<ph_crawl::SourceConfig> {
 
 /// Sources for a kind: parse the override env var when set+non-empty, else fall
 /// back to the built-in presets (court-watch has no preset — opt-in only).
-fn sources_for(kind: &str, env_var: &str, presets: fn() -> Vec<ph_crawl::SourceConfig>) -> Vec<ph_crawl::SourceConfig> {
+fn sources_for(
+    kind: &str,
+    env_var: &str,
+    presets: fn() -> Vec<ph_crawl::SourceConfig>,
+) -> Vec<ph_crawl::SourceConfig> {
     match std::env::var(env_var).ok().map(|v| parse_sources(&v, kind)) {
         Some(v) if !v.is_empty() => v,
         _ => presets(),
@@ -688,16 +692,36 @@ fn sources_for(kind: &str, env_var: &str, presets: fn() -> Vec<ph_crawl::SourceC
 /// presets (Find Case Law + BBC regional news); court-watch is opt-in via
 /// `PH_CRAWL_COURTWATCH_FEEDS`. Interval via `PH_CRAWL_INTERVAL_SECS` (default
 /// 3600, min 60). OFF by default so there is never surprise outbound traffic.
+/// Resolve the crawl sources from env overrides + presets (court-watch opt-in).
+fn crawler_sources() -> Vec<ph_crawl::SourceConfig> {
+    let mut sources = sources_for(
+        "caselaw",
+        "PH_CRAWL_CASELAW_FEEDS",
+        ph_crawl::presets::caselaw,
+    );
+    sources.extend(sources_for(
+        "news",
+        "PH_CRAWL_NEWS_FEEDS",
+        ph_crawl::presets::news,
+    ));
+    if let Ok(v) = std::env::var("PH_CRAWL_COURTWATCH_FEEDS") {
+        sources.extend(parse_sources(&v, "courtwatch"));
+    }
+    sources
+}
+
+fn crawler_user_agent() -> String {
+    std::env::var("PH_CRAWL_USER_AGENT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| ph_crawl::DEFAULT_USER_AGENT.to_string())
+}
+
 fn maybe_start_crawler(pool: ph_cms::Db) {
     if !env_flag("PH_CRAWL_ENABLED") {
         return;
     }
-    let mut sources = sources_for("caselaw", "PH_CRAWL_CASELAW_FEEDS", ph_crawl::presets::caselaw);
-    sources.extend(sources_for("news", "PH_CRAWL_NEWS_FEEDS", ph_crawl::presets::news));
-    // court-watch: opt-in, no preset.
-    if let Ok(v) = std::env::var("PH_CRAWL_COURTWATCH_FEEDS") {
-        sources.extend(parse_sources(&v, "courtwatch"));
-    }
+    let sources = crawler_sources();
     if sources.is_empty() {
         eprintln!("[ph-press] PH_CRAWL_ENABLED set but no sources resolved; crawler idle");
         return;
@@ -707,13 +731,63 @@ fn maybe_start_crawler(pool: ph_cms::Db) {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(3600)
         .max(60);
-    let ua = std::env::var("PH_CRAWL_USER_AGENT")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| ph_crawl::DEFAULT_USER_AGENT.to_string());
     eprintln!(
         "[ph-press] starting crawler: {} source(s), every {secs}s",
         sources.len()
     );
-    ph_crawl::spawn(pool, sources, std::time::Duration::from_secs(secs), ua);
+    ph_crawl::spawn(
+        pool,
+        sources,
+        std::time::Duration::from_secs(secs),
+        crawler_user_agent(),
+    );
+}
+
+/// Promote a lead into a draft article + a linked draft conviction entry.
+pub async fn promote_lead_to_conviction(
+    actor: &str,
+    id: i64,
+    kind: &str,
+    section: &str,
+) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    ph_cms::ingest::promote_lead_to_conviction(pool, id, &user, kind, section)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Run one crawl pass now, in the background. Seeds sources first so it works even
+/// when the scheduled loop is off. Returns as soon as the pass is queued.
+pub async fn crawl_now() -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let sources = crawler_sources();
+    if sources.is_empty() {
+        return Err("no crawler sources configured".to_string());
+    }
+    let fetcher = ph_crawl::Fetcher::new(crawler_user_agent()).map_err(|e| e.to_string())?;
+    ph_crawl::seed_sources(pool, &sources)
+        .await
+        .map_err(|e| e.to_string())?;
+    let pool2 = pool.clone();
+    tokio::spawn(async move {
+        let r = ph_crawl::run_once(&pool2, &fetcher).await;
+        eprintln!(
+            "[ph-press] manual poll: {} leads, {} watch, {} sources, {} errors",
+            r.leads_added,
+            r.watch_added,
+            r.sources_polled,
+            r.errors.len()
+        );
+    });
+    Ok(())
+}
+
+/// Configured sources for the desk Sources view (key, kind, label, last_polled_at).
+pub async fn sources() -> Result<Vec<ph_cms::ingest::IngestSource>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::ingest::list_sources(pool)
+        .await
+        .map_err(|e| e.to_string())
 }

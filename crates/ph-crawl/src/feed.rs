@@ -211,6 +211,31 @@ mod tests {
     }
 
     #[test]
+    fn extracts_media_content_image_and_tolerates_unclosed_tags() {
+        let xml = r#"<?xml version="1.0"?>
+        <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel>
+          <item>
+            <title>Woman jailed for child cruelty</title>
+            <link>https://outlet.example/m</link>
+            <guid>m</guid>
+            <description>She was sentenced.</description>
+            <media:content url="https://outlet.example/m.jpg" medium="image"/>
+          </item>
+        </channel></rss>"#;
+        let recs = collect(xml);
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].image_url, "https://outlet.example/m.jpg");
+    }
+
+    #[test]
+    fn malformed_feed_does_not_panic() {
+        // Truncated / broken XML must return cleanly (best-effort), never panic.
+        assert!(collect("<rss><channel><item><title>Broken").is_empty());
+        assert!(collect("not xml at all <<<").is_empty());
+        assert!(collect("").is_empty());
+    }
+
+    #[test]
     fn parses_atom_with_link_href() {
         let xml = r#"<feed xmlns="http://www.w3.org/2005/Atom">
           <entry>
