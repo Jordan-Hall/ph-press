@@ -187,15 +187,88 @@ pub fn hearing_type(text: &str) -> &'static str {
     }
 }
 
-/// A compact JSON blob of the unverified machine classification, stored on the
-/// lead so the desk can show provenance.
-pub fn extracted_json(cat: OffenceCategory, status: CaseStatus) -> String {
-    serde_json::json!({
-        "unverified": true,
-        "offence_category": cat.as_str(),
-        "case_status": status.as_str(),
-    })
-    .to_string()
+// UK neutral-citation court tokens (longest variants first so "EWCA Crim"
+// matches before a bare court).
+const NEUTRAL_COURTS: &[&str] = &[
+    "EWCA Crim",
+    "EWCA Civ",
+    "EWHC",
+    "EWFC",
+    "EWCOP",
+    "UKSC",
+    "UKPC",
+    "UKUT",
+    "UKFTT",
+    "UKEAT",
+];
+
+// Terms suggesting a victim could be identifiable — a stronger anonymity prompt
+// than the blanket per-category review.
+const ID_RISK_TERMS: &[&str] = &[
+    "daughter",
+    "son",
+    "stepdaughter",
+    "stepson",
+    "granddaughter",
+    "grandson",
+    "niece",
+    "nephew",
+    "his child",
+    "her child",
+    "named the victim",
+    "identified the victim",
+    "schoolgirl",
+    "schoolboy",
+    "pupil",
+    "foster",
+];
+
+/// Pull `(case_name, citation, court)` from a Find Case Law judgment title such
+/// as "R v Smith [2026] EWCA Crim 123" → ("R v Smith", "[2026] EWCA Crim 123",
+/// "EWCA Crim"). Best-effort; empty strings when a part isn't present.
+pub fn judgment_meta(title: &str) -> (String, String, String) {
+    let case_name = title.split(" [").next().unwrap_or(title).trim().to_string();
+    let citation = title
+        .find('[')
+        .map(|i| title[i..].trim().to_string())
+        .unwrap_or_default();
+    let court = NEUTRAL_COURTS
+        .iter()
+        .find(|c| title.contains(**c))
+        .map(|c| c.to_string())
+        .unwrap_or_default();
+    (case_name, citation, court)
+}
+
+/// Does the text suggest a victim could be identified (a stronger reporting-
+/// restriction prompt for the legal reviewer)?
+pub fn identification_risk(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    ID_RISK_TERMS.iter().any(|t| lower.contains(t))
+}
+
+/// The base unverified-classification fields, as a JSON object map. Adapters add
+/// source-specific fields (e.g. caselaw citation/court) before serialising.
+/// `restrictions_review` is true for every in-remit lead (sexual-offence and
+/// child cases carry automatic anonymity duties); `identification_risk` is a
+/// stronger flag when the text hints a victim is identifiable.
+pub fn extracted(
+    cat: OffenceCategory,
+    status: CaseStatus,
+    text: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("unverified".into(), true.into());
+    m.insert("offence_category".into(), cat.as_str().into());
+    m.insert("case_status".into(), status.as_str().into());
+    m.insert("restrictions_review".into(), cat.is_relevant().into());
+    m.insert("identification_risk".into(), identification_risk(text).into());
+    m
+}
+
+/// Convenience: the base classification serialised to a JSON string.
+pub fn extracted_json(cat: OffenceCategory, status: CaseStatus, text: &str) -> String {
+    serde_json::Value::Object(extracted(cat, status, text)).to_string()
 }
 
 #[cfg(test)]

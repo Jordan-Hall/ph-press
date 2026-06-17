@@ -33,13 +33,30 @@ fn record_to_lead(r: feed::FeedRecord) -> Option<RawLead> {
     if external_id.is_empty() {
         return None;
     }
+    // Structured judgment metadata from the title (case name / citation / court),
+    // plus the LegalDocML data.xml URL for the editor.
+    let (case_name, citation, court) = extract::judgment_meta(&r.title);
+    let mut meta = extract::extracted(cat, status, &text);
+    if !citation.is_empty() {
+        meta.insert("citation".into(), citation.into());
+    }
+    if !court.is_empty() {
+        meta.insert("court".into(), court.into());
+    }
+    if !r.link.is_empty() {
+        meta.insert(
+            "data_xml".into(),
+            format!("{}/data.xml", r.link.trim_end_matches('/')).into(),
+        );
+    }
+    let title = if case_name.is_empty() { r.title } else { case_name };
     Some(RawLead {
         external_id,
         url: r.link,
-        title: r.title,
+        title,
         snippet: feed::snippet(&r.summary, 300),
         offence_category: cat.as_str().to_string(),
-        extracted_json: extract::extracted_json(cat, status),
+        extracted_json: serde_json::Value::Object(meta).to_string(),
         image_url: r.image_url,
         image_attribution: String::new(),
     })
@@ -53,9 +70,9 @@ mod tests {
     fn keeps_relevant_judgments_drops_irrelevant() {
         let xml = r#"<feed xmlns="http://www.w3.org/2005/Atom">
           <entry>
-            <title>R v Smith</title>
+            <title>R v Smith [2026] EWCA Crim 1</title>
             <id>urn:judgment:crim:1</id>
-            <link rel="alternate" href="https://caselaw.example/crim/1"/>
+            <link rel="alternate" href="https://caselaw.example/ewca/crim/2026/1"/>
             <summary>Appellant convicted of sexual assault; appeal dismissed.</summary>
           </entry>
           <entry>
@@ -70,5 +87,11 @@ mod tests {
         assert_eq!(leads[0].external_id, "urn:judgment:crim:1");
         assert_eq!(leads[0].offence_category, "sexual");
         assert!(leads[0].extracted_json.contains("\"unverified\":true"));
+        // structured judgment metadata + LegalDocML data.xml url
+        assert_eq!(leads[0].title, "R v Smith");
+        assert!(leads[0].extracted_json.contains("EWCA Crim"));
+        assert!(leads[0]
+            .extracted_json
+            .contains("https://caselaw.example/ewca/crim/2026/1/data.xml"));
     }
 }

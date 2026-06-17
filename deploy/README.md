@@ -65,8 +65,13 @@ No `BULWARK_CF_DNS_TOKEN` is needed here (the edge container holds it for the ap
 
 The court/news crawler (`ph-crawl`) files approval-gated **leads** into `/desk → Intake`
 and private hearings into `/desk → Court watch`. It is **off unless `PH_CRAWL_ENABLED=1`**,
-so there is never surprise outbound traffic. Configure sources as `key|label|url` lists
-(entries separated by `;`) per kind, set on the container's `production` environment:
+so there is never surprise outbound traffic.
+
+**Quick start:** set the `production` variable `PH_CRAWL_ENABLED=1` and redeploy. With no
+feed overrides the crate uses built-in **presets** (Find Case Law sexual-offence +
+offences-against-children Atom queries, and BBC regional news for Leicester / Nottingham /
+Derbyshire). To override, set the `key|label|url` lists (entries separated by `;`) per kind
+(the workflow base64-wraps them so `| ; ? & =` survive; the container decodes):
 
 | Env | Purpose |
 |---|---|
