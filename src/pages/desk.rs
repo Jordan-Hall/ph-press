@@ -1219,8 +1219,10 @@ fn EditorForm(
             // ---- Visual mode: native-Rust WYSIWYG. Mounted once (so it keeps its
             // keymap); hidden — not unmounted — when editing the markdown source. ----
             div {
-                class: "editor-rich",
-                style: if mode() == EdMode::Visual { "" } else { "display:none;" },
+                // Toggle visibility by CLASS, not inline style: Dioxus does not clear
+                // a style attribute set back to "" (so a once-hidden wrapper would
+                // never reappear). The editor stays mounted either way.
+                class: if mode() == EdMode::Visual { "editor-rich" } else { "editor-rich is-hidden" },
                 TainoEditor { state: ed_state, keymap: keymap.clone() }
             }
 
@@ -1239,8 +1241,7 @@ fn EditorForm(
             // ---- The markdown source textarea: the editor in Markdown mode; the
             // hidden bridge to the canonical `body` (read by save) in Visual mode. ----
             div {
-                class: "editor-split",
-                style: if mode() == EdMode::Visual { "display:none;" } else { "" },
+                class: if mode() == EdMode::Visual { "editor-split is-hidden" } else { "editor-split" },
                 textarea {
                     id: "ed-body",
                     class: "editor-body",
