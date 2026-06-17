@@ -40,7 +40,7 @@ fn record_to_lead(r: feed::FeedRecord) -> Option<RawLead> {
         title: r.title,
         snippet: feed::snippet(&r.summary, 300),
         offence_category: cat.as_str().to_string(),
-        extracted_json: extract::extracted_json(cat, status),
+        extracted_json: extract::extracted_json(cat, status, &text),
         image_url: r.image_url,
         image_attribution: String::new(),
     })

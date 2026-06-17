@@ -22,6 +22,7 @@ pub mod dedupe;
 pub mod extract;
 pub mod feed;
 pub mod fetch;
+pub mod presets;
 pub mod runner;
 pub mod source;
 

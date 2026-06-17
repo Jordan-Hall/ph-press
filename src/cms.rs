@@ -674,29 +674,32 @@ fn parse_sources(raw: &str, kind: &str) -> Vec<ph_crawl::SourceConfig> {
         .collect()
 }
 
-/// Start the background crawl loop once, if `PH_CRAWL_ENABLED` is set. Sources
-/// are configured per kind as `key|label|url` lists:
-///   PH_CRAWL_CASELAW_FEEDS     (Find Case Law Atom feed → public leads)
-///   PH_CRAWL_NEWS_FEEDS        (news RSS/Atom → public leads)
-///   PH_CRAWL_COURTWATCH_FEEDS  (court-listing pages → PRIVATE court-watch)
-/// Interval via PH_CRAWL_INTERVAL_SECS (default 3600, min 60). OFF by default so
-/// there is never surprise outbound traffic.
+/// Sources for a kind: parse the override env var when set+non-empty, else fall
+/// back to the built-in presets (court-watch has no preset — opt-in only).
+fn sources_for(kind: &str, env_var: &str, presets: fn() -> Vec<ph_crawl::SourceConfig>) -> Vec<ph_crawl::SourceConfig> {
+    match std::env::var(env_var).ok().map(|v| parse_sources(&v, kind)) {
+        Some(v) if !v.is_empty() => v,
+        _ => presets(),
+    }
+}
+
+/// Start the background crawl loop once, if `PH_CRAWL_ENABLED` is set. Each kind
+/// uses its `PH_CRAWL_*_FEEDS` override (`key|label|url;…`) or the built-in
+/// presets (Find Case Law + BBC regional news); court-watch is opt-in via
+/// `PH_CRAWL_COURTWATCH_FEEDS`. Interval via `PH_CRAWL_INTERVAL_SECS` (default
+/// 3600, min 60). OFF by default so there is never surprise outbound traffic.
 fn maybe_start_crawler(pool: ph_cms::Db) {
     if !env_flag("PH_CRAWL_ENABLED") {
         return;
     }
-    let mut sources = Vec::new();
-    if let Ok(v) = std::env::var("PH_CRAWL_CASELAW_FEEDS") {
-        sources.extend(parse_sources(&v, "caselaw"));
-    }
-    if let Ok(v) = std::env::var("PH_CRAWL_NEWS_FEEDS") {
-        sources.extend(parse_sources(&v, "news"));
-    }
+    let mut sources = sources_for("caselaw", "PH_CRAWL_CASELAW_FEEDS", ph_crawl::presets::caselaw);
+    sources.extend(sources_for("news", "PH_CRAWL_NEWS_FEEDS", ph_crawl::presets::news));
+    // court-watch: opt-in, no preset.
     if let Ok(v) = std::env::var("PH_CRAWL_COURTWATCH_FEEDS") {
         sources.extend(parse_sources(&v, "courtwatch"));
     }
     if sources.is_empty() {
-        eprintln!("[ph-press] PH_CRAWL_ENABLED set but no *_FEEDS configured; crawler idle");
+        eprintln!("[ph-press] PH_CRAWL_ENABLED set but no sources resolved; crawler idle");
         return;
     }
     let secs = std::env::var("PH_CRAWL_INTERVAL_SECS")
