@@ -43,6 +43,7 @@ const editorState = () =>
       markdownSplit: vis(split),
       textarea: ta ? vis(ta) : "absent",
       edBodyValue: ta ? ta.value : null,
+      preview: document.querySelector(".editor-preview")?.innerHTML?.replace(/\s+/g, " ").slice(0, 1200) ?? null,
     };
   });
 
@@ -81,6 +82,22 @@ try {
   await new Promise((r) => setTimeout(r, 1500));
   await page.screenshot({ path: "shot-4-markdown.png" });
   log("  editor state (Markdown): " + JSON.stringify(await editorState(), null, 2));
+
+  log("=== 4b. TYPE markdown → dioxus-markdown preview should render it ===");
+  await page.evaluate(() => {
+    const t = document.querySelector("#ed-body");
+    if (t) {
+      t.value = "## Heading\n\n**bold** and *italic* and a [link](https://example.com)\n\n- one\n- two";
+      t.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+  await new Promise((r) => setTimeout(r, 1500));
+  await page.screenshot({ path: "shot-4b-markdown-typed.png" });
+  const md = await editorState();
+  log("  editor state (Markdown + typed): " + JSON.stringify(md, null, 2));
+  const p = md.preview || "";
+  const ok = /<h[12]\b/.test(p) && /<(b|strong)\b/.test(p) && /<(a |li\b)/.test(p);
+  log(`  >> dioxus-markdown rendered heading + bold + link/list? ${ok ? "YES ✓" : "NO ✗"}`);
 
   log("=== 5. TOGGLE → Visual ===");
   await clickByText("button", "Visual");
