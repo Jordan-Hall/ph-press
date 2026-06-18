@@ -4,8 +4,11 @@
 //! - [`caselaw`] — National Archives **Find Case Law** Atom feed → public leads.
 //! - [`news`] — UK national / local **RSS/Atom** feeds → public leads (strict:
 //!   concluded only).
+//! - [`police`] — UK police-force news listing HTML → public leads (strict:
+//!   concluded sex/child only).
 //! - [`courtwatch`] — court-listing HTML → PRIVATE upcoming/appeal hearings.
 
 pub mod caselaw;
 pub mod courtwatch;
 pub mod news;
+pub mod police;

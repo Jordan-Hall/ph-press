@@ -704,6 +704,11 @@ fn crawler_sources() -> Vec<ph_crawl::SourceConfig> {
         "PH_CRAWL_NEWS_FEEDS",
         ph_crawl::presets::news,
     ));
+    sources.extend(sources_for(
+        "police",
+        "PH_CRAWL_POLICE_FEEDS",
+        ph_crawl::presets::police,
+    ));
     if let Ok(v) = std::env::var("PH_CRAWL_COURTWATCH_FEEDS") {
         sources.extend(parse_sources(&v, "courtwatch"));
     }

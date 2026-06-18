@@ -49,6 +49,14 @@ pub async fn run_once(pool: &Db, fetcher: &Fetcher) -> RunReport {
         let _ = ingest::mark_source_polled(pool, src.id).await;
         report.sources_polled += 1;
     }
+    for src in enabled(pool, "police", &mut report).await {
+        match poll_police(pool, fetcher, &src).await {
+            Ok(n) => report.leads_added += n,
+            Err(e) => report.errors.push(format!("{}: {e}", src.key)),
+        }
+        let _ = ingest::mark_source_polled(pool, src.id).await;
+        report.sources_polled += 1;
+    }
     for src in enabled(pool, "courtwatch", &mut report).await {
         match poll_courtwatch(pool, fetcher, &src).await {
             Ok(n) => report.watch_added += n,
@@ -84,9 +92,26 @@ async fn poll_feed(
     } else {
         adapters::news::parse(&body)
     };
+    insert_leads(pool, src, leads).await
+}
+
+/// Scrape a UK police-force news listing (GOSS/Police.UK CMS) into post-conviction
+/// public leads (strict sex/child + concluded filter in the adapter).
+async fn poll_police(pool: &Db, fetcher: &Fetcher, src: &ingest::IngestSource) -> Result<u64> {
+    let body = fetcher.get_text(&src.url).await?;
+    let leads = adapters::police::parse(&body, &src.url);
+    insert_leads(pool, src, leads).await
+}
+
+/// Insert parsed leads, attributing any image reference to the source label when
+/// the adapter left it blank.
+async fn insert_leads(
+    pool: &Db,
+    src: &ingest::IngestSource,
+    leads: Vec<crate::source::RawLead>,
+) -> Result<u64> {
     let mut added = 0;
     for raw in leads {
-        // Attribute the image reference to the source if the adapter didn't.
         let image_attribution = if raw.image_attribution.is_empty() && !raw.image_url.is_empty() {
             src.label.clone()
         } else {
