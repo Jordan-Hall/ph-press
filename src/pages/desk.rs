@@ -1635,12 +1635,27 @@ fn IntakeCard(
                     span { "{ymd(lead.created_at)}" }
                 }
             }
-            a { class: "intake-headline", href: "{lead.url}", target: "_blank", rel: "noopener noreferrer", "{lead.title}" }
+            // Click the headline to turn the lead into OUR draft and edit/preview
+            // how it'll look on the site (opens the promote step below → editor).
+            // The external source is a separate, clearly-labelled verify link — not
+            // the primary click — so triage stays on our system.
+            h3 {
+                class: "intake-headline",
+                onclick: move |_| {
+                    if actionable && step().is_none() {
+                        step.set(Some(PromoteMode::Draft));
+                    }
+                },
+                "{lead.title}"
+            }
             if !lead.snippet.is_empty() {
                 p { class: "intake-snippet", "{lead.snippet}" }
             }
             if !lead.image_url.is_empty() {
                 p { class: "intake-imgnote", "\u{2316} Source image (reference only — never republished): {lead.image_attribution}" }
+            }
+            a { class: "intake-source-link", href: "{lead.url}", target: "_blank", rel: "noopener noreferrer",
+                "\u{2197} Source \u{2014} read + verify against the record"
             }
             if let Some(aid) = lead.promoted_article_id {
                 Link { class: "intake-promoted", to: Route::WriteArticle { id: aid }, "\u{2192} opened as draft #{aid} \u{00b7} edit" }
