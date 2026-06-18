@@ -1447,9 +1447,6 @@ fn IntakePanel() -> Element {
     let busy = use_signal(|| false);
     let mut err = use_signal(|| Option::<String>::None);
     let mut show_handled = use_signal(|| false);
-    // Format + section a promoted lead's draft is created under.
-    let kind = use_signal(|| "Court report".to_string());
-    let section = use_signal(|| "Crime".to_string());
     let mut sources = use_signal(|| Option::<Vec<DeskSource>>::None);
     let mut polling = use_signal(|| false);
 
@@ -1526,33 +1523,6 @@ fn IntakePanel() -> Element {
                     }
                 }
             }
-            div { class: "desk-new-row", style: "padding:0 14px 10px;",
-                label { class: "desk-muted", "Promote as: " }
-                select {
-                    class: "desk-in",
-                    value: "{kind}",
-                    oninput: {
-                        let mut kind = kind;
-                        move |e: FormEvent| kind.set(e.value())
-                    },
-                    option { value: "Court report", "Court report" }
-                    option { value: "Investigation", "Investigation" }
-                    option { value: "Explainer", "Explainer" }
-                    option { value: "News", "News" }
-                }
-                select {
-                    class: "desk-in",
-                    value: "{section}",
-                    oninput: {
-                        let mut section = section;
-                        move |e: FormEvent| section.set(e.value())
-                    },
-                    option { value: "Crime", "Crime" }
-                    option { value: "Courts", "Courts" }
-                    option { value: "Local", "Local" }
-                    option { value: "Community", "Community" }
-                }
-            }
             if let Some(e) = err() {
                 p { class: "desk-error pad", "{e}" }
             }
@@ -1564,15 +1534,13 @@ fn IntakePanel() -> Element {
                         .filter(|l| show_handled() || matches!(l.status.as_str(), "new" | "triaged"))
                         .collect();
                     if visible.is_empty() {
-                        rsx! { p { class: "desk-muted pad", "No leads awaiting triage." } }
+                        rsx! { div { class: "intake-empty", "\u{2713} No leads awaiting triage." } }
                     } else {
                         rsx! {
-                            table { class: "desk-table",
-                                thead { tr { th { "Lead" } th { "Source" } th { "Category" } th { "Status" } th { "Actions" } } }
-                                tbody {
-                                    for l in visible {
-                                        IntakeRow { key: "{l.id}", lead: l, items, busy, err, kind, section }
-                                    }
+                            div { class: "intake-count", "{visible.len()} awaiting triage" }
+                            div { class: "intake-list",
+                                for l in visible {
+                                    IntakeCard { key: "{l.id}", lead: l, items, busy, err }
                                 }
                             }
                         }
@@ -1583,119 +1551,133 @@ fn IntakePanel() -> Element {
     }
 }
 
+/// Which promote flow the writer chose in step 1 (drives the inline step-2 form).
+#[derive(Clone, Copy, PartialEq)]
+enum PromoteMode {
+    Draft,
+    Db,
+}
+
 #[component]
-fn IntakeRow(
+fn IntakeCard(
     lead: DeskLead,
     mut items: Signal<Option<Vec<DeskLead>>>,
     mut busy: Signal<bool>,
     mut err: Signal<Option<String>>,
-    kind: Signal<String>,
-    section: Signal<String>,
 ) -> Element {
     let id = lead.id;
     let nav = navigator();
     let actionable = matches!(lead.status.as_str(), "new" | "triaged");
-    rsx! {
-        tr {
-            td { class: "desk-wrap",
-                a { href: "{lead.url}", target: "_blank", rel: "noopener noreferrer", "{lead.title}" }
-                if !lead.snippet.is_empty() {
-                    p { class: "desk-muted", "{lead.snippet}" }
-                }
-                if !lead.image_url.is_empty() {
-                    p { class: "desk-muted", "Source image (reference, not for republication): {lead.image_attribution}" }
-                }
-            }
-            td { class: "desk-muted", "{lead.source_key}" }
-            td {
-                span { class: "desk-state", "{offence_label(&lead.offence_category)}" }
-                if matches!(lead.offence_category.as_str(), "sexual" | "child") {
-                    div { class: "desk-muted", title: "Sexual-offence and child cases carry automatic anonymity duties — clear before publishing.", "\u{26a0} check restrictions" }
-                }
-                if lead.id_risk {
-                    div { class: "desk-muted", title: "Wording suggests a victim could be identifiable.", "\u{26a0} ID risk" }
-                }
-            }
-            td {
-                span { class: "desk-state", "{lead_status_label(&lead.status)}" }
-                if let Some(aid) = lead.promoted_article_id {
-                    div { class: "desk-muted", "→ draft #{aid}" }
-                }
-            }
-            td { class: "desk-muted",
-                div { "{ymd(lead.created_at)}" }
-                if actionable {
-                    div { class: "desk-actions",
-                        button {
-                            class: "desk-act",
-                            disabled: busy(),
-                            onclick: move |_| {
-                                spawn(async move {
-                                    busy.set(true);
-                                    err.set(None);
-                                    match desk_promote_lead(id, kind(), section()).await {
-                                        Ok(v) => {
-                                            // Jump straight into the editor for the new draft so the
-                                            // writer can see + edit it (it's pre-filled from the lead).
-                                            let aid = v.iter().find(|l| l.id == id).and_then(|l| l.promoted_article_id);
-                                            items.set(Some(v));
-                                            busy.set(false);
-                                            if let Some(aid) = aid {
-                                                nav.push(Route::WriteArticle { id: aid });
-                                            }
-                                        }
-                                        Err(e) => {
-                                            err.set(Some(e.to_string()));
-                                            busy.set(false);
-                                        }
-                                    }
-                                });
-                            },
-                            "Promote to draft"
-                        }
-                        button {
-                            class: "desk-act",
-                            disabled: busy(),
-                            onclick: move |_| {
-                                spawn(async move {
-                                    busy.set(true);
-                                    err.set(None);
-                                    match desk_promote_lead_conviction(id, kind(), section()).await {
-                                        Ok(v) => {
-                                            // DB entry created; open the draft so the writer can edit it.
-                                            let aid = v.iter().find(|l| l.id == id).and_then(|l| l.promoted_article_id);
-                                            items.set(Some(v));
-                                            busy.set(false);
-                                            if let Some(aid) = aid {
-                                                nav.push(Route::WriteArticle { id: aid });
-                                            }
-                                        }
-                                        Err(e) => {
-                                            err.set(Some(e.to_string()));
-                                            busy.set(false);
-                                        }
-                                    }
-                                });
-                            },
-                            "Promote + DB entry"
-                        }
-                        button {
-                            class: "desk-act",
-                            disabled: busy(),
-                            onclick: move |_| {
-                                spawn(async move {
-                                    busy.set(true);
-                                    err.set(None);
-                                    match desk_dismiss_lead(id).await {
-                                        Ok(v) => items.set(Some(v)),
-                                        Err(e) => err.set(Some(e.to_string())),
-                                    }
-                                    busy.set(false);
-                                });
-                            },
-                            "Dismiss"
-                        }
+    // Restriction-sensitive leads get a red edge so triage can't miss them.
+    let restricted = matches!(lead.offence_category.as_str(), "sexual" | "child") || lead.id_risk;
+
+    // Two-step promote: None = the action row; Some(mode) = the inline
+    // "as <kind> in <section> → Confirm" form for that mode.
+    let mut step = use_signal(|| Option::<PromoteMode>::None);
+    let mut kind = use_signal(|| "Court report".to_string());
+    let mut section = use_signal(|| "Crime".to_string());
+
+    // Step 2 confirm: promote (draft or +DB) then open the new draft in the editor.
+    let confirm = move |_| {
+        let mode = step();
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            let res = if mode == Some(PromoteMode::Db) {
+                desk_promote_lead_conviction(id, kind(), section()).await
+            } else {
+                desk_promote_lead(id, kind(), section()).await
+            };
+            match res {
+                Ok(v) => {
+                    let aid = v.iter().find(|l| l.id == id).and_then(|l| l.promoted_article_id);
+                    items.set(Some(v));
+                    busy.set(false);
+                    if let Some(aid) = aid {
+                        nav.push(Route::WriteArticle { id: aid });
                     }
+                }
+                Err(e) => {
+                    err.set(Some(e.to_string()));
+                    busy.set(false);
+                }
+            }
+        });
+    };
+
+    let dismiss = move |_| {
+        spawn(async move {
+            busy.set(true);
+            err.set(None);
+            match desk_dismiss_lead(id).await {
+                Ok(v) => items.set(Some(v)),
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        article { class: if restricted { "intake-card restricted" } else { "intake-card" },
+            div { class: "intake-card-head",
+                div { class: "intake-tags",
+                    span { class: "intake-cat", "{offence_label(&lead.offence_category)}" }
+                    if matches!(lead.offence_category.as_str(), "sexual" | "child") {
+                        span { class: "intake-warn", title: "Sexual-offence and child cases carry automatic anonymity duties — clear before publishing.", "\u{26a0} check restrictions" }
+                    }
+                    if lead.id_risk {
+                        span { class: "intake-warn", title: "Wording suggests a victim could be identifiable.", "\u{26a0} ID risk" }
+                    }
+                }
+                div { class: "intake-meta",
+                    span { class: "intake-status", "{lead_status_label(&lead.status)}" }
+                    span { class: "intake-src-key", "{lead.source_key}" }
+                    span { "{ymd(lead.created_at)}" }
+                }
+            }
+            a { class: "intake-headline", href: "{lead.url}", target: "_blank", rel: "noopener noreferrer", "{lead.title}" }
+            if !lead.snippet.is_empty() {
+                p { class: "intake-snippet", "{lead.snippet}" }
+            }
+            if !lead.image_url.is_empty() {
+                p { class: "intake-imgnote", "\u{2316} Source image (reference only — never republished): {lead.image_attribution}" }
+            }
+            if let Some(aid) = lead.promoted_article_id {
+                Link { class: "intake-promoted", to: Route::WriteArticle { id: aid }, "\u{2192} opened as draft #{aid} \u{00b7} edit" }
+            }
+            if actionable {
+                match step() {
+                    None => rsx! {
+                        div { class: "intake-foot",
+                            button { class: "intake-btn primary", disabled: busy(), onclick: move |_| step.set(Some(PromoteMode::Draft)), "Promote \u{25b8}" }
+                            button { class: "intake-btn", disabled: busy(), onclick: move |_| step.set(Some(PromoteMode::Db)), "Promote + DB \u{25b8}" }
+                            button { class: "intake-btn ghost", disabled: busy(), onclick: dismiss, "Dismiss" }
+                        }
+                    },
+                    Some(mode) => rsx! {
+                        div { class: "intake-step2",
+                            span { class: "intake-step2-lead",
+                                if mode == PromoteMode::Db { "Promote + DB entry, as a" } else { "Promote as a" }
+                            }
+                            select { class: "intake-sel", value: "{kind}", oninput: move |e| kind.set(e.value()),
+                                option { value: "Court report", "Court report" }
+                                option { value: "Investigation", "Investigation" }
+                                option { value: "Explainer", "Explainer" }
+                                option { value: "News", "News" }
+                            }
+                            span { class: "intake-step2-in", "in" }
+                            select { class: "intake-sel", value: "{section}", oninput: move |e| section.set(e.value()),
+                                option { value: "Crime", "Crime" }
+                                option { value: "Courts", "Courts" }
+                                option { value: "Local", "Local" }
+                                option { value: "Community", "Community" }
+                            }
+                            button { class: "intake-btn primary", disabled: busy(), onclick: confirm,
+                                if busy() { "Opening\u{2026}" } else { "Confirm \u{2192} edit" }
+                            }
+                            button { class: "intake-btn ghost", disabled: busy(), onclick: move |_| step.set(None), "Cancel" }
+                        }
+                    },
                 }
             }
         }
