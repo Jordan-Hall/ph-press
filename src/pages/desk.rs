@@ -1593,6 +1593,7 @@ fn IntakeRow(
     section: Signal<String>,
 ) -> Element {
     let id = lead.id;
+    let nav = navigator();
     let actionable = matches!(lead.status.as_str(), "new" | "triaged");
     rsx! {
         tr {
@@ -1633,10 +1634,21 @@ fn IntakeRow(
                                     busy.set(true);
                                     err.set(None);
                                     match desk_promote_lead(id, kind(), section()).await {
-                                        Ok(v) => items.set(Some(v)),
-                                        Err(e) => err.set(Some(e.to_string())),
+                                        Ok(v) => {
+                                            // Jump straight into the editor for the new draft so the
+                                            // writer can see + edit it (it's pre-filled from the lead).
+                                            let aid = v.iter().find(|l| l.id == id).and_then(|l| l.promoted_article_id);
+                                            items.set(Some(v));
+                                            busy.set(false);
+                                            if let Some(aid) = aid {
+                                                nav.push(Route::WriteArticle { id: aid });
+                                            }
+                                        }
+                                        Err(e) => {
+                                            err.set(Some(e.to_string()));
+                                            busy.set(false);
+                                        }
                                     }
-                                    busy.set(false);
                                 });
                             },
                             "Promote to draft"
@@ -1649,10 +1661,20 @@ fn IntakeRow(
                                     busy.set(true);
                                     err.set(None);
                                     match desk_promote_lead_conviction(id, kind(), section()).await {
-                                        Ok(v) => items.set(Some(v)),
-                                        Err(e) => err.set(Some(e.to_string())),
+                                        Ok(v) => {
+                                            // DB entry created; open the draft so the writer can edit it.
+                                            let aid = v.iter().find(|l| l.id == id).and_then(|l| l.promoted_article_id);
+                                            items.set(Some(v));
+                                            busy.set(false);
+                                            if let Some(aid) = aid {
+                                                nav.push(Route::WriteArticle { id: aid });
+                                            }
+                                        }
+                                        Err(e) => {
+                                            err.set(Some(e.to_string()));
+                                            busy.set(false);
+                                        }
                                     }
-                                    busy.set(false);
                                 });
                             },
                             "Promote + DB entry"
