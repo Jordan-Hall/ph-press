@@ -11,10 +11,10 @@ use crate::api::{
     desk_complaint_status, desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
     desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
-    desk_promote_lead_conviction, desk_set_conviction_status, desk_sources, desk_staff,
-    desk_transition, desk_update, staff_change_password, staff_login, staff_logout, staff_me,
-    DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskSource,
-    DeskWatch, PreviewArticle, StaffMember,
+    desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
+    desk_staff, desk_transition, desk_update, staff_change_password, staff_login, staff_logout,
+    staff_me, DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession,
+    DeskSource, DeskWatch, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -957,6 +957,24 @@ fn DeskRow(
                 }
                 if a.state != "retracted" {
                     Link { class: "desk-act", to: Route::WriteArticle { id: a.id }, "Edit ✎" }
+                }
+                if a.state == "draft" && a.is_ai_assisted {
+                    button {
+                        class: "desk-act",
+                        disabled: busy(),
+                        onclick: move |_| {
+                            spawn(async move {
+                                busy.set(true);
+                                err.set(None);
+                                match desk_regenerate_draft(id).await {
+                                    Ok(()) => { if let Ok(list) = desk_articles().await { articles.set(Some(list)); } }
+                                    Err(e) => err.set(Some(e.to_string())),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                        "Regenerate \u{27f3}"
+                    }
                 }
                 if a.actions.is_empty() {
                     span { class: "desk-muted", "—" }

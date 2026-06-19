@@ -1451,6 +1451,19 @@ pub async fn desk_sources() -> Result<Vec<DeskSource>, ServerFnError> {
     }
 }
 
+/// Re-run AI generation on a draft promoted from a lead, overwriting its body + SEO.
+/// Only works while the draft is still in `draft` state and AI is enabled.
+#[server(endpoint = "desk_regenerate_draft")]
+pub async fn desk_regenerate_draft(article_id: i64) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::regenerate_draft(&session.username, article_id).await.map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    { let _ = article_id; Err(ServerFnError::new("server only")) }
+}
+
 /// Trigger one crawl pass now (background). Admin only.
 #[server(endpoint = "desk_poll_now")]
 pub async fn desk_poll_now() -> Result<(), ServerFnError> {

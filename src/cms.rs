@@ -457,6 +457,36 @@ pub async fn leads(status: Option<&str>) -> Result<Vec<ph_cms::ingest::IngestIte
         .map_err(|e| e.to_string())
 }
 
+/// Re-run AI generation on a draft promoted from a lead, overwriting its body + SEO.
+/// Requires: AI enabled, the article is a `draft`, an authoring-role actor, and the
+/// article was promoted from a lead. Never clobbers a submitted/published article.
+pub async fn regenerate_draft(actor: &str, article_id: i64) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    // authoring role gate (same set as promote)
+    let role = user.role().map_err(|e| e.to_string())?;
+    if !matches!(role, ph_cms::Role::Writer | ph_cms::Role::SubEditor | ph_cms::Role::Editor | ph_cms::Role::Admin) {
+        return Err("your role cannot regenerate a draft".to_string());
+    }
+    if ai_config().is_none() {
+        return Err("AI drafting is not enabled".to_string());
+    }
+    let article = ph_cms::get_article(pool, article_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no article {article_id}"))?;
+    if article.state != "draft" {
+        return Err("only a draft can be regenerated".to_string());
+    }
+    let lead = ph_cms::ingest::lead_by_promoted_article(pool, article_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "this draft was not promoted from a lead".to_string())?;
+    let content = generate_promo_content(&lead, &article.kind, &article.section).await;
+    // Write the regenerated content directly (body is already a JSON array; keep current slug).
+    ph_cms::update_article(
+        pool, article_id, &article.title, &content.summary, &content.body_json,
+        &article.kind, &article.section, actor,
+        &content.meta_description, &content.og_image_url, &content.tags, "",
+    ).await.map_err(|e| e.to_string())
+}
+
 /// Promote a lead into a Draft article — AI-drafted when enabled, banner otherwise.
 pub async fn promote_lead(actor: &str, id: i64, kind: &str, section: &str) -> Result<i64, String> {
     let pool = db().await.map_err(|e| e.to_string())?;

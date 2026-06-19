@@ -179,6 +179,16 @@ pub async fn insert_lead(pool: &SqlitePool, lead: &NewLead) -> Result<Option<i64
     Ok(Some(id))
 }
 
+/// The lead that was promoted into the given article (if any).
+pub async fn lead_by_promoted_article(pool: &SqlitePool, article_id: i64) -> Result<Option<IngestItem>> {
+    Ok(sqlx::query_as::<_, IngestItem>(
+        "SELECT * FROM ingest_item WHERE promoted_article_id = ? LIMIT 1",
+    )
+    .bind(article_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
 /// One lead by id.
 pub async fn get_lead(pool: &SqlitePool, id: i64) -> Result<Option<IngestItem>> {
     Ok(
@@ -660,6 +670,38 @@ mod tests {
         }
         create_user(pool, name, name, role, "pw").await.unwrap();
         crate::find_user(pool, name).await.unwrap().unwrap()
+    }
+
+    #[tokio::test]
+    async fn lead_by_promoted_article_finds_and_misses() {
+        let pool = mempool().await;
+        let editor = user(&pool, "ed", Role::Editor).await;
+        let src = upsert_source(&pool, "caselaw", "caselaw", "Find Case Law", "https://x")
+            .await
+            .unwrap();
+        let lead = NewLead {
+            source_id: src,
+            source_key: "caselaw".into(),
+            external_id: "promo-test-1".into(),
+            url: "https://caselaw/promo-test-1".into(),
+            title: "R v Test".into(),
+            offence_category: "child".into(),
+            ..Default::default()
+        };
+        insert_lead(&pool, &lead).await.unwrap();
+        let lead_id = list_leads(&pool, Some("new")).await.unwrap()[0].id;
+        let article_id = promote_lead(&pool, lead_id, &editor, "Court report", "Crime")
+            .await
+            .unwrap();
+
+        // should find the promoted lead via the article id
+        let found = lead_by_promoted_article(&pool, article_id).await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().external_id, "promo-test-1");
+
+        // unrelated article id returns None
+        let missing = lead_by_promoted_article(&pool, article_id + 999).await.unwrap();
+        assert!(missing.is_none());
     }
 
     #[tokio::test]
