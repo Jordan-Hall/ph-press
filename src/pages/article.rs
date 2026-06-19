@@ -216,6 +216,23 @@ fn LiveArticle(slug: String) -> Element {
 #[component]
 fn LiveArticleBody(a: PublicArticle) -> Element {
     let url = format!("{BASE}/news/{}", a.slug);
+    // Meta description: explicit field, else fall back to the standfirst.
+    let desc = if a.meta_description.trim().is_empty() {
+        a.summary.clone()
+    } else {
+        a.meta_description.clone()
+    };
+    // OG image must be ABSOLUTE for social scrapers. Empty -> omitted.
+    let og_image = if a.og_image_url.trim().is_empty() {
+        String::new()
+    } else if a.og_image_url.starts_with("http://") || a.og_image_url.starts_with("https://") {
+        a.og_image_url.clone()
+    } else {
+        format!("{BASE}{}", a.og_image_url)
+    };
+    let has_og_image = !og_image.is_empty();
+    let keywords = a.tags.join(", ");
+    let has_keywords = !keywords.is_empty();
     let jsonld = format!(
         "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"articleSection\":\"{}\",\"datePublished\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}}}",
         json_esc(&a.title), json_esc(&a.summary), json_esc(&a.section), a.iso_date, json_esc(&a.byline)
@@ -223,15 +240,26 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
     let mins = read_mins(a.body.iter().map(|p| p.split_whitespace().count()).sum());
     rsx! {
         dioxus::document::Title { "{a.title} | Predator Hunters" }
-        dioxus::document::Meta { name: "description", content: "{a.summary}" }
+        dioxus::document::Meta { name: "description", content: "{desc}" }
+        if has_keywords {
+            dioxus::document::Meta { name: "keywords", content: "{keywords}" }
+        }
         dioxus::document::Link { rel: "canonical", href: "{url}" }
         dioxus::document::Meta { property: "og:type", content: "article" }
         dioxus::document::Meta { property: "og:title", content: "{a.title}" }
-        dioxus::document::Meta { property: "og:description", content: "{a.summary}" }
+        dioxus::document::Meta { property: "og:description", content: "{desc}" }
         dioxus::document::Meta { property: "og:url", content: "{url}" }
+        if has_og_image {
+            dioxus::document::Meta { property: "og:image", content: "{og_image}" }
+        }
         dioxus::document::Meta { property: "article:section", content: "{a.section}" }
         dioxus::document::Meta { property: "article:published_time", content: "{a.iso_date}" }
         dioxus::document::Meta { name: "twitter:card", content: "summary_large_image" }
+        dioxus::document::Meta { name: "twitter:title", content: "{a.title}" }
+        dioxus::document::Meta { name: "twitter:description", content: "{desc}" }
+        if has_og_image {
+            dioxus::document::Meta { name: "twitter:image", content: "{og_image}" }
+        }
         script { r#type: "application/ld+json", dangerous_inner_html: jsonld }
         script { r#type: "application/ld+json", dangerous_inner_html: breadcrumb_ld(&a.title) }
 
