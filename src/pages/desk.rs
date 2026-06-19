@@ -1784,7 +1784,10 @@ fn IntakeCard(
                                 option { value: "Community", "Community" }
                             }
                             button { class: "intake-btn primary", disabled: busy(), onclick: confirm,
-                                if busy() { "Opening\u{2026}" } else { "Confirm \u{2192} edit" }
+                                if busy() { "Drafting\u{2026}" } else { "Confirm \u{2192} edit" }
+                            }
+                            if busy() {
+                                span { class: "intake-step2-in", "generating a draft\u{2026}" }
                             }
                             button { class: "intake-btn ghost", disabled: busy(), onclick: move |_| step.set(None), "Cancel" }
                         }
