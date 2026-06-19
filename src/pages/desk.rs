@@ -1190,6 +1190,7 @@ fn EditorForm(
     } else {
         "meter warn"
     };
+    let verify_count = body().matches("[VERIFY").count() + body().matches("[FROM RECORD").count();
 
     rsx! {
         form { class: "editor", onsubmit: submit,
@@ -1341,6 +1342,18 @@ fn EditorForm(
                 span { class: sum_state, "Standfirst " b { "{sum_len}" } }
                 span { class: "meter", "Body " b { "{words}" } " words · {mins} min read" }
                 span { class: meta_state, "Meta " b { "{meta_len}" } " / ~155" }
+                if verify_count > 0 {
+                    span { class: "meter warn", "\u{26a0} {verify_count} to verify" }
+                    button {
+                        r#type: "button",
+                        class: "tb",
+                        title: "Jump to the first [VERIFY] marker",
+                        onclick: move |_| {
+                            let _ = document::eval("(function(){var t=document.getElementById('ed-body');if(!t)return;var i=t.value.indexOf('[VERIFY');if(i<0)i=t.value.indexOf('[FROM RECORD');if(i<0)return;t.focus();t.setSelectionRange(i,i);var before=t.value.slice(0,i).split('\\n').length;t.scrollTop=Math.max(0,(before-2)*18);})();");
+                        },
+                        "Jump to \u{2192} [VERIFY]"
+                    }
+                }
             }
             if let Some(e) = err() {
                 p { class: "desk-error", "{e}" }
