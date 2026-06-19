@@ -5,9 +5,19 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Which wire protocol to use when calling the model.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Backend {
+    /// OpenAI-compatible /v1/chat/completions (local model, or Bedrock via gateway).
+    Local,
+    /// Anthropic Messages API.
+    Anthropic,
+}
+
 /// Runtime config (resolved from env by the caller).
 #[derive(Debug, Clone)]
 pub struct AiConfig {
+    pub backend: Backend,
     pub api_key: String,
     pub model: String,
     pub base_url: String,
@@ -126,6 +136,102 @@ pub fn build_request_body(facts: &LeadFacts, cfg: &AiConfig) -> serde_json::Valu
     })
 }
 
+/// Minimal slug normaliser (lowercase ascii alphanumerics, single dashes).
+fn slugify(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut dash = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            dash = false;
+        } else if !out.is_empty() && !dash {
+            out.push('-');
+            dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// Build an OpenAI-compatible chat-completions body (local / gateway). Pure.
+pub fn build_openai_body(facts: &LeadFacts, cfg: &AiConfig) -> serde_json::Value {
+    let user = serde_json::to_string(facts).unwrap_or_else(|_| "{}".to_string());
+    let instruction = format!(
+        "Draft a scaffold from these UNVERIFIED lead facts (JSON):\n{user}\n\n\
+         Reply with ONLY a JSON object, no prose, matching exactly: \
+         {{\"summary\":string, \"meta_description\":string, \"slug\":string, \
+         \"tags\":[string], \"body_paragraphs\":[string], \"figure_caption\":string}}"
+    );
+    serde_json::json!({
+        "model": cfg.model,
+        "max_tokens": cfg.max_tokens,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt(facts)},
+            {"role": "user", "content": instruction}
+        ]
+    })
+}
+
+/// Parse the assistant message content as JSON into AiDraft. Lenient: strips code
+/// fences and extracts the first balanced {...} object if there's surrounding prose.
+pub fn parse_openai_response(resp: &serde_json::Value) -> Result<AiDraft, AiError> {
+    let content = resp
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|t| t.as_str())
+        .ok_or(AiError::NoToolUse)?;
+    let slice = extract_json_object(content).ok_or_else(|| AiError::Parse("no JSON object in reply".into()))?;
+    let mut draft: AiDraft =
+        serde_json::from_str(slice).map_err(|e| AiError::Parse(e.to_string()))?;
+    if draft.body_paragraphs.is_empty() || draft.summary.trim().is_empty() {
+        return Err(AiError::Parse("empty draft body or summary".into()));
+    }
+    draft.slug = slugify(&draft.slug);
+    Ok(draft)
+}
+
+/// Return the first balanced top-level {...} substring (brace-counting, ignoring
+/// braces inside strings). Handles plain JSON, ```json fences, or prose+JSON.
+fn extract_json_object(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    let start = s.find('{')?;
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut esc = false;
+    for i in start..bytes.len() {
+        let c = bytes[i] as char;
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[start..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,7 +248,7 @@ mod tests {
     }
 
     fn cfg() -> AiConfig {
-        AiConfig { api_key: "k".into(), model: "claude-sonnet-4-6".into(), base_url: "https://api.anthropic.com".into(), max_tokens: 4000, timeout_secs: 30 }
+        AiConfig { backend: Backend::Anthropic, api_key: "k".into(), model: "claude-sonnet-4-6".into(), base_url: "https://api.anthropic.com".into(), max_tokens: 4000, timeout_secs: 30 }
     }
 
     #[test]
@@ -165,5 +271,36 @@ mod tests {
         // a non-sensitive lead does not get the anonymity block
         let other = LeadFacts { offence_category: "other".into(), id_risk: false, ..facts() };
         assert!(!system_prompt(&other).contains("ANONYMITY"));
+    }
+
+    #[test]
+    fn openai_body_requests_json_object_and_carries_facts() {
+        let mut c = cfg();
+        c.backend = Backend::Local;
+        c.model = "llama-3.2-3b-instruct".into();
+        let body = build_openai_body(&facts(), &c);
+        assert_eq!(body["model"], "llama-3.2-3b-instruct");
+        assert_eq!(body["response_format"]["type"], "json_object");
+        assert_eq!(body["temperature"], 0);
+        // system carries the guardrails, user carries the facts
+        assert!(body["messages"][0]["content"].as_str().unwrap().contains("guarded scaffold"));
+        assert!(body["messages"][1]["content"].as_str().unwrap().contains("R v Smith"));
+    }
+
+    #[test]
+    fn parse_openai_extracts_json_from_message_content() {
+        // content is a JSON string (lenient: tolerate surrounding prose / code fences)
+        let resp = serde_json::json!({"choices": [{"message": {"content":
+            "Here you go:\n```json\n{\"summary\":\"S\",\"meta_description\":\"M\",\"slug\":\"r-v-smith\",\"tags\":[\"a\"],\"body_paragraphs\":[\"P **[VERIFY: age]**\"],\"figure_caption\":\"C\"}\n```"
+        }}]});
+        let d = parse_openai_response(&resp).unwrap();
+        assert_eq!(d.slug, "r-v-smith");
+        assert_eq!(d.body_paragraphs.len(), 1);
+    }
+
+    #[test]
+    fn parse_openai_no_json_is_an_error() {
+        let resp = serde_json::json!({"choices": [{"message": {"content": "sorry, I can't."}}]});
+        assert!(matches!(parse_openai_response(&resp), Err(AiError::Parse(_))));
     }
 }
