@@ -205,6 +205,7 @@ pub async fn transition(username: &str, id: i64, to_state: &str, note: &str) -> 
 
 /// Create a Draft authored by the current user (body starts empty). `byline` is
 /// the article credit (display name); `username` is the stable audit actor.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_draft(
     username: &str,
     byline: &str,
@@ -213,6 +214,9 @@ pub async fn create_draft(
     kind: &str,
     section: &str,
     body_text: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
 ) -> Result<i64, String> {
     if title.trim().is_empty() {
         return Err("a title is required".to_string());
@@ -235,6 +239,9 @@ pub async fn create_draft(
         kind,
         section,
         username,
+        meta_description.trim(),
+        og_image_url.trim(),
+        tags,
     )
     .await
     .map_err(|e| e.to_string())
@@ -242,6 +249,7 @@ pub async fn create_draft(
 
 /// Update an editable article's content (title/summary/body/kind/section). The
 /// engine rejects editing a published article (use corrections instead).
+#[allow(clippy::too_many_arguments)]
 pub async fn update_article(
     username: &str,
     id: i64,
@@ -250,6 +258,10 @@ pub async fn update_article(
     kind: &str,
     section: &str,
     body_text: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
+    slug: &str,
 ) -> Result<(), String> {
     if title.trim().is_empty() {
         return Err("a title is required".to_string());
@@ -270,6 +282,10 @@ pub async fn update_article(
         kind,
         section,
         username,
+        meta_description.trim(),
+        og_image_url.trim(),
+        tags,
+        slug.trim(),
     )
     .await
     .map_err(|e| e.to_string())
