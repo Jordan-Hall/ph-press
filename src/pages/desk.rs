@@ -1252,13 +1252,15 @@ fn EditorForm(
                         placeholder: "grooming, crown court",
                     }
                 }
-            }
-            input {
-                class: "editor-sub",
-                r#type: "text",
-                placeholder: "Social / OG image URL (e.g. /assets/og/your-image.jpg)",
-                value: "{og_image}",
-                oninput: move |e| og_image.set(e.value()),
+                label {
+                    span { "Social / OG image URL" }
+                    input {
+                        r#type: "text",
+                        value: "{og_image}",
+                        oninput: move |e| og_image.set(e.value()),
+                        placeholder: "/assets/og/your-image.jpg",
+                    }
+                }
             }
             textarea {
                 class: "editor-body",

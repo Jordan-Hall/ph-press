@@ -233,9 +233,10 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
     let has_og_image = !og_image.is_empty();
     let keywords = a.tags.join(", ");
     let has_keywords = !keywords.is_empty();
+    let kw_ld = if has_keywords { format!(",\"keywords\":\"{}\"", json_esc(&keywords)) } else { String::new() };
     let jsonld = format!(
-        "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"articleSection\":\"{}\",\"datePublished\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}}}",
-        json_esc(&a.title), json_esc(&a.summary), json_esc(&a.section), a.iso_date, json_esc(&a.byline)
+        "{{\"@context\":\"https://schema.org\",\"@type\":\"NewsArticle\",\"headline\":\"{}\",\"description\":\"{}\",\"articleSection\":\"{}\",\"datePublished\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"NewsMediaOrganization\",\"name\":\"Predator Hunters\",\"url\":\"{BASE}/\"}}{}}}",
+        json_esc(&a.title), json_esc(&desc), json_esc(&a.section), a.iso_date, json_esc(&a.byline), kw_ld
     );
     let mins = read_mins(a.body.iter().map(|p| p.split_whitespace().count()).sum());
     rsx! {

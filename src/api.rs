@@ -454,6 +454,7 @@ pub async fn desk_transition(
 
 /// Create a new Draft authored by the current user, then return the refreshed list.
 #[server(endpoint = "desk_create")]
+#[allow(clippy::too_many_arguments)]
 pub async fn desk_create(
     title: String,
     summary: String,
