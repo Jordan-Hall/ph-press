@@ -226,37 +226,18 @@ pub async fn set_lead_status(pool: &SqlitePool, id: i64, status: &str, actor: &s
     Ok(())
 }
 
-/// Promote a lead into a **Draft** article (ordinary legal-gated lifecycle). The
-/// draft is pre-filled with the source citation and an explicit "verify against
-/// the record" banner, and flagged AI-assisted (machine-prefilled, IMPRESS
-/// Clause 2). The editor rewrites it from the court record before it can move
-/// toward publish. Gated to authoring roles. Returns the new article id.
-pub async fn promote_lead(
-    pool: &SqlitePool,
-    lead_id: i64,
-    actor: &StaffUser,
-    kind: &str,
-    section: &str,
-) -> Result<i64> {
-    if !matches!(
-        actor.role()?,
-        Role::Writer | Role::SubEditor | Role::Editor | Role::Admin
-    ) {
-        return Err(CmsError::Forbidden(
-            "your role cannot promote a lead into a draft".into(),
-        ));
-    }
-    let lead = get_lead(pool, lead_id)
-        .await?
-        .ok_or_else(|| CmsError::Bad(format!("no lead {lead_id}")))?;
-    if lead.status == "promoted" {
-        return Err(CmsError::Forbidden("this lead is already promoted".into()));
-    }
-    // The starter body deliberately contains NO source prose — only a provenance
-    // banner and the source link. The editor writes the report from the court
-    // record, so the source's wording is never carried into our article. The
-    // lead's snippet stays on the intake record (visible in the Intake tab) for
-    // the editor's reference only.
+/// Pre-generated draft content threaded into a promotion (AI output, or the banner fallback).
+#[derive(Debug, Clone)]
+pub struct PromotedDraft {
+    pub summary: String,
+    pub body_json: String,      // JSON array of paragraph strings
+    pub meta_description: String,
+    pub og_image_url: String,
+    pub tags: String,           // JSON array of strings
+}
+
+/// The banner-only fallback content (today's behaviour) for a lead.
+pub fn banner_draft(lead: &IngestItem) -> PromotedDraft {
     let banner = "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report from the \
                   public court record. Clear reporting restrictions (complainant / child \
                   anonymity) and confirm the conviction before it can be published. Use \
@@ -265,24 +246,56 @@ pub async fn promote_lead(
         banner.to_string(),
         format!("Source ({}): {}", lead.source_key, lead.url),
     ];
-    let body_json = serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string());
-    let summary = "(unverified lead — write a standfirst from the court record)".to_string();
+    PromotedDraft {
+        summary: "(unverified lead — write a standfirst from the court record)".to_string(),
+        body_json: serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string()),
+        meta_description: String::new(),
+        og_image_url: String::new(),
+        tags: "[]".to_string(),
+    }
+}
 
+fn authoring_role_ok(actor: &StaffUser) -> Result<()> {
+    if !matches!(actor.role()?, Role::Writer | Role::SubEditor | Role::Editor | Role::Admin) {
+        return Err(CmsError::Forbidden(
+            "your role cannot promote a lead into a draft".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Promote a lead into a Draft using pre-generated content. The single primitive
+/// both promote paths route through. Flags AI-assisted, marks the lead promoted,
+/// audits. Returns the new article id.
+pub async fn promote_lead_with_draft(
+    pool: &SqlitePool,
+    lead_id: i64,
+    actor: &StaffUser,
+    kind: &str,
+    section: &str,
+    draft: &PromotedDraft,
+) -> Result<i64> {
+    authoring_role_ok(actor)?;
+    let lead = get_lead(pool, lead_id)
+        .await?
+        .ok_or_else(|| CmsError::Bad(format!("no lead {lead_id}")))?;
+    if lead.status == "promoted" {
+        return Err(CmsError::Forbidden("this lead is already promoted".into()));
+    }
     let article_id = create_draft(
         pool,
         &lead.title,
-        &summary,
-        &body_json,
+        &draft.summary,
+        &draft.body_json,
         &actor.display_name,
         kind,
         section,
         &actor.username,
-        "",   // meta_description (Phase 2 fills this)
-        "",   // og_image_url
-        "[]", // tags
+        &draft.meta_description,
+        &draft.og_image_url,
+        &draft.tags,
     )
     .await?;
-    // Machine-prefilled → flag AI-assisted for transparency (IMPRESS Clause 2).
     sqlx::query("UPDATE article SET is_ai_assisted = 1 WHERE id = ?")
         .bind(article_id)
         .execute(pool)
@@ -303,18 +316,31 @@ pub async fn promote_lead(
     Ok(article_id)
 }
 
-/// Promote a lead into BOTH a draft article and a linked draft conviction entry
-/// (prefilled name/offence/source). The editor writes + publishes the report,
-/// which then lets the conviction be published. Returns `(article_id,
-/// conviction_id)`.
-pub async fn promote_lead_to_conviction(
+/// Banner-only promote (today's behaviour) — used when AI is off/failed.
+pub async fn promote_lead(
     pool: &SqlitePool,
     lead_id: i64,
     actor: &StaffUser,
     kind: &str,
     section: &str,
+) -> Result<i64> {
+    let lead = get_lead(pool, lead_id)
+        .await?
+        .ok_or_else(|| CmsError::Bad(format!("no lead {lead_id}")))?;
+    let draft = banner_draft(&lead);
+    promote_lead_with_draft(pool, lead_id, actor, kind, section, &draft).await
+}
+
+/// Promote a lead into BOTH a draft article and a linked draft conviction, using
+/// pre-generated draft content. Returns (article_id, conviction_id).
+pub async fn promote_lead_to_conviction_with_draft(
+    pool: &SqlitePool,
+    lead_id: i64,
+    actor: &StaffUser,
+    kind: &str,
+    section: &str,
+    draft: &PromotedDraft,
 ) -> Result<(i64, i64)> {
-    // Capture lead fields before promote_lead flips its status.
     let lead = get_lead(pool, lead_id)
         .await?
         .ok_or_else(|| CmsError::Bad(format!("no lead {lead_id}")))?;
@@ -328,7 +354,7 @@ pub async fn promote_lead_to_conviction(
     let source_url = lead.url.clone();
     let source_name = lead.source_key.clone();
 
-    let article_id = promote_lead(pool, lead_id, actor, kind, section).await?;
+    let article_id = promote_lead_with_draft(pool, lead_id, actor, kind, section, draft).await?;
     let article_slug = crate::get_article(pool, article_id)
         .await?
         .map(|a| a.slug)
@@ -345,6 +371,21 @@ pub async fn promote_lead_to_conviction(
     };
     let conviction_id = create_conviction(pool, &conv, actor).await?;
     Ok((article_id, conviction_id))
+}
+
+/// Banner-only conviction promote (today's behaviour).
+pub async fn promote_lead_to_conviction(
+    pool: &SqlitePool,
+    lead_id: i64,
+    actor: &StaffUser,
+    kind: &str,
+    section: &str,
+) -> Result<(i64, i64)> {
+    let lead = get_lead(pool, lead_id)
+        .await?
+        .ok_or_else(|| CmsError::Bad(format!("no lead {lead_id}")))?;
+    let draft = banner_draft(&lead);
+    promote_lead_to_conviction_with_draft(pool, lead_id, actor, kind, section, &draft).await
 }
 
 // ===================== convictions (public DB) =====================
@@ -679,6 +720,35 @@ mod tests {
             .await
             .unwrap();
         assert!(crate::audit_chain(&pool).await.unwrap().verify().is_ok());
+    }
+
+    #[tokio::test]
+    async fn promote_with_draft_sets_seo_and_marks_ai_assisted() {
+        let pool = mempool().await;
+        let editor = user(&pool, "ed", Role::Editor).await;
+        let src = upsert_source(&pool, "caselaw", "caselaw", "Find Case Law", "https://x").await.unwrap();
+        let lead = NewLead { source_id: src, source_key: "caselaw".into(), external_id: "e1".into(), url: "https://c/e1".into(), title: "R v Smith".into(), offence_category: "child".into(), ..Default::default() };
+        insert_lead(&pool, &lead).await.unwrap();
+        let lead_id = list_leads(&pool, Some("new")).await.unwrap()[0].id;
+
+        let draft = PromotedDraft {
+            summary: "A standfirst.".into(),
+            body_json: serde_json::to_string(&vec!["Para **[VERIFY: age]**."]).unwrap(),
+            meta_description: "Search desc.".into(),
+            og_image_url: String::new(),
+            tags: r#"["grooming"]"#.into(),
+        };
+        let aid = promote_lead_with_draft(&pool, lead_id, &editor, "Court report", "Crime", &draft).await.unwrap();
+
+        let a = crate::get_article(&pool, aid).await.unwrap().unwrap();
+        assert_eq!(a.state, "draft");
+        assert!(a.is_ai_assisted);
+        assert_eq!(a.summary, "A standfirst.");
+        assert_eq!(a.meta_description, "Search desc.");
+        assert_eq!(a.tags, r#"["grooming"]"#);
+        // lead is now promoted + not re-promotable
+        assert_eq!(list_leads(&pool, Some("new")).await.unwrap().len(), 0);
+        assert!(promote_lead_with_draft(&pool, lead_id, &editor, "Court report", "Crime", &draft).await.is_err());
     }
 
     #[tokio::test]
