@@ -232,6 +232,27 @@ fn extract_json_object(s: &str) -> Option<&str> {
     None
 }
 
+/// Extract the emit_draft tool_use input from a Messages API response. Pure.
+pub fn parse_tool_response(resp: &serde_json::Value) -> Result<AiDraft, AiError> {
+    let content = resp.get("content").and_then(|c| c.as_array());
+    let input = content
+        .and_then(|blocks| {
+            blocks
+                .iter()
+                .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+        })
+        .and_then(|b| b.get("input"))
+        .ok_or(AiError::NoToolUse)?;
+    let mut draft: AiDraft =
+        serde_json::from_value(input.clone()).map_err(|e| AiError::Parse(e.to_string()))?;
+    if draft.body_paragraphs.is_empty() || draft.summary.trim().is_empty() {
+        return Err(AiError::Parse("empty draft body or summary".into()));
+    }
+    // Normalise the slug defensively (the editor can still edit it).
+    draft.slug = slugify(&draft.slug);
+    Ok(draft)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +323,42 @@ mod tests {
     fn parse_openai_no_json_is_an_error() {
         let resp = serde_json::json!({"choices": [{"message": {"content": "sorry, I can't."}}]});
         assert!(matches!(parse_openai_response(&resp), Err(AiError::Parse(_))));
+    }
+
+    fn ok_response() -> serde_json::Value {
+        serde_json::json!({
+            "stop_reason": "tool_use",
+            "content": [
+                {"type": "text", "text": "ignored"},
+                {"type": "tool_use", "name": "emit_draft", "input": {
+                    "summary": "A standfirst.",
+                    "meta_description": "A search description.",
+                    "slug": "r-v-smith",
+                    "tags": ["grooming", "crown court"],
+                    "body_paragraphs": ["Para one **[VERIFY: age]**.", "Para two."],
+                    "figure_caption": "Court building exterior."
+                }}
+            ]
+        })
+    }
+
+    #[test]
+    fn parses_tool_use_input_into_draft() {
+        let d = parse_tool_response(&ok_response()).unwrap();
+        assert_eq!(d.slug, "r-v-smith");
+        assert_eq!(d.tags, vec!["grooming", "crown court"]);
+        assert_eq!(d.body_paragraphs.len(), 2);
+    }
+
+    #[test]
+    fn no_tool_use_block_is_an_error() {
+        let resp = serde_json::json!({"stop_reason": "refusal", "content": [{"type": "text", "text": "no"}]});
+        assert!(matches!(parse_tool_response(&resp), Err(AiError::NoToolUse)));
+    }
+
+    #[test]
+    fn malformed_input_is_a_parse_error() {
+        let resp = serde_json::json!({"content": [{"type": "tool_use", "name": "emit_draft", "input": {"summary": 5}}]});
+        assert!(matches!(parse_tool_response(&resp), Err(AiError::Parse(_))));
     }
 }
