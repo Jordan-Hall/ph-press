@@ -277,6 +277,9 @@ pub async fn promote_lead(
         kind,
         section,
         &actor.username,
+        "",   // meta_description (Phase 2 fills this)
+        "",   // og_image_url
+        "[]", // tags
     )
     .await?;
     // Machine-prefilled → flag AI-assisted for transparency (IMPRESS Clause 2).
@@ -706,6 +709,9 @@ mod tests {
             "Ed",
             "Court report",
             "Crime",
+            "",
+            "",
+            "[]",
         )
         .await
         .unwrap();

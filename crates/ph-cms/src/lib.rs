@@ -466,6 +466,7 @@ pub async fn destroy_session(pool: &SqlitePool, token: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_article(
     pool: &SqlitePool,
     slug: &str,
@@ -475,10 +476,13 @@ pub async fn create_article(
     byline: &str,
     kind: &str,
     section: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
 ) -> Result<i64> {
     let t = now();
     let res = sqlx::query(
-        "INSERT INTO article (slug, title, summary, body, byline, kind, section, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO article (slug, title, summary, body, byline, kind, section, meta_description, og_image_url, tags, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(slug)
     .bind(title)
@@ -487,6 +491,9 @@ pub async fn create_article(
     .bind(byline)
     .bind(kind)
     .bind(section)
+    .bind(meta_description)
+    .bind(og_image_url)
+    .bind(if tags.trim().is_empty() { "[]" } else { tags })
     .bind(State::Draft.as_str())
     .bind(t)
     .bind(t)
@@ -530,6 +537,7 @@ async fn slug_exists(pool: &SqlitePool, slug: &str) -> Result<bool> {
 /// is the article's credit; `actor` is the stable username recorded in the audit
 /// chain (so creation is attributable even if a display name later changes). The
 /// body is a JSON array of paragraph strings (same shape the public renderer reads).
+#[allow(clippy::too_many_arguments)]
 pub async fn create_draft(
     pool: &SqlitePool,
     title: &str,
@@ -539,6 +547,9 @@ pub async fn create_draft(
     kind: &str,
     section: &str,
     actor: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
 ) -> Result<i64> {
     let base = slugify(title);
     let mut slug = base.clone();
@@ -547,7 +558,11 @@ pub async fn create_draft(
         slug = format!("{base}-{n}");
         n += 1;
     }
-    let id = create_article(pool, &slug, title, summary, body, byline, kind, section).await?;
+    let id = create_article(
+        pool, &slug, title, summary, body, byline, kind, section,
+        meta_description, og_image_url, tags,
+    )
+    .await?;
     append_audit(pool, actor, "article.create", &slug, "draft created").await?;
     Ok(id)
 }
@@ -1089,6 +1104,9 @@ mod tests {
             "Jordan Upton",
             "Court report",
             "Crime",
+            "",
+            "",
+            "[]",
         )
         .await
         .unwrap();
@@ -1254,6 +1272,9 @@ mod tests {
             "Court report",
             "Crime",
             "admin",
+            "",
+            "",
+            "[]",
         )
         .await
         .unwrap();
@@ -1266,6 +1287,9 @@ mod tests {
             "Court report",
             "Crime",
             "admin",
+            "",
+            "",
+            "[]",
         )
         .await
         .unwrap();
@@ -1295,6 +1319,7 @@ mod tests {
         init(&pool).await.unwrap();
         let id = create_draft(
             &pool, "Title", "sum", "[]", "By", "Court report", "Crime", "admin",
+            "", "", "[]",
         )
         .await
         .unwrap();
@@ -1302,5 +1327,21 @@ mod tests {
         assert_eq!(a.meta_description, "");
         assert_eq!(a.og_image_url, "");
         assert_eq!(a.tags, "[]");
+    }
+
+    #[tokio::test]
+    async fn create_draft_persists_seo_fields() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        let id = create_draft(
+            &pool, "Title", "sum", "[]", "By", "Court report", "Crime", "admin",
+            "A search description.", "/assets/og.png", r#"["grooming","crown court"]"#,
+        )
+        .await
+        .unwrap();
+        let a = get_article(&pool, id).await.unwrap().unwrap();
+        assert_eq!(a.meta_description, "A search description.");
+        assert_eq!(a.og_image_url, "/assets/og.png");
+        assert_eq!(a.tags, r#"["grooming","crown court"]"#);
     }
 }
