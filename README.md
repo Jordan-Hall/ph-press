@@ -92,7 +92,7 @@ newsroom:
    *Local model (default, cheap, on-prem) — `PH_AI_BACKEND=local`:*
    - Run an OpenAI-compatible server on the box, e.g. llama.cpp:
      `./llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 4096 --host 127.0.0.1 --port 8080`
-     (Ollama also works: `ollama serve`, then `PH_AI_BASE_URL=http://127.0.0.1:11434/v1`.)
+     (Ollama also works: `ollama serve`, then `PH_AI_BASE_URL=http://127.0.0.1:11434`.)
    - `PH_AI_ENABLED=1`, `PH_AI_BASE_URL=http://127.0.0.1:8080`, `PH_AI_MODEL=<served name>`.
    - Small CPU box → expect tens of seconds per draft; `PH_AI_TIMEOUT_SECS` defaults to 120.
    - Bedrock: point `PH_AI_BASE_URL` at an OpenAI-compatible gateway (AWS Bedrock

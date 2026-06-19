@@ -465,6 +465,17 @@ pub async fn promote_lead(actor: &str, id: i64, kind: &str, section: &str) -> Re
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("no lead {id}"))?;
+    // Authorize + dedupe BEFORE any outbound AI generation (no surprise spend).
+    if lead.status == "promoted" {
+        return Err("this lead is already promoted".to_string());
+    }
+    let role = user.role().map_err(|e| e.to_string())?;
+    if !matches!(
+        role,
+        ph_cms::Role::Writer | ph_cms::Role::SubEditor | ph_cms::Role::Editor | ph_cms::Role::Admin
+    ) {
+        return Err("your role cannot promote a lead into a draft".to_string());
+    }
     let content = generate_promo_content(&lead, kind, section).await;
     ph_cms::ingest::promote_lead_with_draft(pool, id, &user, kind, section, &content)
         .await
@@ -685,9 +696,17 @@ fn ai_config() -> Option<ph_ai::AiConfig> {
     if !env_flag("PH_AI_ENABLED") {
         return None;
     }
-    let backend = match std::env::var("PH_AI_BACKEND").unwrap_or_default().as_str() {
+    let backend_env = std::env::var("PH_AI_BACKEND").unwrap_or_default();
+    let backend = match backend_env.as_str() {
         "anthropic" => ph_ai::Backend::Anthropic,
-        _ => ph_ai::Backend::Local, // default: local OpenAI-compatible
+        "" | "local" => ph_ai::Backend::Local, // default: local OpenAI-compatible
+        other => {
+            eprintln!(
+                "[ph-press] PH_AI_BACKEND={other:?} is not recognised (expected \"local\" or \
+                 \"anthropic\"); defaulting to local"
+            );
+            ph_ai::Backend::Local
+        }
     };
     let api_key = std::env::var("PH_AI_API_KEY").ok().unwrap_or_default();
     // Anthropic requires a key; local does not.
@@ -703,14 +722,18 @@ fn ai_config() -> Option<ph_ai::AiConfig> {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default_base.to_string());
+    let model_env = std::env::var("PH_AI_MODEL").ok().filter(|s| !s.is_empty());
+    if backend == ph_ai::Backend::Local && model_env.is_none() {
+        eprintln!(
+            "[ph-press] PH_AI_MODEL is not set; using placeholder \"local-model\". \
+             Set PH_AI_MODEL to the name of the model your local server is serving."
+        );
+    }
     let default_model = match backend {
         ph_ai::Backend::Anthropic => "claude-sonnet-4-6",
         ph_ai::Backend::Local => "local-model",
     };
-    let model = std::env::var("PH_AI_MODEL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| default_model.to_string());
+    let model = model_env.unwrap_or_else(|| default_model.to_string());
     let timeout_secs = std::env::var("PH_AI_TIMEOUT_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -737,8 +760,9 @@ fn lead_facts(lead: &ph_cms::ingest::IngestItem, kind: &str, section: &str) -> p
     }
 }
 
-/// Generate the promote content ONCE. AI when enabled + succeeds, else the banner.
-/// The banner paragraph is always prepended; a figure placeholder is appended.
+/// Generate the promote content ONCE. When AI is enabled and succeeds, a provenance
+/// banner paragraph is prepended to the AI body and a figure placeholder is appended.
+/// When AI is disabled or the call fails, the banner draft is returned wholesale.
 async fn generate_promo_content(
     lead: &ph_cms::ingest::IngestItem,
     kind: &str,
@@ -881,6 +905,17 @@ pub async fn promote_lead_to_conviction(
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("no lead {id}"))?;
+    // Authorize + dedupe BEFORE any outbound AI generation (no surprise spend).
+    if lead.status == "promoted" {
+        return Err("this lead is already promoted".to_string());
+    }
+    let role = user.role().map_err(|e| e.to_string())?;
+    if !matches!(
+        role,
+        ph_cms::Role::Writer | ph_cms::Role::SubEditor | ph_cms::Role::Editor | ph_cms::Role::Admin
+    ) {
+        return Err("your role cannot promote a lead into a draft".to_string());
+    }
     let content = generate_promo_content(&lead, kind, section).await;
     ph_cms::ingest::promote_lead_to_conviction_with_draft(pool, id, &user, kind, section, &content)
         .await

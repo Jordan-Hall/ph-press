@@ -263,6 +263,7 @@ pub async fn draft(facts: &LeadFacts, cfg: &AiConfig) -> Result<AiDraft, AiError
             parse_tool_response(&json)
         }
         Backend::Local => {
+            let base = base.strip_suffix("/v1").unwrap_or(base);
             let body = build_openai_body(facts, cfg);
             let mut req = client
                 .post(format!("{base}/v1/chat/completions"))
