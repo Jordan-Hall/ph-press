@@ -1024,6 +1024,11 @@ pub fn WriteArticle(id: i64) -> Element {
                         init_kind: "Court report".to_string(),
                         init_section: "Crime".to_string(),
                         init_body: String::new(),
+                        init_meta: String::new(),
+                        init_og: String::new(),
+                        init_tags: String::new(),
+                        init_slug: String::new(),
+                        init_state: "draft".to_string(),
                     }
                 } else {
                     WriteLoad { id }
@@ -1048,6 +1053,11 @@ fn WriteLoad(id: i64) -> Element {
                 init_kind: a.kind.clone(),
                 init_section: a.section.clone(),
                 init_body: a.body.join("\n"),
+                init_meta: a.meta_description.clone(),
+                init_og: a.og_image_url.clone(),
+                init_tags: a.tags.join(", "),
+                init_slug: a.slug.clone(),
+                init_state: a.state.clone(),
             }
         },
         _ => rsx! {
@@ -1059,6 +1069,7 @@ fn WriteLoad(id: i64) -> Element {
 /// The shared writer-first editor (Ghost/Medium feel). Creates a draft when
 /// edit_id is 0, otherwise saves changes to that article, then returns to /desk.
 #[component]
+#[allow(clippy::too_many_arguments)]
 fn EditorForm(
     edit_id: i64,
     init_title: String,
@@ -1066,27 +1077,52 @@ fn EditorForm(
     init_kind: String,
     init_section: String,
     init_body: String,
+    init_meta: String,
+    init_og: String,
+    init_tags: String,
+    init_slug: String,
+    init_state: String,
 ) -> Element {
     let mut title = use_signal(|| init_title.clone());
     let mut summary = use_signal(|| init_summary.clone());
     let mut body = use_signal(|| init_body.clone());
     let mut kind = use_signal(|| init_kind.clone());
     let mut section = use_signal(|| init_section.clone());
+    let mut meta_desc = use_signal(|| init_meta.clone());
+    let mut og_image = use_signal(|| init_og.clone());
+    let mut tags = use_signal(|| init_tags.clone());
+    let mut slug = use_signal(|| init_slug.clone());
     let mut err = use_signal(|| Option::<String>::None);
     let mut busy = use_signal(|| false);
     let nav = navigator();
+    // Slug is editable only while the article is pre-publish (published/corrected
+    // URLs are locked — see update_article's server-side gate).
+    let slug_locked = matches!(init_state.as_str(), "published" | "corrected");
 
     let submit = move |evt: FormEvent| {
         evt.prevent_default();
         spawn(async move {
             busy.set(true);
             err.set(None);
+            // comma-separated tags -> Vec<String>, trimmed + de-blanked.
+            let tag_vec: Vec<String> = tags()
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
             let res = if edit_id == 0 {
-                desk_create(title(), summary(), kind(), section(), body())
-                    .await
-                    .map(|_| ())
+                desk_create(
+                    title(), summary(), kind(), section(), body(),
+                    meta_desc(), og_image(), tag_vec,
+                )
+                .await
+                .map(|_| ())
             } else {
-                desk_update(edit_id, title(), summary(), kind(), section(), body()).await
+                desk_update(
+                    edit_id, title(), summary(), kind(), section(), body(),
+                    meta_desc(), og_image(), tag_vec, slug(),
+                )
+                .await
             };
             match res {
                 Ok(()) => {
@@ -1148,6 +1184,12 @@ fn EditorForm(
     } else {
         "meter warn"
     };
+    let meta_len = meta_desc().chars().count();
+    let meta_state = if meta_len == 0 || (120..=160).contains(&meta_len) {
+        "meter"
+    } else {
+        "meter warn"
+    };
 
     rsx! {
         form { class: "editor", onsubmit: submit,
@@ -1186,6 +1228,44 @@ fn EditorForm(
                 placeholder: "Standfirst — the one-line summary readers see first",
                 value: "{summary}",
                 oninput: move |e| summary.set(e.value()),
+            }
+            // ---- SEO + social (search/share metadata) ----
+            div { class: "editor-meta",
+                if edit_id != 0 {
+                    label {
+                        span { "URL slug" }
+                        input {
+                            r#type: "text",
+                            value: "{slug}",
+                            disabled: slug_locked,
+                            oninput: move |e| slug.set(e.value()),
+                            placeholder: "url-slug",
+                        }
+                    }
+                }
+                label {
+                    span { "Tags (comma-separated)" }
+                    input {
+                        r#type: "text",
+                        value: "{tags}",
+                        oninput: move |e| tags.set(e.value()),
+                        placeholder: "grooming, crown court",
+                    }
+                }
+            }
+            input {
+                class: "editor-sub",
+                r#type: "text",
+                placeholder: "Social / OG image URL (e.g. /assets/og/your-image.jpg)",
+                value: "{og_image}",
+                oninput: move |e| og_image.set(e.value()),
+            }
+            textarea {
+                class: "editor-body",
+                rows: "2",
+                placeholder: "Meta description — the ~155-char summary shown in search results (falls back to the standfirst if blank).",
+                value: "{meta_desc}",
+                oninput: move |e| meta_desc.set(e.value()),
             }
             // ---- editor mode toggle (Visual WYSIWYG ↔ Markdown source) ----
             div { class: "editor-modebar",
@@ -1258,6 +1338,7 @@ fn EditorForm(
                 span { class: title_state, "Headline " b { "{title_len}" } " / ~65" }
                 span { class: sum_state, "Standfirst " b { "{sum_len}" } }
                 span { class: "meter", "Body " b { "{words}" } " words · {mins} min read" }
+                span { class: meta_state, "Meta " b { "{meta_len}" } " / ~155" }
             }
             if let Some(e) = err() {
                 p { class: "desk-error", "{e}" }
