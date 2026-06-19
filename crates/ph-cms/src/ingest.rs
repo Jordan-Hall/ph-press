@@ -9,7 +9,7 @@
 //! Draft article through the ordinary legal-gated lifecycle — nothing here
 //! publishes automatically.
 
-use crate::{append_audit, create_draft, now, CmsError, Result, Role, StaffUser, State};
+use crate::{append_audit, create_draft_with_slug, now, CmsError, Result, Role, StaffUser, State};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
 
@@ -234,6 +234,7 @@ pub struct PromotedDraft {
     pub meta_description: String,
     pub og_image_url: String,
     pub tags: String,           // JSON array of strings
+    pub slug_base: String,      // AI-suggested slug base (empty = derive from title)
 }
 
 /// The banner-only fallback content (today's behaviour) for a lead.
@@ -252,6 +253,7 @@ pub fn banner_draft(lead: &IngestItem) -> PromotedDraft {
         meta_description: String::new(),
         og_image_url: String::new(),
         tags: "[]".to_string(),
+        slug_base: String::new(),
     }
 }
 
@@ -282,8 +284,9 @@ pub async fn promote_lead_with_draft(
     if lead.status == "promoted" {
         return Err(CmsError::Forbidden("this lead is already promoted".into()));
     }
-    let article_id = create_draft(
+    let article_id = create_draft_with_slug(
         pool,
+        &draft.slug_base,
         &lead.title,
         &draft.summary,
         &draft.body_json,
@@ -737,6 +740,7 @@ mod tests {
             meta_description: "Search desc.".into(),
             og_image_url: String::new(),
             tags: r#"["grooming"]"#.into(),
+            slug_base: String::new(),
         };
         let aid = promote_lead_with_draft(&pool, lead_id, &editor, "Court report", "Crime", &draft).await.unwrap();
 
@@ -749,6 +753,40 @@ mod tests {
         // lead is now promoted + not re-promotable
         assert_eq!(list_leads(&pool, Some("new")).await.unwrap().len(), 0);
         assert!(promote_lead_with_draft(&pool, lead_id, &editor, "Court report", "Crime", &draft).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn promote_with_draft_uses_ai_slug_base() {
+        let pool = mempool().await;
+        let editor = user(&pool, "ed", Role::Editor).await;
+        let src = upsert_source(&pool, "caselaw", "caselaw", "Find Case Law", "https://x").await.unwrap();
+        let lead = NewLead {
+            source_id: src,
+            source_key: "caselaw".into(),
+            external_id: "slug-test-1".into(),
+            url: "https://c/slug-test-1".into(),
+            title: "R v Jones".into(),
+            offence_category: "child".into(),
+            ..Default::default()
+        };
+        insert_lead(&pool, &lead).await.unwrap();
+        let lead_id = list_leads(&pool, Some("new")).await.unwrap()[0].id;
+
+        let draft = PromotedDraft {
+            summary: "A standfirst.".into(),
+            body_json: serde_json::to_string(&vec!["Para one."]).unwrap(),
+            meta_description: String::new(),
+            og_image_url: String::new(),
+            tags: "[]".into(),
+            slug_base: "custom-ai-slug".into(),
+        };
+        let aid = promote_lead_with_draft(&pool, lead_id, &editor, "Court report", "Crime", &draft)
+            .await
+            .unwrap();
+
+        let a = crate::get_article(&pool, aid).await.unwrap().unwrap();
+        // Free slug — no suffix expected
+        assert_eq!(a.slug, "custom-ai-slug");
     }
 
     #[tokio::test]

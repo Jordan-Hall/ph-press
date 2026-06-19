@@ -793,6 +793,7 @@ async fn generate_promo_content(
                 meta_description: d.meta_description,
                 og_image_url: String::new(),
                 tags,
+                slug_base: d.slug,
             }
         }
         Err(e) => {

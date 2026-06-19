@@ -544,6 +544,46 @@ async fn slug_taken_by_other(pool: &SqlitePool, slug: &str, id: i64) -> Result<b
     Ok(row.is_some())
 }
 
+/// Create a Draft with an explicit slug base. When `slug_base` is non-empty,
+/// the base slug is `slugify(slug_base)`; otherwise the base slug is
+/// `slugify(title)`. The same de-dupe loop applies either way. `byline` is the
+/// article's credit; `actor` is the stable username recorded in the audit chain.
+/// The body is a JSON array of paragraph strings.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_draft_with_slug(
+    pool: &SqlitePool,
+    slug_base: &str,
+    title: &str,
+    summary: &str,
+    body: &str,
+    byline: &str,
+    kind: &str,
+    section: &str,
+    actor: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
+) -> Result<i64> {
+    let base = if slug_base.trim().is_empty() {
+        slugify(title)
+    } else {
+        slugify(slug_base)
+    };
+    let mut slug = base.clone();
+    let mut n = 2;
+    while slug_exists(pool, &slug).await? {
+        slug = format!("{base}-{n}");
+        n += 1;
+    }
+    let id = create_article(
+        pool, &slug, title, summary, body, byline, kind, section,
+        meta_description, og_image_url, tags,
+    )
+    .await?;
+    append_audit(pool, actor, "article.create", &slug, "draft created").await?;
+    Ok(id)
+}
+
 /// Create a Draft from a title (slug derived + de-duplicated), audited. `byline`
 /// is the article's credit; `actor` is the stable username recorded in the audit
 /// chain (so creation is attributable even if a display name later changes). The
@@ -562,20 +602,7 @@ pub async fn create_draft(
     og_image_url: &str,
     tags: &str,
 ) -> Result<i64> {
-    let base = slugify(title);
-    let mut slug = base.clone();
-    let mut n = 2;
-    while slug_exists(pool, &slug).await? {
-        slug = format!("{base}-{n}");
-        n += 1;
-    }
-    let id = create_article(
-        pool, &slug, title, summary, body, byline, kind, section,
-        meta_description, og_image_url, tags,
-    )
-    .await?;
-    append_audit(pool, actor, "article.create", &slug, "draft created").await?;
-    Ok(id)
+    create_draft_with_slug(pool, "", title, summary, body, byline, kind, section, actor, meta_description, og_image_url, tags).await
 }
 
 /// Update an article's content + SEO, audited; lifecycle state is unchanged. Any
