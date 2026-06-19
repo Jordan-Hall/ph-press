@@ -43,4 +43,4 @@ serde_json = { version = "1", optional = true }
 # ph-offender) join as members as WS2/WS3 land. These are server-side only and
 # are NOT pulled into the wasm/web build (kept off the default feature path).
 [workspace]
-members = ["crates/ph-audit", "crates/ph-cms", "crates/ph-crawl", "crates/taino-edit-dx", "crates/web-framework-markdown", "crates/dioxus-markdown"]
+members = ["crates/ph-audit", "crates/ph-ai", "crates/ph-cms", "crates/ph-crawl", "crates/taino-edit-dx", "crates/web-framework-markdown", "crates/dioxus-markdown"]
