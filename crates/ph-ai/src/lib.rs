@@ -232,6 +232,60 @@ fn extract_json_object(s: &str) -> Option<&str> {
     None
 }
 
+/// Call the configured backend and return a typed draft. Networked.
+pub async fn draft(facts: &LeadFacts, cfg: &AiConfig) -> Result<AiDraft, AiError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(cfg.timeout_secs))
+        .build()
+        .map_err(|e| AiError::Http(e.to_string()))?;
+    let base = cfg.base_url.trim_end_matches('/');
+    match cfg.backend {
+        Backend::Anthropic => {
+            if cfg.api_key.trim().is_empty() {
+                return Err(AiError::Disabled);
+            }
+            let body = build_request_body(facts, cfg);
+            let resp = client
+                .post(format!("{base}/v1/messages"))
+                .header("x-api-key", &cfg.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| AiError::Http(e.to_string()))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(AiError::Status(status.as_u16()));
+            }
+            let json: serde_json::Value =
+                resp.json().await.map_err(|e| AiError::Http(e.to_string()))?;
+            parse_tool_response(&json)
+        }
+        Backend::Local => {
+            let body = build_openai_body(facts, cfg);
+            let mut req = client
+                .post(format!("{base}/v1/chat/completions"))
+                .header("content-type", "application/json");
+            if !cfg.api_key.trim().is_empty() {
+                req = req.header("authorization", format!("Bearer {}", cfg.api_key));
+            }
+            let resp = req
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| AiError::Http(e.to_string()))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(AiError::Status(status.as_u16()));
+            }
+            let json: serde_json::Value =
+                resp.json().await.map_err(|e| AiError::Http(e.to_string()))?;
+            parse_openai_response(&json)
+        }
+    }
+}
+
 /// Extract the emit_draft tool_use input from a Messages API response. Pure.
 pub fn parse_tool_response(resp: &serde_json::Value) -> Result<AiDraft, AiError> {
     let content = resp.get("content").and_then(|c| c.as_array());
@@ -360,5 +414,47 @@ mod tests {
     fn malformed_input_is_a_parse_error() {
         let resp = serde_json::json!({"content": [{"type": "tool_use", "name": "emit_draft", "input": {"summary": 5}}]});
         assert!(matches!(parse_tool_response(&resp), Err(AiError::Parse(_))));
+    }
+
+    /// Live integration test — Anthropic backend. Requires a real API key.
+    /// Run with: PH_AI_API_KEY=sk-ant-… cargo test -p ph-ai -- --ignored live_draft
+    #[tokio::test]
+    #[ignore]
+    async fn live_draft() {
+        let key = std::env::var("PH_AI_API_KEY").unwrap_or_default();
+        if key.trim().is_empty() {
+            eprintln!("live_draft: PH_AI_API_KEY not set — skipped");
+            return;
+        }
+        let mut c = cfg();
+        c.backend = Backend::Anthropic;
+        c.api_key = key;
+        let d = draft(&facts(), &c).await.expect("draft should succeed");
+        assert!(!d.summary.is_empty());
+        assert!(!d.body_paragraphs.is_empty());
+    }
+
+    /// Live integration test — Local OpenAI-compatible backend.
+    /// Run with: PH_AI_BASE_URL=http://127.0.0.1:8080 PH_AI_MODEL=my-model cargo test -p ph-ai -- --ignored live_local_draft
+    #[tokio::test]
+    #[ignore]
+    async fn live_local_draft() {
+        let base = std::env::var("PH_AI_BASE_URL").unwrap_or_default();
+        if base.trim().is_empty() {
+            eprintln!("live_local_draft: PH_AI_BASE_URL not set — skipped");
+            return;
+        }
+        let model = std::env::var("PH_AI_MODEL").unwrap_or_else(|_| "local-model".into());
+        let c = AiConfig {
+            backend: Backend::Local,
+            api_key: std::env::var("PH_AI_API_KEY").unwrap_or_default(),
+            model,
+            base_url: base,
+            max_tokens: 4000,
+            timeout_secs: 120,
+        };
+        let d = draft(&facts(), &c).await.expect("draft should succeed");
+        assert!(!d.summary.is_empty());
+        assert!(!d.body_paragraphs.is_empty());
     }
 }
