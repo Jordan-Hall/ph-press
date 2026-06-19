@@ -85,6 +85,27 @@ newsroom:
    then `dx serve` to preview and deploy the container (see
    **[deploy/README.md](deploy/README.md)**).
 
+6. **AI drafting (optional, OFF by default).** Promoting an Intake lead can pre-fill
+   an AI-drafted *scaffold* (original prose with `[VERIFY]` markers, SEO, a figure
+   slot). It stays AI-assisted and goes through the full legal gate. Two backends:
+
+   *Local model (default, cheap, on-prem) — `PH_AI_BACKEND=local`:*
+   - Run an OpenAI-compatible server on the box, e.g. llama.cpp:
+     `./llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 4096 --host 127.0.0.1 --port 8080`
+     (Ollama also works: `ollama serve`, then `PH_AI_BASE_URL=http://127.0.0.1:11434/v1`.)
+   - `PH_AI_ENABLED=1`, `PH_AI_BASE_URL=http://127.0.0.1:8080`, `PH_AI_MODEL=<served name>`.
+   - Small CPU box → expect tens of seconds per draft; `PH_AI_TIMEOUT_SECS` defaults to 120.
+   - Bedrock: point `PH_AI_BASE_URL` at an OpenAI-compatible gateway (AWS Bedrock
+     Access Gateway / LiteLLM) and set `PH_AI_MODEL` to the gateway's model id; set
+     `PH_AI_API_KEY` if the gateway requires one.
+
+   *Anthropic (highest quality) — `PH_AI_BACKEND=anthropic`:*
+   - `PH_AI_ENABLED=1`, `PH_AI_API_KEY=sk-ant-…`, `PH_AI_MODEL=claude-sonnet-4-6`
+     (or `claude-haiku-4-5` for the cheapest Claude).
+
+   With it unset, promote behaves exactly as before (banner draft). A failed or
+   disabled AI call never breaks promote — it falls back to the banner.
+
 You run your own instance, under your own name, and you are responsible for your
 own editorial standards and legal compliance (defamation, contempt of court, data
 protection, and any press regulation where you operate).
