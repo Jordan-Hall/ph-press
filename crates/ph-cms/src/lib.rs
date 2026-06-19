@@ -222,6 +222,9 @@ pub struct Article {
     pub byline: String,
     pub kind: String,
     pub section: String,
+    pub meta_description: String,
+    pub og_image_url: String,
+    pub tags: String, // JSON array of strings
     pub state: String,
     pub is_ai_assisted: bool,
     pub created_at: i64,
@@ -1284,5 +1287,20 @@ mod tests {
         assert!(
             !allowed_transitions(State::EditorialReview, Role::Editor).contains(&State::Published)
         );
+    }
+
+    #[tokio::test]
+    async fn article_carries_seo_columns_defaulting_empty() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        let id = create_draft(
+            &pool, "Title", "sum", "[]", "By", "Court report", "Crime", "admin",
+        )
+        .await
+        .unwrap();
+        let a = get_article(&pool, id).await.unwrap().unwrap();
+        assert_eq!(a.meta_description, "");
+        assert_eq!(a.og_image_url, "");
+        assert_eq!(a.tags, "[]");
     }
 }
