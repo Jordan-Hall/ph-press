@@ -674,11 +674,11 @@ mod tests {
     async fn user(pool: &SqlitePool, name: &str, role: Role) -> StaffUser {
         // first user must be admin (bootstrap gate)
         if crate::count_users(pool).await.unwrap() == 0 && role != Role::Admin {
-            create_user(pool, "admin", "Admin", Role::Admin, "pw")
+            create_user(pool, "admin", "Admin", Role::Admin, "pw", "")
                 .await
                 .unwrap();
         }
-        create_user(pool, name, name, role, "pw").await.unwrap();
+        create_user(pool, name, name, role, "pw", "").await.unwrap();
         crate::find_user(pool, name).await.unwrap().unwrap()
     }
 
