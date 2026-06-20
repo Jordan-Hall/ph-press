@@ -253,15 +253,24 @@ pub fn banner_draft(lead: &IngestItem) -> PromotedDraft {
                   public court record. Clear reporting restrictions (complainant / child \
                   anonymity) and confirm the conviction before it can be published. Use \
                   the source for context only; do not copy its wording.";
-    let paras = vec![
-        banner.to_string(),
-        format!("Source ({}): {}", lead.source_key, lead.url),
-    ];
+    let mut paras = vec![banner.to_string()];
+    let og_image_url = if !lead.image_url.is_empty() {
+        let caption = if !lead.image_attribution.is_empty() {
+            lead.image_attribution.as_str()
+        } else {
+            "Source image \u{2014} verify usage rights"
+        };
+        paras.push(format!("![{}]({})", caption, lead.image_url));
+        lead.image_url.clone()
+    } else {
+        String::new()
+    };
+    paras.push(format!("Source ({}): {}", lead.source_key, lead.url));
     PromotedDraft {
         summary: "(unverified lead — write a standfirst from the court record)".to_string(),
         body_json: serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string()),
         meta_description: String::new(),
-        og_image_url: String::new(),
+        og_image_url,
         tags: "[]".to_string(),
         slug_base: String::new(),
     }
@@ -829,6 +838,71 @@ mod tests {
         let a = crate::get_article(&pool, aid).await.unwrap().unwrap();
         // Free slug — no suffix expected
         assert_eq!(a.slug, "custom-ai-slug");
+    }
+
+    #[tokio::test]
+    async fn banner_draft_with_image_url_embeds_figure_and_og() {
+        let pool = mempool().await;
+        let editor = user(&pool, "ed", Role::Editor).await;
+        let src = upsert_source(&pool, "police", "police", "Kent Police", "https://x")
+            .await
+            .unwrap();
+
+        // Lead WITH image_url + image_attribution.
+        let lead = NewLead {
+            source_id: src,
+            source_key: "police".into(),
+            external_id: "img-test-1".into(),
+            url: "https://kent.police.uk/img-test-1".into(),
+            title: "R v Doe".into(),
+            offence_category: "child".into(),
+            image_url: "https://x/img.jpg".into(),
+            image_attribution: "Kent Police".into(),
+            ..Default::default()
+        };
+        insert_lead(&pool, &lead).await.unwrap();
+        let lead_id = list_leads(&pool, Some("new")).await.unwrap()[0].id;
+        let article_id = promote_lead(&pool, lead_id, &editor, "Court report", "Crime")
+            .await
+            .unwrap();
+
+        let a = crate::get_article(&pool, article_id).await.unwrap().unwrap();
+        // OG image must be the crawled URL.
+        assert_eq!(a.og_image_url, "https://x/img.jpg");
+        // The body JSON must contain the markdown figure paragraph.
+        assert!(
+            a.body.contains(&"![Kent Police](https://x/img.jpg)".to_string()),
+            "expected figure paragraph in body; got: {:?}",
+            a.body
+        );
+    }
+
+    #[tokio::test]
+    async fn banner_draft_without_image_url_leaves_og_empty() {
+        let pool = mempool().await;
+        let editor = user(&pool, "ed", Role::Editor).await;
+        let src = upsert_source(&pool, "police", "police", "Met Police", "https://x")
+            .await
+            .unwrap();
+
+        let lead = NewLead {
+            source_id: src,
+            source_key: "police".into(),
+            external_id: "img-test-2".into(),
+            url: "https://met.police.uk/img-test-2".into(),
+            title: "R v Nobody".into(),
+            offence_category: "other".into(),
+            // no image_url
+            ..Default::default()
+        };
+        insert_lead(&pool, &lead).await.unwrap();
+        let lead_id = list_leads(&pool, Some("new")).await.unwrap()[0].id;
+        let article_id = promote_lead(&pool, lead_id, &editor, "Court report", "Crime")
+            .await
+            .unwrap();
+
+        let a = crate::get_article(&pool, article_id).await.unwrap().unwrap();
+        assert_eq!(a.og_image_url, "", "og_image_url should be empty when lead has no image");
     }
 
     #[tokio::test]

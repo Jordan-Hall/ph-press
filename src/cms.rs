@@ -805,15 +805,32 @@ async fn generate_promo_content(
     let facts = lead_facts(lead, kind, section);
     match ph_ai::draft(&facts, &cfg).await {
         Ok(d) => {
-            // Prepend the provenance banner; append a figure placeholder slot.
+            // Prepend the provenance banner; append a figure slot and source line.
             let banner_para = "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report \
                 from the public court record; clear reporting restrictions and confirm the \
                 conviction before publishing. Source for context only — do not copy its wording.";
             let mut paras = vec![banner_para.to_string()];
             paras.extend(d.body_paragraphs);
-            if !d.figure_caption.trim().is_empty() {
-                paras.push(format!("![{}](  )", d.figure_caption.trim()));
-            }
+            let og_image_url = if !lead.image_url.is_empty() {
+                // Use the lead's own crawled image; caption priority:
+                // 1. lead attribution  2. AI figure caption  3. generic fallback
+                let cap = if !lead.image_attribution.is_empty() {
+                    lead.image_attribution.as_str()
+                } else if !d.figure_caption.trim().is_empty() {
+                    d.figure_caption.trim()
+                } else {
+                    "Source image \u{2014} verify usage rights"
+                };
+                paras.push(format!("![{}]({})", cap, lead.image_url));
+                lead.image_url.clone()
+            } else {
+                // No lead image: fall back to an empty-URL placeholder if the AI
+                // suggested a caption (editor can fill in the URL).
+                if !d.figure_caption.trim().is_empty() {
+                    paras.push(format!("![{}](  )", d.figure_caption.trim()));
+                }
+                String::new()
+            };
             paras.push(format!("Source ({}): {}", lead.source_key, lead.url));
             let body_json = serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string());
             let tags = serde_json::to_string(&d.tags).unwrap_or_else(|_| "[]".to_string());
@@ -821,7 +838,7 @@ async fn generate_promo_content(
                 summary: d.summary,
                 body_json,
                 meta_description: d.meta_description,
-                og_image_url: String::new(),
+                og_image_url,
                 tags,
                 slug_base: d.slug,
             }

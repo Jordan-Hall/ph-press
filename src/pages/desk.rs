@@ -1774,7 +1774,7 @@ fn IntakeCard(
                 p { class: "intake-snippet", "{lead.snippet}" }
             }
             if !lead.image_url.is_empty() {
-                p { class: "intake-imgnote", "\u{2316} Source image (reference only — never republished): {lead.image_attribution}" }
+                p { class: "intake-imgnote", "\u{2316} Source image \u{2014} carried into the draft; verify usage rights before publishing. {lead.image_attribution}" }
             }
             a { class: "intake-source-link", href: "{lead.url}", target: "_blank", rel: "noopener noreferrer",
                 "\u{2197} Source \u{2014} read + verify against the record"
