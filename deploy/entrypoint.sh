@@ -15,6 +15,12 @@ if [ -x /srvapp/server ]; then
     PH_ADMIN_PASS="$(printf '%s' "$PH_ADMIN_PASS_B64" | base64 -d 2>/dev/null || true)"
     export PH_ADMIN_PASS
   fi
+  # The SES sender (PH_EMAIL_FROM) may carry a display name + spaces/< >, so it
+  # travels base64-wrapped too. Decode it for the server.
+  if [ -n "${PH_EMAIL_FROM_B64:-}" ]; then
+    PH_EMAIL_FROM="$(printf '%s' "$PH_EMAIL_FROM_B64" | base64 -d 2>/dev/null || true)"
+    export PH_EMAIL_FROM
+  fi
   # Crawler feed-override lists travel base64-wrapped (they contain | ; ? & = and
   # spaces). Decode each into the PH_CRAWL_*_FEEDS the server reads; an unset one
   # stays unset, so the crate falls back to its presets.

@@ -143,5 +143,28 @@ sets the new password and destroys all of that account's existing sessions.
 **Delivery is decoupled from issuing.** The reset link is **always written to the container
 log** (`[ph-press] password-reset link for …`), so an operator can retrieve it read-only via
 SSM and hand it over even before email delivery is configured — which is exactly how the first
-admin unlock is done. Wiring an email sender (Amazon SES via the instance role) is a later
-step; the flow works without it.
+admin unlock is done.
+
+### Enabling email delivery (Amazon SES)
+
+`ph-email` sends the reset link via the **SESv2 `SendEmail`** API using the **EC2 instance role**
+over IMDS — no keys in the container (same pattern as the Bedrock client). Off until enabled:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PH_EMAIL_BACKEND` | _(unset)_ | `ses` to turn delivery on (anything else / unset → log-only) |
+| `PH_EMAIL_FROM` | _(unset)_ | The **SES-verified** sender, e.g. `Predator Hunters <no-reply@predatorhunters.co.uk>` (base64-wrapped through the deploy, decoded in the container) |
+| `PH_EMAIL_REGION` | `AWS_REGION` then `eu-west-2` | SES endpoint region |
+
+One-time AWS setup (needs SES/IAM/DNS access — the scoped deployer can't do these):
+
+1. **Verify the sender** in SES (region `eu-west-2`): verify the domain `predatorhunters.co.uk`
+   (recommended — enables any `@predatorhunters.co.uk` sender + DKIM) or just the single address.
+   Add the **DKIM + SPF** CNAME/TXT records SES gives you to Cloudflare DNS.
+2. **Grant the instance role** `ph-bulwark-ssm` the `ses:SendEmail` permission.
+3. **Leave the SES sandbox** (Account dashboard → request production access) so it can send to
+   arbitrary recipients — or, while sandboxed, verify each recipient address first.
+4. Set the `production` vars `PH_EMAIL_BACKEND=ses` + `PH_EMAIL_FROM=…` and redeploy.
+
+A disabled or failing send never breaks recovery — the link is still logged, so the operator
+fallback always works.

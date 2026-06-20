@@ -1,0 +1,13 @@
+[package]
+name = "ph-email"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Transactional email sender (Amazon SES) for /desk password recovery (server-only)."
+
+[dependencies]
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-sesv2 = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
