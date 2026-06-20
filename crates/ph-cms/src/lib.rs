@@ -205,6 +205,9 @@ pub struct StaffUser {
     pub password_hash: String,
     pub totp_secret: Option<String>,
     pub created_at: i64,
+    /// Contact email for password recovery (and, later, notifications). Optional:
+    /// accounts created before the recovery feature have none until set.
+    pub email: Option<String>,
 }
 impl StaffUser {
     pub fn role(&self) -> Result<Role> {
@@ -306,6 +309,139 @@ pub async fn change_password(
     )
     .await?;
     Ok(())
+}
+
+// ===================== password recovery =====================
+/// Lifetime of a password-reset link (1 hour).
+pub const RESET_TTL_SECS: i64 = 60 * 60;
+
+/// Set (or clear, when `email` is blank) a staff account's contact email. Stored
+/// lowercased so recovery lookups are case-insensitive. Idempotent — used by the
+/// deploy bootstrap (PH_ADMIN_EMAIL) and the admin Staff tab. Returns true if a
+/// row was updated.
+pub async fn set_user_email(pool: &SqlitePool, username: &str, email: &str) -> Result<bool> {
+    let email = email.trim().to_lowercase();
+    let res = sqlx::query("UPDATE staff_user SET email = ? WHERE username = ?")
+        .bind(if email.is_empty() { None } else { Some(email) })
+        .bind(username)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// Find a staff account by contact email (case-insensitive). None if unset/unknown.
+pub async fn find_user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<StaffUser>> {
+    let email = email.trim().to_lowercase();
+    if email.is_empty() {
+        return Ok(None);
+    }
+    Ok(
+        sqlx::query_as::<_, StaffUser>("SELECT * FROM staff_user WHERE email = ?")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+/// Mint a single-use password-reset token for the account at `email`, valid for
+/// `ttl_secs`. Returns the RAW token (put it in the reset link) and the account;
+/// only the token's SHA-256 is persisted, so a DB leak yields no usable link. Any
+/// earlier token for the account is dropped first, so only the newest link works.
+///
+/// Returns `None` when no account has that email. Callers MUST report the same
+/// "if that account exists, we've sent a link" message either way, so the
+/// endpoint never reveals which emails are registered.
+pub async fn create_password_reset(
+    pool: &SqlitePool,
+    email: &str,
+    ttl_secs: i64,
+) -> Result<Option<(String, StaffUser)>> {
+    let Some(user) = find_user_by_email(pool, email).await? else {
+        return Ok(None);
+    };
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    let mut raw = [0u8; 32];
+    OsRng.fill_bytes(&mut raw);
+    let token = hex(&raw);
+    let t = now();
+    // One active link per account: invalidate any prior tokens before issuing.
+    sqlx::query("DELETE FROM password_reset_token WHERE user_id = ?")
+        .bind(user.id)
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO password_reset_token (user_id, token_hash, created_at, expires_at) VALUES (?,?,?,?)",
+    )
+    .bind(user.id)
+    .bind(token_hash(&token))
+    .bind(t)
+    .bind(t + ttl_secs)
+    .execute(pool)
+    .await?;
+    append_audit(
+        pool,
+        "system",
+        "staff.password_reset_requested",
+        &user.username,
+        "reset link issued",
+    )
+    .await?;
+    Ok(Some((token, user)))
+}
+
+/// Redeem a reset token: if it is known, unused and unexpired, set the account's
+/// new password, mark the token used, and destroy ALL of that user's sessions (so
+/// a stolen session can't outlive the reset). Returns the account on success,
+/// `CmsError::Auth` for an invalid/expired/already-used token. The caller is
+/// responsible for password-strength validation (as elsewhere in this crate).
+pub async fn consume_password_reset(
+    pool: &SqlitePool,
+    token: &str,
+    new_password: &str,
+) -> Result<StaffUser> {
+    let h = token_hash(token);
+    let row = sqlx::query_as::<_, (i64, i64, Option<i64>)>(
+        "SELECT user_id, expires_at, used_at FROM password_reset_token WHERE token_hash = ?",
+    )
+    .bind(&h)
+    .fetch_optional(pool)
+    .await?;
+    let Some((user_id, expires_at, used_at)) = row else {
+        return Err(CmsError::Auth);
+    };
+    if used_at.is_some() || expires_at <= now() {
+        return Err(CmsError::Auth);
+    }
+    let user = sqlx::query_as::<_, StaffUser>("SELECT * FROM staff_user WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(CmsError::Auth)?;
+    let hash = auth::hash_password(new_password)?;
+    sqlx::query("UPDATE staff_user SET password_hash = ? WHERE id = ?")
+        .bind(hash)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("UPDATE password_reset_token SET used_at = ? WHERE token_hash = ?")
+        .bind(now())
+        .bind(&h)
+        .execute(pool)
+        .await?;
+    // A reset invalidates every existing session for the account.
+    sqlx::query("DELETE FROM session WHERE user_id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    append_audit(
+        pool,
+        &user.username,
+        "staff.password_reset",
+        &user.username,
+        "via reset link",
+    )
+    .await?;
+    Ok(user)
 }
 
 pub async fn count_users(pool: &SqlitePool) -> Result<i64> {
@@ -1137,6 +1273,90 @@ mod tests {
         let h = auth::hash_password("correct horse").unwrap();
         assert!(auth::verify_password(&h, "correct horse"));
         assert!(!auth::verify_password(&h, "wrong"));
+    }
+
+    #[tokio::test]
+    async fn password_reset_flow() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        create_user(&pool, "admin", "Admin", Role::Admin, "old-pass")
+            .await
+            .unwrap();
+
+        // No email set yet → no reset issued, but the call still succeeds (None),
+        // so the endpoint can't be used to probe which emails are registered.
+        assert!(create_password_reset(&pool, "admin@example.com", RESET_TTL_SECS)
+            .await
+            .unwrap()
+            .is_none());
+
+        // Link the account to an email; lookups are case-insensitive.
+        assert!(set_user_email(&pool, "admin", "Admin@Example.com")
+            .await
+            .unwrap());
+        let u = find_user_by_email(&pool, "ADMIN@example.com")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(u.username, "admin");
+        assert!(find_user_by_email(&pool, "nobody@example.com")
+            .await
+            .unwrap()
+            .is_none());
+
+        // Issue a link, mint a session, then redeem the link.
+        let (token, user) = create_password_reset(&pool, "admin@example.com", RESET_TTL_SECS)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.username, "admin");
+        let session = create_session(&pool, &user, SESSION_TTL_SECS).await.unwrap();
+        assert!(validate_session(&pool, &session).await.unwrap().is_some());
+
+        let reset = consume_password_reset(&pool, &token, "new-pass")
+            .await
+            .unwrap();
+        assert_eq!(reset.username, "admin");
+        // New password works, old one no longer does.
+        assert!(authenticate(&pool, "admin", "new-pass").await.is_ok());
+        assert!(authenticate(&pool, "admin", "old-pass").await.is_err());
+        // The reset destroyed the pre-existing session.
+        assert!(validate_session(&pool, &session).await.unwrap().is_none());
+        // Token is single-use.
+        assert!(consume_password_reset(&pool, &token, "another")
+            .await
+            .is_err());
+
+        // An expired token is rejected.
+        let (token2, user2) = create_password_reset(&pool, "admin@example.com", RESET_TTL_SECS)
+            .await
+            .unwrap()
+            .unwrap();
+        sqlx::query("UPDATE password_reset_token SET expires_at = ? WHERE user_id = ?")
+            .bind(now() - 1)
+            .bind(user2.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(consume_password_reset(&pool, &token2, "whatever")
+            .await
+            .is_err());
+
+        // Issuing a fresh link invalidates the prior one (one active link per account).
+        let (token_a, _) = create_password_reset(&pool, "admin@example.com", RESET_TTL_SECS)
+            .await
+            .unwrap()
+            .unwrap();
+        let (token_b, _) = create_password_reset(&pool, "admin@example.com", RESET_TTL_SECS)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(consume_password_reset(&pool, &token_a, "stale")
+            .await
+            .is_err());
+        assert!(consume_password_reset(&pool, &token_b, "valid-pass")
+            .await
+            .is_ok());
     }
 
     #[tokio::test]

@@ -8,8 +8,8 @@ use crate::assets::{FAVICON, PH_LOGO};
 use crate::components::{ClosingCta, SiteFooter};
 use crate::icons::svg;
 use crate::pages::{
-    About, Article, Contact, Database, Desk, DeskPreview, Home, News, NotFound, Podcast, Privacy,
-    Standards, Team, Watch, WriteArticle,
+    About, Article, Contact, Database, Desk, DeskForgot, DeskPreview, DeskReset, Home, News,
+    NotFound, Podcast, Privacy, Standards, Team, Watch, WriteArticle,
 };
 
 #[derive(Routable, Clone, PartialEq)]
@@ -22,6 +22,10 @@ pub enum Route {
     DeskPreview { id: i64 },
     #[route("/desk/edit/:id")]
     WriteArticle { id: i64 },
+    #[route("/desk/forgot")]
+    DeskForgot {},
+    #[route("/desk/reset/:token")]
+    DeskReset { token: String },
     #[layout(Shell)]
     #[route("/")]
     Home {},

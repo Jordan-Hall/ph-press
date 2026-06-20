@@ -107,6 +107,9 @@ jobs:
           PH_ADMIN_USER: ${{ vars.PH_ADMIN_USER }}
           PH_ADMIN_PASS: ${{ secrets.PH_ADMIN_PASS }}
           PH_ADMIN_RESET: ${{ vars.PH_ADMIN_RESET }}
+          # Recovery email for the admin account, linked on every deploy (idempotent)
+          # so the /desk forgot-password flow can reach it. Not a secret.
+          PH_ADMIN_EMAIL: ${{ vars.PH_ADMIN_EMAIL }}
           # Crawler (OFF unless PH_CRAWL_ENABLED=1). Feed override lists are
           # base64-wrapped (they contain | ; ? & = and spaces) like the password;
           # the container decodes them. With no override the crate uses its presets.
@@ -130,6 +133,7 @@ jobs:
           # Default the optional knobs so an unset repo var doesn't break -e.
           PH_ADMIN_USER="${PH_ADMIN_USER:-admin}"
           PH_ADMIN_RESET="${PH_ADMIN_RESET:-0}"
+          PH_ADMIN_EMAIL="${PH_ADMIN_EMAIL:-}"
           # Base64-wrap the password: the SSM command is JSON-in-shell, so a raw
           # password containing ' " \ $ or newlines would break it. base64 is
           # [A-Za-z0-9+/=] only — safe through both layers; the container decodes.
@@ -157,7 +161,7 @@ jobs:
             "mkdir -p /var/lib/ph-press && chmod 700 /var/lib/ph-press",
             "docker network create ph-net 2>/dev/null || true",
             "docker rm -f ph-press || true",
-            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data -e PH_ADMIN_USER='${PH_ADMIN_USER}' -e PH_ADMIN_PASS_B64='${PH_ADMIN_PASS_B64}' -e PH_ADMIN_RESET='${PH_ADMIN_RESET}' -e PH_CRAWL_ENABLED='${PH_CRAWL_ENABLED}' -e PH_CRAWL_INTERVAL_SECS='${PH_CRAWL_INTERVAL_SECS}' -e PH_CRAWL_CASELAW_FEEDS_B64='${PH_CRAWL_CASELAW_FEEDS_B64}' -e PH_CRAWL_NEWS_FEEDS_B64='${PH_CRAWL_NEWS_FEEDS_B64}' -e PH_CRAWL_COURTWATCH_FEEDS_B64='${PH_CRAWL_COURTWATCH_FEEDS_B64}' -e PH_AI_ENABLED='${PH_AI_ENABLED}' -e PH_AI_BACKEND='${PH_AI_BACKEND}' -e PH_AI_MODEL='${PH_AI_MODEL}' -e AWS_REGION='${DEPLOY_AWS_REGION}' '${REF}'",
+            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data -e PH_ADMIN_USER='${PH_ADMIN_USER}' -e PH_ADMIN_PASS_B64='${PH_ADMIN_PASS_B64}' -e PH_ADMIN_RESET='${PH_ADMIN_RESET}' -e PH_ADMIN_EMAIL='${PH_ADMIN_EMAIL}' -e PH_CRAWL_ENABLED='${PH_CRAWL_ENABLED}' -e PH_CRAWL_INTERVAL_SECS='${PH_CRAWL_INTERVAL_SECS}' -e PH_CRAWL_CASELAW_FEEDS_B64='${PH_CRAWL_CASELAW_FEEDS_B64}' -e PH_CRAWL_NEWS_FEEDS_B64='${PH_CRAWL_NEWS_FEEDS_B64}' -e PH_CRAWL_COURTWATCH_FEEDS_B64='${PH_CRAWL_COURTWATCH_FEEDS_B64}' -e PH_AI_ENABLED='${PH_AI_ENABLED}' -e PH_AI_BACKEND='${PH_AI_BACKEND}' -e PH_AI_MODEL='${PH_AI_MODEL}' -e AWS_REGION='${DEPLOY_AWS_REGION}' '${REF}'",
             "sleep 8",
             "docker ps --filter name=ph-press --format '{{.Status}}' | grep -q Up || { docker logs --tail 80 ph-press; exit 1; }",
             "curl -fsS http://127.0.0.1:8090/healthz || { docker logs --tail 80 ph-press; exit 1; }",

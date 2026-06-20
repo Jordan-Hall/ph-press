@@ -126,3 +126,22 @@ Bedrock with the **EC2 instance role** (`ph-bulwark-ssm`) over IMDS. Two one-tim
 The container reads `AWS_REGION` (passed from the `AWS_REGION` var) and needs only outbound
 HTTPS to the Bedrock endpoint. For `local`/`anthropic` backends set `PH_AI_BASE_URL` /
 `PH_AI_API_KEY` instead (see the project README).
+
+## Password recovery (`/desk` forgot / reset)
+
+Staff accounts carry a contact email so a locked-out user can recover via **/desk → Sign in
+→ "Forgot password?"** (`/desk/forgot`). It mints a single-use, 1-hour, SHA-256-hashed token
+and a reset link at `/desk/reset/:token`; the page always reports the same "if that account
+exists, we've sent a link" message, so registered emails can't be probed. Redeeming the link
+sets the new password and destroys all of that account's existing sessions.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PH_ADMIN_EMAIL` | _(unset)_ | Recovery email linked to the admin account on **every** deploy (idempotent — `bootstrap_admin` only creates, so this is how an already-created admin gets an email). e.g. `jordan@predatorhunters.co.uk` |
+| `PH_PUBLIC_BASE_URL` | `https://predatorhunters.co.uk` | Base used to build the absolute reset link |
+
+**Delivery is decoupled from issuing.** The reset link is **always written to the container
+log** (`[ph-press] password-reset link for …`), so an operator can retrieve it read-only via
+SSM and hand it over even before email delivery is configured — which is exactly how the first
+admin unlock is done. Wiring an email sender (Amazon SES via the instance role) is a later
+step; the flow works without it.
