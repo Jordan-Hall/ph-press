@@ -138,15 +138,41 @@ pub async fn request_password_reset(email: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     if let Some((token, user)) = issued {
         let link = reset_link(&token);
-        // Read-only retrieval path: an operator reads this from the logs and hands
-        // it over. (Phase 2 will also deliver `link` to `user.email` via SES.)
+        // Always log the link: it's the operator fallback (read from the container
+        // logs via SSM) when email delivery is off or fails.
         eprintln!(
             "[ph-press] password-reset link for {} <{}>: {link}",
             user.username,
             user.email.as_deref().unwrap_or("")
         );
+        // Deliver by email when a provider is configured (PH_EMAIL_BACKEND).
+        if let (Some(cfg), Some(to)) = (ph_email::EmailConfig::from_env(), user.email.as_deref()) {
+            send_reset_email(&cfg, to, &link).await;
+        }
     }
     Ok(())
+}
+
+/// Send a password-reset email via the configured provider. Failures are logged,
+/// never propagated — the link is always in the server log as a fallback, and the
+/// endpoint must stay non-revealing about whether the email exists.
+async fn send_reset_email(cfg: &ph_email::EmailConfig, to: &str, link: &str) {
+    let subject = "Reset your Predator Hunters editorial password";
+    let text = format!(
+        "We received a request to reset your Predator Hunters editorial password.\n\n\
+         Open this link to choose a new one (it expires in one hour):\n{link}\n\n\
+         If you didn't request this you can ignore this email — your password won't change."
+    );
+    let html = format!(
+        "<p>We received a request to reset your Predator Hunters editorial password.</p>\
+         <p><a href=\"{link}\">Choose a new password</a> — this link expires in one hour.</p>\
+         <p>If you didn't request this you can ignore this email; your password won't change.</p>"
+    );
+    let msg = ph_email::Email { to, subject, text: &text, html: &html };
+    match ph_email::send(cfg, &msg).await {
+        Ok(id) => eprintln!("[ph-press] reset email sent to {to} (id {id})"),
+        Err(e) => eprintln!("[ph-press] reset email to {to} failed: {e}"),
+    }
 }
 
 /// Complete password recovery: redeem the reset token and set the new password
@@ -538,7 +564,9 @@ pub async fn regenerate_draft(actor: &str, article_id: i64) -> Result<(), String
     }
     let lead = ph_cms::ingest::lead_by_promoted_article(pool, article_id).await.map_err(|e| e.to_string())?
         .ok_or_else(|| "this draft was not promoted from a lead".to_string())?;
-    let content = generate_promo_content(&lead, &article.kind, &article.section).await;
+    // Strict: on AI failure this returns Err and we bail out below, leaving the
+    // existing draft untouched — never clobber a draft with the banner fallback.
+    let content = generate_promo_content_strict(&lead, &article.kind, &article.section).await?;
     // Write the regenerated content directly (body is already a JSON array; keep current slug).
     ph_cms::update_article(
         pool, article_id, &article.title, &content.summary, &content.body_json,
@@ -872,49 +900,72 @@ async fn generate_promo_content(
     };
     let facts = lead_facts(lead, kind, section);
     match ph_ai::draft(&facts, &cfg).await {
-        Ok(d) => {
-            // Prepend the provenance banner; append a figure slot and source line.
-            let banner_para = "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report \
-                from the public court record; clear reporting restrictions and confirm the \
-                conviction before publishing. Source for context only — do not copy its wording.";
-            let mut paras = vec![banner_para.to_string()];
-            paras.extend(d.body_paragraphs);
-            let og_image_url = if !lead.image_url.is_empty() {
-                // Use the lead's own crawled image; caption priority:
-                // 1. lead attribution  2. AI figure caption  3. generic fallback
-                let cap = if !lead.image_attribution.is_empty() {
-                    lead.image_attribution.as_str()
-                } else if !d.figure_caption.trim().is_empty() {
-                    d.figure_caption.trim()
-                } else {
-                    "Source image \u{2014} verify usage rights"
-                };
-                paras.push(format!("![{}]({})", cap, lead.image_url));
-                lead.image_url.clone()
-            } else {
-                // No lead image: fall back to an empty-URL placeholder if the AI
-                // suggested a caption (editor can fill in the URL).
-                if !d.figure_caption.trim().is_empty() {
-                    paras.push(format!("![{}](  )", d.figure_caption.trim()));
-                }
-                String::new()
-            };
-            paras.push(format!("Source ({}): {}", lead.source_key, lead.url));
-            let body_json = serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string());
-            let tags = serde_json::to_string(&d.tags).unwrap_or_else(|_| "[]".to_string());
-            ph_cms::ingest::PromotedDraft {
-                summary: d.summary,
-                body_json,
-                meta_description: d.meta_description,
-                og_image_url,
-                tags,
-                slug_base: d.slug,
-            }
-        }
+        Ok(d) => assemble_promo_draft(d, lead),
         Err(e) => {
             eprintln!("[ph-press] AI draft failed ({e}); using banner draft");
             banner
         }
+    }
+}
+
+/// Strict AI generation for the "regenerate draft" action: runs the model and
+/// returns an `Err` instead of silently falling back to the banner. This is what
+/// keeps a transient AI failure from OVERWRITING an existing draft's body, SEO and
+/// tags with the generic banner — `regenerate_draft` propagates the error and
+/// leaves the current draft untouched. Requires AI to be enabled.
+async fn generate_promo_content_strict(
+    lead: &ph_cms::ingest::IngestItem,
+    kind: &str,
+    section: &str,
+) -> Result<ph_cms::ingest::PromotedDraft, String> {
+    let cfg = ai_config().ok_or_else(|| "AI drafting is not enabled".to_string())?;
+    let facts = lead_facts(lead, kind, section);
+    let d = ph_ai::draft(&facts, &cfg)
+        .await
+        .map_err(|e| format!("AI draft failed: {e}"))?;
+    Ok(assemble_promo_draft(d, lead))
+}
+
+/// Assemble a promoted draft from an AI result + the lead: the provenance banner
+/// first, then the model's body paragraphs, the lead's own crawled image as a
+/// figure (caption priority: lead attribution → AI caption → generic), and a
+/// source line; summary/SEO/tags/slug come from the model.
+fn assemble_promo_draft(
+    d: ph_ai::AiDraft,
+    lead: &ph_cms::ingest::IngestItem,
+) -> ph_cms::ingest::PromotedDraft {
+    let banner_para = "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report \
+        from the public court record; clear reporting restrictions and confirm the \
+        conviction before publishing. Source for context only — do not copy its wording.";
+    let mut paras = vec![banner_para.to_string()];
+    paras.extend(d.body_paragraphs);
+    let og_image_url = if !lead.image_url.is_empty() {
+        let cap = if !lead.image_attribution.is_empty() {
+            lead.image_attribution.as_str()
+        } else if !d.figure_caption.trim().is_empty() {
+            d.figure_caption.trim()
+        } else {
+            "Source image \u{2014} verify usage rights"
+        };
+        paras.push(format!("![{}]({})", cap, lead.image_url));
+        lead.image_url.clone()
+    } else if !d.figure_caption.trim().is_empty() {
+        // No lead image: leave an empty-URL placeholder for the editor to fill.
+        paras.push(format!("![{}](  )", d.figure_caption.trim()));
+        String::new()
+    } else {
+        String::new()
+    };
+    paras.push(format!("Source ({}): {}", lead.source_key, lead.url));
+    let body_json = serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string());
+    let tags = serde_json::to_string(&d.tags).unwrap_or_else(|_| "[]".to_string());
+    ph_cms::ingest::PromotedDraft {
+        summary: d.summary,
+        body_json,
+        meta_description: d.meta_description,
+        og_image_url,
+        tags,
+        slug_base: d.slug,
     }
 }
 
@@ -1051,17 +1102,22 @@ pub async fn crawl_now() -> Result<(), String> {
     ph_crawl::seed_sources(pool, &sources)
         .await
         .map_err(|e| e.to_string())?;
+    // Run the poll as a task but AWAIT it (bounded) before returning, so the
+    // Intake "poll now" caller gets leads that have actually been written instead
+    // of racing a detached task. The bound keeps the request well under
+    // Cloudflare's ~100s origin timeout: a fast crawl finishes and the UI reloads
+    // fresh leads; a slow one keeps running in the background (its leads appear on
+    // the next refresh) rather than surfacing a 524 for a crawl that's succeeding.
     let pool2 = pool.clone();
-    tokio::spawn(async move {
-        let r = ph_crawl::run_once(&pool2, &fetcher).await;
-        eprintln!(
+    let handle = tokio::spawn(async move { ph_crawl::run_once(&pool2, &fetcher).await });
+    match tokio::time::timeout(std::time::Duration::from_secs(75), handle).await {
+        Ok(Ok(r)) => eprintln!(
             "[ph-press] manual poll: {} leads, {} watch, {} sources, {} errors",
-            r.leads_added,
-            r.watch_added,
-            r.sources_polled,
-            r.errors.len()
-        );
-    });
+            r.leads_added, r.watch_added, r.sources_polled, r.errors.len()
+        ),
+        Ok(Err(e)) => eprintln!("[ph-press] manual poll task failed: {e}"),
+        Err(_) => eprintln!("[ph-press] manual poll exceeded 75s; still running in the background"),
+    }
     Ok(())
 }
 
