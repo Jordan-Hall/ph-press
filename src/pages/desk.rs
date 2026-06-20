@@ -280,7 +280,6 @@ enum Tab {
     Staff,
     Audit,
     CourtWatch,
-    Settings,
     Profile,
 }
 
@@ -326,7 +325,6 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                     button { class: tab_class(Tab::Audit), onclick: move |_| tab.set(Tab::Audit), "Audit" }
                 }
                 button { class: tab_class(Tab::CourtWatch), onclick: move |_| tab.set(Tab::CourtWatch), "Court watch" }
-                button { class: tab_class(Tab::Settings), onclick: move |_| tab.set(Tab::Settings), "Settings" }
                 button { class: tab_class(Tab::Profile), onclick: move |_| tab.set(Tab::Profile), "Profile" }
             }
         }
@@ -340,7 +338,6 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 Tab::Staff => rsx! { StaffPanel {} },
                 Tab::Audit => rsx! { AuditPanel {} },
                 Tab::CourtWatch => rsx! { CourtWatchPanel {} },
-                Tab::Settings => rsx! { SettingsPanel {} },
                 Tab::Profile => rsx! { ProfilePanel { user: user.clone() } },
             }
         }
@@ -907,18 +904,6 @@ fn StaffPanel() -> Element {
                     }
                 },
             }
-        }
-    }
-}
-
-#[component]
-fn SettingsPanel() -> Element {
-    rsx! {
-        section { class: "desk-panel",
-            div { class: "desk-panel-head",
-                h2 { "Settings" }
-            }
-            p { class: "desk-muted pad", "Account settings are managed in the Profile tab." }
         }
     }
 }
