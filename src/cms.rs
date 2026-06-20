@@ -54,6 +54,20 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
             &seeds,
         )
         .await?;
+        // Link the admin account to a recovery email (PH_ADMIN_EMAIL). Runs every
+        // deploy and is idempotent, so an admin created before this feature still
+        // gets its email set — bootstrap_admin only ever *creates*, never updates.
+        if let Ok(email) = std::env::var("PH_ADMIN_EMAIL") {
+            if !email.trim().is_empty() {
+                match ph_cms::set_user_email(&pool, &admin_user, email.trim()).await {
+                    Ok(true) => eprintln!("[ph-press] admin '{admin_user}' recovery email set"),
+                    Ok(false) => {
+                        eprintln!("[ph-press] PH_ADMIN_EMAIL set but no user '{admin_user}' to update")
+                    }
+                    Err(e) => eprintln!("[ph-press] failed to set admin recovery email: {e}"),
+                }
+            }
+        }
         // Start the crawler once the DB is ready (no-op unless PH_CRAWL_ENABLED).
         maybe_start_crawler(pool.clone());
         Ok(pool)
@@ -99,6 +113,52 @@ pub async fn logout(token: &str) -> Result<(), String> {
     ph_cms::destroy_session(pool, token)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Build the absolute reset link for a raw token. The base URL comes from
+/// PH_PUBLIC_BASE_URL (default the production apex) so the link works in an email.
+fn reset_link(token: &str) -> String {
+    let base = std::env::var("PH_PUBLIC_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://predatorhunters.co.uk".to_string());
+    format!("{}/desk/reset/{token}", base.trim_end_matches('/'))
+}
+
+/// Begin password recovery for `email`. Mints a single-use 1-hour reset link when
+/// the email matches an account; does nothing (but still succeeds) otherwise — the
+/// caller MUST report the same message either way so registered emails can't be
+/// probed. The link is always logged so an operator can retrieve it from the
+/// container logs until email delivery is configured; once a provider is wired up
+/// it is also emailed. Only DB failures surface as an error.
+pub async fn request_password_reset(email: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let issued = ph_cms::create_password_reset(pool, email, ph_cms::RESET_TTL_SECS)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some((token, user)) = issued {
+        let link = reset_link(&token);
+        // Read-only retrieval path: an operator reads this from the logs and hands
+        // it over. (Phase 2 will also deliver `link` to `user.email` via SES.)
+        eprintln!(
+            "[ph-press] password-reset link for {} <{}>: {link}",
+            user.username,
+            user.email.as_deref().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
+/// Complete password recovery: redeem the reset token and set the new password
+/// (which destroys the account's existing sessions). Password-strength validation
+/// is the API layer's responsibility, as elsewhere. A bad/expired/used token gives
+/// a generic error so a guessed token can't be distinguished from an expired one.
+pub async fn complete_password_reset(token: &str, new_password: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::consume_password_reset(pool, token, new_password)
+        .await
+        .map(|_| ())
+        .map_err(|_| "this reset link is invalid or has expired".to_string())
 }
 
 /// Every article regardless of state — the editorial dashboard listing.

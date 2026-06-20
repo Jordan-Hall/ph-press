@@ -415,6 +415,81 @@ pub async fn staff_change_password(current: String, new: String) -> Result<(), S
     }
 }
 
+/// Per-email cooldown for the forgot-password endpoint (one request / 60s),
+/// pruned so the map only holds emails seen within the window. Bounds reset-link
+/// churn and, once email is wired up, mailbox flooding.
+#[cfg(feature = "server")]
+fn forgot_rate_ok(email: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    const COOLDOWN_SECS: u64 = 60;
+    static LAST: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut map = LAST.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    map.retain(|_, &mut t| now.saturating_sub(t) < COOLDOWN_SECS);
+    let key = email.trim().to_lowercase();
+    if map.get(&key).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN_SECS) {
+        return false;
+    }
+    map.insert(key, now);
+    true
+}
+
+/// Begin password recovery. Always succeeds for a well-formed email — whether or
+/// not it matches an account — so registered emails can't be probed. The reset
+/// link is logged server-side (and, once a provider is configured, emailed). No
+/// session required: this is the locked-out path.
+#[server(endpoint = "staff_forgot_password")]
+pub async fn staff_forgot_password(email: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let email = email.trim().to_string();
+        // Quietly no-op on bad input or when throttled — reveal nothing either way.
+        if email.is_empty() || !email.contains('@') || !forgot_rate_ok(&email) {
+            return Ok(());
+        }
+        if let Err(e) = crate::cms::request_password_reset(&email).await {
+            // Surface DB failures only in the server log; the client still learns
+            // nothing (same Ok response as a non-matching email).
+            eprintln!("[ph-press] password-reset request error: {e}");
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = email;
+        Ok(())
+    }
+}
+
+/// Complete password recovery: set a new password from a valid reset token. No
+/// session required (the user is locked out). Enforces a minimum length; an
+/// invalid/expired/used token yields a generic error. On success the account's
+/// other sessions are already destroyed, so the user signs in fresh.
+#[server(endpoint = "staff_reset_password")]
+pub async fn staff_reset_password(token: String, new: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        if new.chars().count() < 8 {
+            return Err(ServerFnError::new(
+                "password must be at least 8 characters",
+            ));
+        }
+        crate::cms::complete_password_reset(&token, &new)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (token, new);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
 /// The editorial dashboard listing — every article in any state, with the
 /// actions this user may perform. Requires a valid session.
 #[server(endpoint = "desk_articles")]

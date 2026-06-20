@@ -12,9 +12,10 @@ use crate::api::{
     desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
     desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
-    desk_staff, desk_transition, desk_update, staff_change_password, staff_login, staff_logout,
-    staff_me, DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession,
-    DeskSource, DeskWatch, PreviewArticle, StaffMember,
+    desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
+    staff_login, staff_logout, staff_me, staff_reset_password, DeskArticle, DeskComplaint,
+    DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch, PreviewArticle,
+    StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -118,6 +119,151 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
                 }
                 button { class: "desk-btn", r#type: "submit", disabled: busy(),
                     if busy() { "Signing in…" } else { "Sign in" }
+                }
+                Link { class: "desk-forgot", to: Route::DeskForgot {}, "Forgot password?" }
+            }
+        }
+    }
+}
+
+/// `/desk/forgot` — request a password-reset link by email. Always reports the
+/// same neutral confirmation, so it can't be used to discover which emails have
+/// accounts. No auth required: this is the locked-out path.
+#[component]
+pub fn DeskForgot() -> Element {
+    let mut email = use_signal(String::new);
+    let mut sent = use_signal(|| false);
+    let mut busy = use_signal(|| false);
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            busy.set(true);
+            // Result intentionally ignored — same outcome whether or not it matched.
+            let _ = staff_forgot_password(email()).await;
+            sent.set(true);
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        document::Meta { name: "robots", content: "noindex, nofollow" }
+        document::Title { "Reset password · Predator Hunters" }
+        div { class: "desk-root",
+            div { class: "desk-login",
+                if sent() {
+                    div { class: "desk-card",
+                        p { class: "desk-eyebrow", "Predator Hunters" }
+                        h1 { class: "desk-title", "Check your email" }
+                        p { class: "desk-sub",
+                            "If an account is registered with that email, we've sent it a link to reset the password. The link expires in an hour."
+                        }
+                        Link { class: "desk-btn ghost", to: Route::Desk {}, "← Back to sign in" }
+                    }
+                } else {
+                    form { class: "desk-card", onsubmit: submit,
+                        p { class: "desk-eyebrow", "Predator Hunters" }
+                        h1 { class: "desk-title", "Reset your password" }
+                        p { class: "desk-sub", "Enter your account email and we'll send a reset link." }
+                        label { class: "desk-field",
+                            span { "Email" }
+                            input {
+                                r#type: "email",
+                                autocomplete: "email",
+                                value: "{email}",
+                                oninput: move |e| email.set(e.value()),
+                                autofocus: true,
+                            }
+                        }
+                        button { class: "desk-btn", r#type: "submit", disabled: busy(),
+                            if busy() { "Sending…" } else { "Send reset link" }
+                        }
+                        Link { class: "desk-forgot", to: Route::Desk {}, "← Back to sign in" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `/desk/reset/:token` — set a new password from a reset link. The token is the
+/// URL path segment; an invalid/expired/used one is reported generically by the
+/// server. On success every existing session for the account was already revoked.
+#[component]
+pub fn DeskReset(token: String) -> Element {
+    let mut password = use_signal(String::new);
+    let mut confirm = use_signal(String::new);
+    let mut error = use_signal(|| Option::<String>::None);
+    let mut done = use_signal(|| false);
+    let mut busy = use_signal(|| false);
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        let token = token.clone();
+        spawn(async move {
+            error.set(None);
+            if password().chars().count() < 8 {
+                error.set(Some("Use at least 8 characters.".to_string()));
+                return;
+            }
+            if password() != confirm() {
+                error.set(Some("The two passwords don't match.".to_string()));
+                return;
+            }
+            busy.set(true);
+            match staff_reset_password(token, password()).await {
+                Ok(()) => done.set(true),
+                Err(_) => error.set(Some(
+                    "This reset link is invalid or has expired — request a new one.".to_string(),
+                )),
+            }
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        document::Meta { name: "robots", content: "noindex, nofollow" }
+        document::Title { "Set a new password · Predator Hunters" }
+        div { class: "desk-root",
+            div { class: "desk-login",
+                if done() {
+                    div { class: "desk-card",
+                        p { class: "desk-eyebrow", "Predator Hunters" }
+                        h1 { class: "desk-title", "Password updated" }
+                        p { class: "desk-sub", "Your password has been reset. You can now sign in." }
+                        Link { class: "desk-btn", to: Route::Desk {}, "Go to sign in" }
+                    }
+                } else {
+                    form { class: "desk-card", onsubmit: submit,
+                        p { class: "desk-eyebrow", "Predator Hunters" }
+                        h1 { class: "desk-title", "Set a new password" }
+                        p { class: "desk-sub", "Choose a new password for your account." }
+                        label { class: "desk-field",
+                            span { "New password" }
+                            input {
+                                r#type: "password",
+                                autocomplete: "new-password",
+                                value: "{password}",
+                                oninput: move |e| password.set(e.value()),
+                                autofocus: true,
+                            }
+                        }
+                        label { class: "desk-field",
+                            span { "Confirm password" }
+                            input {
+                                r#type: "password",
+                                autocomplete: "new-password",
+                                value: "{confirm}",
+                                oninput: move |e| confirm.set(e.value()),
+                            }
+                        }
+                        if let Some(msg) = error() {
+                            p { class: "desk-error", "{msg}" }
+                        }
+                        button { class: "desk-btn", r#type: "submit", disabled: busy(),
+                            if busy() { "Saving…" } else { "Set password" }
+                        }
+                    }
                 }
             }
         }
