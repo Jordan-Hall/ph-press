@@ -205,6 +205,7 @@ pub async fn transition(username: &str, id: i64, to_state: &str, note: &str) -> 
 
 /// Create a Draft authored by the current user (body starts empty). `byline` is
 /// the article credit (display name); `username` is the stable audit actor.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_draft(
     username: &str,
     byline: &str,
@@ -213,6 +214,9 @@ pub async fn create_draft(
     kind: &str,
     section: &str,
     body_text: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
 ) -> Result<i64, String> {
     if title.trim().is_empty() {
         return Err("a title is required".to_string());
@@ -235,6 +239,9 @@ pub async fn create_draft(
         kind,
         section,
         username,
+        meta_description.trim(),
+        og_image_url.trim(),
+        tags,
     )
     .await
     .map_err(|e| e.to_string())
@@ -242,6 +249,7 @@ pub async fn create_draft(
 
 /// Update an editable article's content (title/summary/body/kind/section). The
 /// engine rejects editing a published article (use corrections instead).
+#[allow(clippy::too_many_arguments)]
 pub async fn update_article(
     username: &str,
     id: i64,
@@ -250,6 +258,10 @@ pub async fn update_article(
     kind: &str,
     section: &str,
     body_text: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
+    slug: &str,
 ) -> Result<(), String> {
     if title.trim().is_empty() {
         return Err("a title is required".to_string());
@@ -270,6 +282,10 @@ pub async fn update_article(
         kind,
         section,
         username,
+        meta_description.trim(),
+        og_image_url.trim(),
+        tags,
+        slug.trim(),
     )
     .await
     .map_err(|e| e.to_string())
@@ -441,11 +457,57 @@ pub async fn leads(status: Option<&str>) -> Result<Vec<ph_cms::ingest::IngestIte
         .map_err(|e| e.to_string())
 }
 
-/// Promote a lead into a Draft article (ordinary legal-gated lifecycle).
+/// Re-run AI generation on a draft promoted from a lead, overwriting its body + SEO.
+/// Requires: AI enabled, the article is a `draft`, an authoring-role actor, and the
+/// article was promoted from a lead. Never clobbers a submitted/published article.
+pub async fn regenerate_draft(actor: &str, article_id: i64) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = actor_user(pool, actor).await?;
+    // authoring role gate (same set as promote)
+    let role = user.role().map_err(|e| e.to_string())?;
+    if !matches!(role, ph_cms::Role::Writer | ph_cms::Role::SubEditor | ph_cms::Role::Editor | ph_cms::Role::Admin) {
+        return Err("your role cannot regenerate a draft".to_string());
+    }
+    if ai_config().is_none() {
+        return Err("AI drafting is not enabled".to_string());
+    }
+    let article = ph_cms::get_article(pool, article_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no article {article_id}"))?;
+    if article.state != "draft" {
+        return Err("only a draft can be regenerated".to_string());
+    }
+    let lead = ph_cms::ingest::lead_by_promoted_article(pool, article_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "this draft was not promoted from a lead".to_string())?;
+    let content = generate_promo_content(&lead, &article.kind, &article.section).await;
+    // Write the regenerated content directly (body is already a JSON array; keep current slug).
+    ph_cms::update_article(
+        pool, article_id, &article.title, &content.summary, &content.body_json,
+        &article.kind, &article.section, actor,
+        &content.meta_description, &content.og_image_url, &content.tags, "",
+    ).await.map_err(|e| e.to_string())
+}
+
+/// Promote a lead into a Draft article — AI-drafted when enabled, banner otherwise.
 pub async fn promote_lead(actor: &str, id: i64, kind: &str, section: &str) -> Result<i64, String> {
     let pool = db().await.map_err(|e| e.to_string())?;
     let user = actor_user(pool, actor).await?;
-    ph_cms::ingest::promote_lead(pool, id, &user, kind, section)
+    let lead = ph_cms::ingest::get_lead(pool, id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no lead {id}"))?;
+    // Authorize + dedupe BEFORE any outbound AI generation (no surprise spend).
+    if lead.status == "promoted" {
+        return Err("this lead is already promoted".to_string());
+    }
+    let role = user.role().map_err(|e| e.to_string())?;
+    if !matches!(
+        role,
+        ph_cms::Role::Writer | ph_cms::Role::SubEditor | ph_cms::Role::Editor | ph_cms::Role::Admin
+    ) {
+        return Err("your role cannot promote a lead into a draft".to_string());
+    }
+    let content = generate_promo_content(&lead, kind, section).await;
+    ph_cms::ingest::promote_lead_with_draft(pool, id, &user, kind, section, &content)
         .await
         .map_err(|e| e.to_string())
 }
@@ -658,6 +720,144 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Resolve the AI config from env, or None when disabled / unconfigured.
+/// OFF by default — no surprise outbound traffic.
+fn ai_config() -> Option<ph_ai::AiConfig> {
+    if !env_flag("PH_AI_ENABLED") {
+        return None;
+    }
+    let backend_env = std::env::var("PH_AI_BACKEND").unwrap_or_default();
+    let backend = match backend_env.as_str() {
+        "anthropic" => ph_ai::Backend::Anthropic,
+        "bedrock" => ph_ai::Backend::Bedrock,
+        "" | "local" => ph_ai::Backend::Local, // default: local OpenAI-compatible
+        other => {
+            eprintln!(
+                "[ph-press] PH_AI_BACKEND={other:?} is not recognised (expected \"local\", \
+                 \"anthropic\", or \"bedrock\"); defaulting to local"
+            );
+            ph_ai::Backend::Local
+        }
+    };
+    let api_key = std::env::var("PH_AI_API_KEY").ok().unwrap_or_default();
+    // Anthropic requires a key; local and Bedrock do not (Bedrock uses the cred chain).
+    if backend == ph_ai::Backend::Anthropic && api_key.trim().is_empty() {
+        eprintln!("[ph-press] PH_AI_BACKEND=anthropic but PH_AI_API_KEY is empty; AI disabled");
+        return None;
+    }
+    let default_base = match backend {
+        ph_ai::Backend::Anthropic => "https://api.anthropic.com",
+        ph_ai::Backend::Local => "http://127.0.0.1:8080",
+        ph_ai::Backend::Bedrock => "", // unused for Bedrock
+    };
+    let base_url = std::env::var("PH_AI_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default_base.to_string());
+    let model_env = std::env::var("PH_AI_MODEL").ok().filter(|s| !s.is_empty());
+    if backend == ph_ai::Backend::Local && model_env.is_none() {
+        eprintln!(
+            "[ph-press] PH_AI_MODEL is not set; using placeholder \"local-model\". \
+             Set PH_AI_MODEL to the name of the model your local server is serving."
+        );
+    }
+    let default_model = match backend {
+        ph_ai::Backend::Anthropic => "claude-sonnet-4-6",
+        ph_ai::Backend::Local => "local-model",
+        ph_ai::Backend::Bedrock => "amazon.nova-lite-v1:0",
+    };
+    let model = model_env.unwrap_or_else(|| default_model.to_string());
+    let timeout_secs = std::env::var("PH_AI_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
+    let region = std::env::var("PH_AI_REGION")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("AWS_REGION").ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "eu-west-2".to_string());
+    Some(ph_ai::AiConfig { backend, api_key, model, base_url, max_tokens: 4000, timeout_secs, region })
+}
+
+/// Build LeadFacts from a stored lead (pull citation/court/id_risk from extracted_json).
+fn lead_facts(lead: &ph_cms::ingest::IngestItem, kind: &str, section: &str) -> ph_ai::LeadFacts {
+    let v: serde_json::Value =
+        serde_json::from_str(&lead.extracted_json).unwrap_or(serde_json::Value::Null);
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    ph_ai::LeadFacts {
+        title: lead.title.clone(),
+        snippet: lead.snippet.clone(),
+        offence_category: lead.offence_category.clone(),
+        source_key: lead.source_key.clone(),
+        source_url: lead.url.clone(),
+        citation: get("citation"),
+        court: get("court"),
+        kind: kind.to_string(),
+        section: section.to_string(),
+        id_risk: v.get("identification_risk").and_then(|b| b.as_bool()).unwrap_or(false),
+    }
+}
+
+/// Generate the promote content ONCE. When AI is enabled and succeeds, a provenance
+/// banner paragraph is prepended to the AI body and a figure placeholder is appended.
+/// When AI is disabled or the call fails, the banner draft is returned wholesale.
+async fn generate_promo_content(
+    lead: &ph_cms::ingest::IngestItem,
+    kind: &str,
+    section: &str,
+) -> ph_cms::ingest::PromotedDraft {
+    let banner = ph_cms::ingest::banner_draft(lead);
+    let Some(cfg) = ai_config() else {
+        return banner;
+    };
+    let facts = lead_facts(lead, kind, section);
+    match ph_ai::draft(&facts, &cfg).await {
+        Ok(d) => {
+            // Prepend the provenance banner; append a figure slot and source line.
+            let banner_para = "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report \
+                from the public court record; clear reporting restrictions and confirm the \
+                conviction before publishing. Source for context only — do not copy its wording.";
+            let mut paras = vec![banner_para.to_string()];
+            paras.extend(d.body_paragraphs);
+            let og_image_url = if !lead.image_url.is_empty() {
+                // Use the lead's own crawled image; caption priority:
+                // 1. lead attribution  2. AI figure caption  3. generic fallback
+                let cap = if !lead.image_attribution.is_empty() {
+                    lead.image_attribution.as_str()
+                } else if !d.figure_caption.trim().is_empty() {
+                    d.figure_caption.trim()
+                } else {
+                    "Source image \u{2014} verify usage rights"
+                };
+                paras.push(format!("![{}]({})", cap, lead.image_url));
+                lead.image_url.clone()
+            } else {
+                // No lead image: fall back to an empty-URL placeholder if the AI
+                // suggested a caption (editor can fill in the URL).
+                if !d.figure_caption.trim().is_empty() {
+                    paras.push(format!("![{}](  )", d.figure_caption.trim()));
+                }
+                String::new()
+            };
+            paras.push(format!("Source ({}): {}", lead.source_key, lead.url));
+            let body_json = serde_json::to_string(&paras).unwrap_or_else(|_| "[]".to_string());
+            let tags = serde_json::to_string(&d.tags).unwrap_or_else(|_| "[]".to_string());
+            ph_cms::ingest::PromotedDraft {
+                summary: d.summary,
+                body_json,
+                meta_description: d.meta_description,
+                og_image_url,
+                tags,
+                slug_base: d.slug,
+            }
+        }
+        Err(e) => {
+            eprintln!("[ph-press] AI draft failed ({e}); using banner draft");
+            banner
+        }
+    }
+}
+
 /// Parse a `key|label|url;key|label|url` env list into source configs of `kind`.
 fn parse_sources(raw: &str, kind: &str) -> Vec<ph_crawl::SourceConfig> {
     raw.split(';')
@@ -748,7 +948,7 @@ fn maybe_start_crawler(pool: ph_cms::Db) {
     );
 }
 
-/// Promote a lead into a draft article + a linked draft conviction entry.
+/// Promote a lead into a draft article + a linked draft conviction (AI or banner).
 pub async fn promote_lead_to_conviction(
     actor: &str,
     id: i64,
@@ -757,7 +957,23 @@ pub async fn promote_lead_to_conviction(
 ) -> Result<(), String> {
     let pool = db().await.map_err(|e| e.to_string())?;
     let user = actor_user(pool, actor).await?;
-    ph_cms::ingest::promote_lead_to_conviction(pool, id, &user, kind, section)
+    let lead = ph_cms::ingest::get_lead(pool, id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no lead {id}"))?;
+    // Authorize + dedupe BEFORE any outbound AI generation (no surprise spend).
+    if lead.status == "promoted" {
+        return Err("this lead is already promoted".to_string());
+    }
+    let role = user.role().map_err(|e| e.to_string())?;
+    if !matches!(
+        role,
+        ph_cms::Role::Writer | ph_cms::Role::SubEditor | ph_cms::Role::Editor | ph_cms::Role::Admin
+    ) {
+        return Err("your role cannot promote a lead into a draft".to_string());
+    }
+    let content = generate_promo_content(&lead, kind, section).await;
+    ph_cms::ingest::promote_lead_to_conviction_with_draft(pool, id, &user, kind, section, &content)
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())

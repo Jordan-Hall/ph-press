@@ -12,6 +12,18 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// tags Vec<String> -> JSON string for storage (server-side).
+#[cfg(feature = "server")]
+fn tags_to_json(tags: &[String]) -> String {
+    serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// stored tags JSON string -> Vec<String> for the DTO (server-side).
+#[cfg(feature = "server")]
+fn tags_from_json(raw: &str) -> Vec<String> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
 /// Name of the HttpOnly session cookie (used only by the server-side helpers).
 #[cfg(feature = "server")]
 pub const SESSION_COOKIE: &str = "ph_session";
@@ -93,6 +105,9 @@ pub struct PublicArticle {
     pub section: String,
     pub byline: String,
     pub iso_date: String,
+    pub meta_description: String,
+    pub og_image_url: String,
+    pub tags: Vec<String>,
 }
 
 /// A staff member as the admin Staff tab sees them (no secrets).
@@ -139,6 +154,11 @@ pub struct PreviewArticle {
     pub byline: String,
     pub state: String,
     pub iso_date: String,
+    pub slug: String,
+    pub meta_description: String,
+    pub og_image_url: String,
+    pub tags: Vec<String>,
+    pub is_ai_assisted: bool,
 }
 
 // ---- server-only cookie helpers ---------------------------------------------
@@ -435,12 +455,16 @@ pub async fn desk_transition(
 
 /// Create a new Draft authored by the current user, then return the refreshed list.
 #[server(endpoint = "desk_create")]
+#[allow(clippy::too_many_arguments)]
 pub async fn desk_create(
     title: String,
     summary: String,
     kind: String,
     section: String,
     body: String,
+    meta_description: String,
+    og_image_url: String,
+    tags: Vec<String>,
 ) -> Result<Vec<DeskArticle>, ServerFnError> {
     #[cfg(feature = "server")]
     {
@@ -453,6 +477,9 @@ pub async fn desk_create(
             &kind,
             &section,
             &body,
+            &meta_description,
+            &og_image_url,
+            &tags_to_json(&tags),
         )
         .await
         .map_err(ServerFnError::new)?;
@@ -460,7 +487,7 @@ pub async fn desk_create(
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (title, summary, kind, section, body);
+        let _ = (title, summary, kind, section, body, meta_description, og_image_url, tags);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -761,6 +788,7 @@ pub async fn public_team() -> Result<Vec<TeamMember>, ServerFnError> {
 /// Update an editable article's content (pre-publish only; published changes go
 /// through corrections). Requires a valid session.
 #[server(endpoint = "desk_update")]
+#[allow(clippy::too_many_arguments)]
 pub async fn desk_update(
     id: i64,
     title: String,
@@ -768,6 +796,10 @@ pub async fn desk_update(
     kind: String,
     section: String,
     body: String,
+    meta_description: String,
+    og_image_url: String,
+    tags: Vec<String>,
+    slug: String,
 ) -> Result<(), ServerFnError> {
     #[cfg(feature = "server")]
     {
@@ -780,13 +812,17 @@ pub async fn desk_update(
             &kind,
             &section,
             &body,
+            &meta_description,
+            &og_image_url,
+            &tags_to_json(&tags),
+            &slug,
         )
         .await
         .map_err(ServerFnError::new)
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (id, title, summary, kind, section, body);
+        let _ = (id, title, summary, kind, section, body, meta_description, og_image_url, tags, slug);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -815,6 +851,11 @@ pub async fn desk_preview(id: i64) -> Result<Option<PreviewArticle>, ServerFnErr
             byline: a.byline,
             state: a.state,
             iso_date,
+            slug: a.slug,
+            meta_description: a.meta_description,
+            og_image_url: a.og_image_url,
+            tags: tags_from_json(&a.tags),
+            is_ai_assisted: a.is_ai_assisted,
         }))
     }
     #[cfg(not(feature = "server"))]
@@ -847,6 +888,9 @@ pub async fn public_article(slug: String) -> Result<Option<PublicArticle>, Serve
             section: a.section,
             byline: a.byline,
             iso_date,
+            meta_description: a.meta_description,
+            og_image_url: a.og_image_url,
+            tags: tags_from_json(&a.tags),
         }))
     }
     #[cfg(not(feature = "server"))]
@@ -1408,6 +1452,20 @@ pub async fn desk_sources() -> Result<Vec<DeskSource>, ServerFnError> {
         Err(ServerFnError::new("server only"))
     }
 }
+
+/// Re-run AI generation on a draft promoted from a lead, overwriting its body + SEO.
+/// Only works while the draft is still in `draft` state and AI is enabled.
+#[server(endpoint = "desk_regenerate_draft")]
+pub async fn desk_regenerate_draft(article_id: i64) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::regenerate_draft(&session.username, article_id).await.map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    { let _ = article_id; Err(ServerFnError::new("server only")) }
+}
+
 
 /// Trigger one crawl pass now (background). Admin only.
 #[server(endpoint = "desk_poll_now")]

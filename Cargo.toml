@@ -12,7 +12,7 @@ publish = false
 default = ["web"]
 web = ["dioxus/web"]
 # server pulls the CMS (sqlx/SQLite) + crawler — SERVER-ONLY, never in the wasm/web build.
-server = ["dioxus/server", "dep:ph-cms", "dep:ph-crawl", "dep:tokio", "dep:serde_json"]
+server = ["dioxus/server", "dep:ph-cms", "dep:ph-crawl", "dep:ph-ai", "dep:tokio", "dep:serde_json"]
 # native targets (experimental — Blitz is alpha): wired in WS4
 # desktop = ["dioxus/desktop"]
 # mobile  = ["dioxus/mobile"]
@@ -36,6 +36,8 @@ dioxus-markdown = { path = "crates/dioxus-markdown" }
 ph-cms = { path = "crates/ph-cms", optional = true }
 # Court/news crawler (server-only). Pulls reqwest/quick-xml/scraper; behind `server`.
 ph-crawl = { path = "crates/ph-crawl", optional = true }
+# AI drafting client (server-only). Pulls reqwest; behind `server`, like ph-crawl.
+ph-ai = { path = "crates/ph-ai", optional = true }
 tokio = { version = "1", features = ["sync", "rt"], optional = true }
 serde_json = { version = "1", optional = true }
 
@@ -43,4 +45,4 @@ serde_json = { version = "1", optional = true }
 # ph-offender) join as members as WS2/WS3 land. These are server-side only and
 # are NOT pulled into the wasm/web build (kept off the default feature path).
 [workspace]
-members = ["crates/ph-audit", "crates/ph-cms", "crates/ph-crawl", "crates/taino-edit-dx", "crates/web-framework-markdown", "crates/dioxus-markdown"]
+members = ["crates/ph-audit", "crates/ph-ai", "crates/ph-cms", "crates/ph-crawl", "crates/taino-edit-dx", "crates/web-framework-markdown", "crates/dioxus-markdown"]

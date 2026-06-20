@@ -95,3 +95,34 @@ The crawler honours robots.txt, rate-limits per host, and identifies itself. Not
 files is ever auto-published: leads become our own legal-gated reports, and court-watch
 is private and never crosses into the public pipeline (the active-proceedings firewall).
 Any paid source credentials (e.g. CourtServe) belong in deploy env, never in the repo.
+
+## AI drafting on promote (optional, off by default)
+
+Promoting an Intake lead can pre-fill a **guarded AI scaffold** (original prose + `[VERIFY]`
+markers + SEO; the lead's own crawled image fills the figure slot). It stays AI-assisted and
+goes through the full legal gate; a disabled or failed call falls back to the banner draft, so
+promote never breaks. Controlled by `production` repo **variables** (the workflow passes them
+to the container):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PH_AI_ENABLED` | `0` | `1` to enable AI drafting on promote |
+| `PH_AI_BACKEND` | `bedrock` | `bedrock` (Amazon Bedrock) \| `local` (OpenAI-compatible) \| `anthropic` |
+| `PH_AI_MODEL` | `amazon.nova-lite-v1:0` | Bedrock model id (or the served model name for `local`) |
+
+**Bedrock (recommended — stays in your AWS, no keys in the container):** the container calls
+Bedrock with the **EC2 instance role** (`ph-bulwark-ssm`) over IMDS. Two one-time prerequisites:
+
+1. **IAM** — attach `bedrock:InvokeModel` (+ `Converse`) to the `ph-bulwark-ssm` role, and
+   enable the model in the Bedrock console (region `eu-west-2`).
+2. **IMDS hop limit = 2** — so the container (one hop from the host) can read the role creds,
+   keeping IMDSv2 required:
+   ```
+   aws ec2 modify-instance-metadata-options --region eu-west-2 \
+     --instance-id i-0a3aa9dc27f8e1c91 --http-tokens required \
+     --http-put-response-hop-limit 2 --http-endpoint enabled
+   ```
+
+The container reads `AWS_REGION` (passed from the `AWS_REGION` var) and needs only outbound
+HTTPS to the Bedrock endpoint. For `local`/`anthropic` backends set `PH_AI_BASE_URL` /
+`PH_AI_API_KEY` instead (see the project README).

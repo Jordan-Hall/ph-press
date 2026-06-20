@@ -11,10 +11,10 @@ use crate::api::{
     desk_complaint_status, desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
     desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
-    desk_promote_lead_conviction, desk_set_conviction_status, desk_sources, desk_staff,
-    desk_transition, desk_update, staff_change_password, staff_login, staff_logout, staff_me,
-    DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskSource,
-    DeskWatch, PreviewArticle, StaffMember,
+    desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
+    desk_staff, desk_transition, desk_update, staff_change_password, staff_login, staff_logout,
+    staff_me, DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession,
+    DeskSource, DeskWatch, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -958,6 +958,24 @@ fn DeskRow(
                 if a.state != "retracted" {
                     Link { class: "desk-act", to: Route::WriteArticle { id: a.id }, "Edit ✎" }
                 }
+                if a.state == "draft" && a.is_ai_assisted {
+                    button {
+                        class: "desk-act",
+                        disabled: busy(),
+                        onclick: move |_| {
+                            spawn(async move {
+                                busy.set(true);
+                                err.set(None);
+                                match desk_regenerate_draft(id).await {
+                                    Ok(()) => { if let Ok(list) = desk_articles().await { articles.set(Some(list)); } }
+                                    Err(e) => err.set(Some(e.to_string())),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                        "Regenerate \u{27f3}"
+                    }
+                }
                 if a.actions.is_empty() {
                     span { class: "desk-muted", "—" }
                 }
@@ -1024,6 +1042,12 @@ pub fn WriteArticle(id: i64) -> Element {
                         init_kind: "Court report".to_string(),
                         init_section: "Crime".to_string(),
                         init_body: String::new(),
+                        init_meta: String::new(),
+                        init_og: String::new(),
+                        init_tags: String::new(),
+                        init_slug: String::new(),
+                        init_state: "draft".to_string(),
+                        init_ai_assisted: false,
                     }
                 } else {
                     WriteLoad { id }
@@ -1048,6 +1072,12 @@ fn WriteLoad(id: i64) -> Element {
                 init_kind: a.kind.clone(),
                 init_section: a.section.clone(),
                 init_body: a.body.join("\n"),
+                init_meta: a.meta_description.clone(),
+                init_og: a.og_image_url.clone(),
+                init_tags: a.tags.join(", "),
+                init_slug: a.slug.clone(),
+                init_state: a.state.clone(),
+                init_ai_assisted: a.is_ai_assisted,
             }
         },
         _ => rsx! {
@@ -1059,6 +1089,7 @@ fn WriteLoad(id: i64) -> Element {
 /// The shared writer-first editor (Ghost/Medium feel). Creates a draft when
 /// edit_id is 0, otherwise saves changes to that article, then returns to /desk.
 #[component]
+#[allow(clippy::too_many_arguments)]
 fn EditorForm(
     edit_id: i64,
     init_title: String,
@@ -1066,27 +1097,53 @@ fn EditorForm(
     init_kind: String,
     init_section: String,
     init_body: String,
+    init_meta: String,
+    init_og: String,
+    init_tags: String,
+    init_slug: String,
+    init_state: String,
+    init_ai_assisted: bool,
 ) -> Element {
     let mut title = use_signal(|| init_title.clone());
     let mut summary = use_signal(|| init_summary.clone());
     let mut body = use_signal(|| init_body.clone());
     let mut kind = use_signal(|| init_kind.clone());
     let mut section = use_signal(|| init_section.clone());
+    let mut meta_desc = use_signal(|| init_meta.clone());
+    let mut og_image = use_signal(|| init_og.clone());
+    let mut tags = use_signal(|| init_tags.clone());
+    let mut slug = use_signal(|| init_slug.clone());
     let mut err = use_signal(|| Option::<String>::None);
     let mut busy = use_signal(|| false);
     let nav = navigator();
+    // Slug is editable only while the article is pre-publish (published/corrected
+    // URLs are locked — see update_article's server-side gate).
+    let slug_locked = matches!(init_state.as_str(), "published" | "corrected");
 
     let submit = move |evt: FormEvent| {
         evt.prevent_default();
         spawn(async move {
             busy.set(true);
             err.set(None);
+            // comma-separated tags -> Vec<String>, trimmed + de-blanked.
+            let tag_vec: Vec<String> = tags()
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
             let res = if edit_id == 0 {
-                desk_create(title(), summary(), kind(), section(), body())
-                    .await
-                    .map(|_| ())
+                desk_create(
+                    title(), summary(), kind(), section(), body(),
+                    meta_desc(), og_image(), tag_vec,
+                )
+                .await
+                .map(|_| ())
             } else {
-                desk_update(edit_id, title(), summary(), kind(), section(), body()).await
+                desk_update(
+                    edit_id, title(), summary(), kind(), section(), body(),
+                    meta_desc(), og_image(), tag_vec, slug(),
+                )
+                .await
             };
             match res {
                 Ok(()) => {
@@ -1148,9 +1205,21 @@ fn EditorForm(
     } else {
         "meter warn"
     };
+    let meta_len = meta_desc().chars().count();
+    let meta_state = if meta_len == 0 || (120..=160).contains(&meta_len) {
+        "meter"
+    } else {
+        "meter warn"
+    };
+    let verify_count = body().matches("[VERIFY").count() + body().matches("[FROM RECORD").count();
 
     rsx! {
         form { class: "editor", onsubmit: submit,
+            if init_ai_assisted {
+                div { class: "desk-error",
+                    "\u{26a0} AI-assisted draft \u{2014} written by AI from an unverified lead. Verify every fact against the court record, clear reporting restrictions, and confirm the conviction before submitting."
+                }
+            }
             input {
                 class: "editor-title",
                 r#type: "text",
@@ -1186,6 +1255,46 @@ fn EditorForm(
                 placeholder: "Standfirst — the one-line summary readers see first",
                 value: "{summary}",
                 oninput: move |e| summary.set(e.value()),
+            }
+            // ---- SEO + social (search/share metadata) ----
+            div { class: "editor-meta",
+                if edit_id != 0 {
+                    label {
+                        span { "URL slug" }
+                        input {
+                            r#type: "text",
+                            value: "{slug}",
+                            disabled: slug_locked,
+                            oninput: move |e| slug.set(e.value()),
+                            placeholder: "url-slug",
+                        }
+                    }
+                }
+                label {
+                    span { "Tags (comma-separated)" }
+                    input {
+                        r#type: "text",
+                        value: "{tags}",
+                        oninput: move |e| tags.set(e.value()),
+                        placeholder: "grooming, crown court",
+                    }
+                }
+                label {
+                    span { "Social / OG image URL" }
+                    input {
+                        r#type: "text",
+                        value: "{og_image}",
+                        oninput: move |e| og_image.set(e.value()),
+                        placeholder: "/assets/og/your-image.jpg",
+                    }
+                }
+            }
+            textarea {
+                class: "editor-body",
+                rows: "2",
+                placeholder: "Meta description — the ~155-char summary shown in search results (falls back to the standfirst if blank).",
+                value: "{meta_desc}",
+                oninput: move |e| meta_desc.set(e.value()),
             }
             // ---- editor mode toggle (Visual WYSIWYG ↔ Markdown source) ----
             div { class: "editor-modebar",
@@ -1258,6 +1367,19 @@ fn EditorForm(
                 span { class: title_state, "Headline " b { "{title_len}" } " / ~65" }
                 span { class: sum_state, "Standfirst " b { "{sum_len}" } }
                 span { class: "meter", "Body " b { "{words}" } " words · {mins} min read" }
+                span { class: meta_state, "Meta " b { "{meta_len}" } " / ~155" }
+                if verify_count > 0 {
+                    span { class: "meter warn", "\u{26a0} {verify_count} to verify" }
+                    button {
+                        r#type: "button",
+                        class: "tb",
+                        title: "Jump to the first [VERIFY] marker",
+                        onclick: move |_| {
+                            let _ = document::eval("(function(){var t=document.getElementById('ed-body');if(!t)return;var i=t.value.indexOf('[VERIFY');if(i<0)i=t.value.indexOf('[FROM RECORD');if(i<0)return;t.focus();t.setSelectionRange(i,i);var before=t.value.slice(0,i).split('\\n').length;t.scrollTop=Math.max(0,(before-2)*18);})();");
+                        },
+                        "Jump to \u{2192} [VERIFY]"
+                    }
+                }
             }
             if let Some(e) = err() {
                 p { class: "desk-error", "{e}" }
@@ -1652,7 +1774,7 @@ fn IntakeCard(
                 p { class: "intake-snippet", "{lead.snippet}" }
             }
             if !lead.image_url.is_empty() {
-                p { class: "intake-imgnote", "\u{2316} Source image (reference only — never republished): {lead.image_attribution}" }
+                p { class: "intake-imgnote", "\u{2316} Source image \u{2014} carried into the draft; verify usage rights before publishing. {lead.image_attribution}" }
             }
             a { class: "intake-source-link", href: "{lead.url}", target: "_blank", rel: "noopener noreferrer",
                 "\u{2197} Source \u{2014} read + verify against the record"
@@ -1688,7 +1810,10 @@ fn IntakeCard(
                                 option { value: "Community", "Community" }
                             }
                             button { class: "intake-btn primary", disabled: busy(), onclick: confirm,
-                                if busy() { "Opening\u{2026}" } else { "Confirm \u{2192} edit" }
+                                if busy() { "Drafting\u{2026}" } else { "Confirm \u{2192} edit" }
+                            }
+                            if busy() {
+                                span { class: "intake-step2-in", "generating a draft\u{2026}" }
                             }
                             button { class: "intake-btn ghost", disabled: busy(), onclick: move |_| step.set(None), "Cancel" }
                         }

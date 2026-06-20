@@ -115,6 +115,15 @@ jobs:
           PH_CRAWL_CASELAW_FEEDS: ${{ vars.PH_CRAWL_CASELAW_FEEDS }}
           PH_CRAWL_NEWS_FEEDS: ${{ vars.PH_CRAWL_NEWS_FEEDS }}
           PH_CRAWL_COURTWATCH_FEEDS: ${{ vars.PH_CRAWL_COURTWATCH_FEEDS }}
+          # AI drafting on promote (OFF unless PH_AI_ENABLED=1). With PH_AI_BACKEND=bedrock
+          # the container calls Amazon Bedrock using the EC2 INSTANCE ROLE over IMDS — no
+          # keys in the container (needs the instance metadata hop limit set to 2). It only
+          # needs AWS_REGION + the role's bedrock:InvokeModel. Falls back to the banner draft
+          # if disabled or the call fails, so promote never breaks.
+          PH_AI_ENABLED: ${{ vars.PH_AI_ENABLED }}
+          PH_AI_BACKEND: ${{ vars.PH_AI_BACKEND }}
+          PH_AI_MODEL: ${{ vars.PH_AI_MODEL }}
+          DEPLOY_AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
           REF="${IMAGE}:${GITHUB_SHA}"
@@ -132,6 +141,11 @@ jobs:
           PH_CRAWL_CASELAW_FEEDS_B64="$(printf '%s' "${PH_CRAWL_CASELAW_FEEDS:-}" | base64 -w0)"
           PH_CRAWL_NEWS_FEEDS_B64="$(printf '%s' "${PH_CRAWL_NEWS_FEEDS:-}" | base64 -w0)"
           PH_CRAWL_COURTWATCH_FEEDS_B64="$(printf '%s' "${PH_CRAWL_COURTWATCH_FEEDS:-}" | base64 -w0)"
+          # AI knobs (simple values — no special chars). OFF unless the repo var is 1.
+          PH_AI_ENABLED="${PH_AI_ENABLED:-0}"
+          PH_AI_BACKEND="${PH_AI_BACKEND:-bedrock}"
+          PH_AI_MODEL="${PH_AI_MODEL:-amazon.nova-lite-v1:0}"
+          DEPLOY_AWS_REGION="${DEPLOY_AWS_REGION:-eu-west-2}"
           # Bind loopback-only (127.0.0.1:8090) so the port is NOT exposed to the
           # network — only the edge Caddy on the same host reaches it. A /data
           # volume is mounted for forward-compat (future CMS db + uploaded media).
@@ -143,7 +157,7 @@ jobs:
             "mkdir -p /var/lib/ph-press && chmod 700 /var/lib/ph-press",
             "docker network create ph-net 2>/dev/null || true",
             "docker rm -f ph-press || true",
-            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data -e PH_ADMIN_USER='${PH_ADMIN_USER}' -e PH_ADMIN_PASS_B64='${PH_ADMIN_PASS_B64}' -e PH_ADMIN_RESET='${PH_ADMIN_RESET}' -e PH_CRAWL_ENABLED='${PH_CRAWL_ENABLED}' -e PH_CRAWL_INTERVAL_SECS='${PH_CRAWL_INTERVAL_SECS}' -e PH_CRAWL_CASELAW_FEEDS_B64='${PH_CRAWL_CASELAW_FEEDS_B64}' -e PH_CRAWL_NEWS_FEEDS_B64='${PH_CRAWL_NEWS_FEEDS_B64}' -e PH_CRAWL_COURTWATCH_FEEDS_B64='${PH_CRAWL_COURTWATCH_FEEDS_B64}' '${REF}'",
+            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data -e PH_ADMIN_USER='${PH_ADMIN_USER}' -e PH_ADMIN_PASS_B64='${PH_ADMIN_PASS_B64}' -e PH_ADMIN_RESET='${PH_ADMIN_RESET}' -e PH_CRAWL_ENABLED='${PH_CRAWL_ENABLED}' -e PH_CRAWL_INTERVAL_SECS='${PH_CRAWL_INTERVAL_SECS}' -e PH_CRAWL_CASELAW_FEEDS_B64='${PH_CRAWL_CASELAW_FEEDS_B64}' -e PH_CRAWL_NEWS_FEEDS_B64='${PH_CRAWL_NEWS_FEEDS_B64}' -e PH_CRAWL_COURTWATCH_FEEDS_B64='${PH_CRAWL_COURTWATCH_FEEDS_B64}' -e PH_AI_ENABLED='${PH_AI_ENABLED}' -e PH_AI_BACKEND='${PH_AI_BACKEND}' -e PH_AI_MODEL='${PH_AI_MODEL}' -e AWS_REGION='${DEPLOY_AWS_REGION}' '${REF}'",
             "sleep 8",
             "docker ps --filter name=ph-press --format '{{.Status}}' | grep -q Up || { docker logs --tail 80 ph-press; exit 1; }",
             "curl -fsS http://127.0.0.1:8090/healthz || { docker logs --tail 80 ph-press; exit 1; }",

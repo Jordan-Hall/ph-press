@@ -222,6 +222,9 @@ pub struct Article {
     pub byline: String,
     pub kind: String,
     pub section: String,
+    pub meta_description: String,
+    pub og_image_url: String,
+    pub tags: String, // JSON array of strings
     pub state: String,
     pub is_ai_assisted: bool,
     pub created_at: i64,
@@ -463,6 +466,7 @@ pub async fn destroy_session(pool: &SqlitePool, token: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_article(
     pool: &SqlitePool,
     slug: &str,
@@ -472,10 +476,13 @@ pub async fn create_article(
     byline: &str,
     kind: &str,
     section: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
 ) -> Result<i64> {
     let t = now();
     let res = sqlx::query(
-        "INSERT INTO article (slug, title, summary, body, byline, kind, section, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO article (slug, title, summary, body, byline, kind, section, meta_description, og_image_url, tags, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(slug)
     .bind(title)
@@ -484,6 +491,9 @@ pub async fn create_article(
     .bind(byline)
     .bind(kind)
     .bind(section)
+    .bind(meta_description)
+    .bind(og_image_url)
+    .bind(if tags.trim().is_empty() { "[]" } else { tags })
     .bind(State::Draft.as_str())
     .bind(t)
     .bind(t)
@@ -523,10 +533,62 @@ async fn slug_exists(pool: &SqlitePool, slug: &str) -> Result<bool> {
     Ok(row.is_some())
 }
 
+/// Is `slug` already used by a DIFFERENT article (for slug edits on update)?
+async fn slug_taken_by_other(pool: &SqlitePool, slug: &str, id: i64) -> Result<bool> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM article WHERE slug = ? AND id != ?")
+            .bind(slug)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// Create a Draft with an explicit slug base. When `slug_base` is non-empty,
+/// the base slug is `slugify(slug_base)`; otherwise the base slug is
+/// `slugify(title)`. The same de-dupe loop applies either way. `byline` is the
+/// article's credit; `actor` is the stable username recorded in the audit chain.
+/// The body is a JSON array of paragraph strings.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_draft_with_slug(
+    pool: &SqlitePool,
+    slug_base: &str,
+    title: &str,
+    summary: &str,
+    body: &str,
+    byline: &str,
+    kind: &str,
+    section: &str,
+    actor: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
+) -> Result<i64> {
+    let base = if slug_base.trim().is_empty() {
+        slugify(title)
+    } else {
+        slugify(slug_base)
+    };
+    let mut slug = base.clone();
+    let mut n = 2;
+    while slug_exists(pool, &slug).await? {
+        slug = format!("{base}-{n}");
+        n += 1;
+    }
+    let id = create_article(
+        pool, &slug, title, summary, body, byline, kind, section,
+        meta_description, og_image_url, tags,
+    )
+    .await?;
+    append_audit(pool, actor, "article.create", &slug, "draft created").await?;
+    Ok(id)
+}
+
 /// Create a Draft from a title (slug derived + de-duplicated), audited. `byline`
 /// is the article's credit; `actor` is the stable username recorded in the audit
 /// chain (so creation is attributable even if a display name later changes). The
 /// body is a JSON array of paragraph strings (same shape the public renderer reads).
+#[allow(clippy::too_many_arguments)]
 pub async fn create_draft(
     pool: &SqlitePool,
     title: &str,
@@ -536,22 +598,18 @@ pub async fn create_draft(
     kind: &str,
     section: &str,
     actor: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
 ) -> Result<i64> {
-    let base = slugify(title);
-    let mut slug = base.clone();
-    let mut n = 2;
-    while slug_exists(pool, &slug).await? {
-        slug = format!("{base}-{n}");
-        n += 1;
-    }
-    let id = create_article(pool, &slug, title, summary, body, byline, kind, section).await?;
-    append_audit(pool, actor, "article.create", &slug, "draft created").await?;
-    Ok(id)
+    create_draft_with_slug(pool, "", title, summary, body, byline, kind, section, actor, meta_description, og_image_url, tags).await
 }
 
-/// Update an article's content, audited; state is unchanged. Any story EXCEPT a
-/// retracted one is editable (live stories included, like a national desk) — a
-/// formal equal-prominence Correction still uses the corrections flow.
+/// Update an article's content + SEO, audited; lifecycle state is unchanged. Any
+/// story EXCEPT a retracted one is editable. The SLUG may only be changed while
+/// the article is pre-publish (changing a live URL would 404 inbound links); an
+/// empty `slug` keeps the current one. A changed slug is slugified + de-duplicated.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_article(
     pool: &SqlitePool,
     id: i64,
@@ -561,31 +619,60 @@ pub async fn update_article(
     kind: &str,
     section: &str,
     actor: &str,
+    meta_description: &str,
+    og_image_url: &str,
+    tags: &str,
+    slug: &str,
 ) -> Result<()> {
     let article = get_article(pool, id)
         .await?
         .ok_or_else(|| CmsError::Bad(format!("no article {id}")))?;
-    // Live stories CAN be edited (like a national desk) — every edit is audited.
-    // A formal, equal-prominence Correction still uses the corrections flow. Only a
-    // retracted (pulled) story is locked.
     if article.state()? == State::Retracted {
         return Err(CmsError::Forbidden(
             "a retracted story can't be edited".into(),
         ));
     }
+    // Resolve the final slug. Empty input keeps the current slug. A real change is
+    // gated to pre-publish states and de-duplicated against other rows.
+    let new_slug = if slug.trim().is_empty() {
+        article.slug.clone()
+    } else {
+        let wanted = slugify(slug);
+        if wanted == article.slug {
+            article.slug.clone()
+        } else {
+            if article.state()?.is_public() {
+                return Err(CmsError::Forbidden(
+                    "a published article's URL can't be changed".into(),
+                ));
+            }
+            let mut candidate = wanted.clone();
+            let mut n = 2;
+            while slug_taken_by_other(pool, &candidate, id).await? {
+                candidate = format!("{wanted}-{n}");
+                n += 1;
+            }
+            candidate
+        }
+    };
+    let tags = if tags.trim().is_empty() { "[]" } else { tags };
     sqlx::query(
-        "UPDATE article SET title = ?, summary = ?, body = ?, kind = ?, section = ?, updated_at = ? WHERE id = ?",
+        "UPDATE article SET slug = ?, title = ?, summary = ?, body = ?, kind = ?, section = ?, meta_description = ?, og_image_url = ?, tags = ?, updated_at = ? WHERE id = ?",
     )
+    .bind(&new_slug)
     .bind(title)
     .bind(summary)
     .bind(body)
     .bind(kind)
     .bind(section)
+    .bind(meta_description)
+    .bind(og_image_url)
+    .bind(tags)
     .bind(now())
     .bind(id)
     .execute(pool)
     .await?;
-    append_audit(pool, actor, "article.edit", &article.slug, "").await?;
+    append_audit(pool, actor, "article.edit", &new_slug, "").await?;
     Ok(())
 }
 
@@ -1086,6 +1173,9 @@ mod tests {
             "Jordan Upton",
             "Court report",
             "Crime",
+            "",
+            "",
+            "[]",
         )
         .await
         .unwrap();
@@ -1251,6 +1341,9 @@ mod tests {
             "Court report",
             "Crime",
             "admin",
+            "",
+            "",
+            "[]",
         )
         .await
         .unwrap();
@@ -1263,6 +1356,9 @@ mod tests {
             "Court report",
             "Crime",
             "admin",
+            "",
+            "",
+            "[]",
         )
         .await
         .unwrap();
@@ -1284,5 +1380,110 @@ mod tests {
         assert!(
             !allowed_transitions(State::EditorialReview, Role::Editor).contains(&State::Published)
         );
+    }
+
+    #[tokio::test]
+    async fn article_carries_seo_columns_defaulting_empty() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        let id = create_draft(
+            &pool, "Title", "sum", "[]", "By", "Court report", "Crime", "admin",
+            "", "", "[]",
+        )
+        .await
+        .unwrap();
+        let a = get_article(&pool, id).await.unwrap().unwrap();
+        assert_eq!(a.meta_description, "");
+        assert_eq!(a.og_image_url, "");
+        assert_eq!(a.tags, "[]");
+    }
+
+    #[tokio::test]
+    async fn create_draft_persists_seo_fields() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        let id = create_draft(
+            &pool, "Title", "sum", "[]", "By", "Court report", "Crime", "admin",
+            "A search description.", "/assets/og.png", r#"["grooming","crown court"]"#,
+        )
+        .await
+        .unwrap();
+        let a = get_article(&pool, id).await.unwrap().unwrap();
+        assert_eq!(a.meta_description, "A search description.");
+        assert_eq!(a.og_image_url, "/assets/og.png");
+        assert_eq!(a.tags, r#"["grooming","crown court"]"#);
+    }
+
+    #[tokio::test]
+    async fn update_article_sets_seo_and_edits_slug_pre_publish() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        let id = create_draft(
+            &pool, "Old Title", "s", "[]", "By", "Court report", "Crime", "admin",
+            "", "", "[]",
+        )
+        .await
+        .unwrap();
+        // edit SEO + change the slug while still a draft
+        update_article(
+            &pool, id, "Old Title", "s", "[]", "Court report", "Crime", "admin",
+            "New meta desc.", "/assets/x.png", r#"["tag-a"]"#, "my-custom-slug",
+        )
+        .await
+        .unwrap();
+        let a = get_article(&pool, id).await.unwrap().unwrap();
+        assert_eq!(a.meta_description, "New meta desc.");
+        assert_eq!(a.og_image_url, "/assets/x.png");
+        assert_eq!(a.tags, r#"["tag-a"]"#);
+        assert_eq!(a.slug, "my-custom-slug");
+    }
+
+    #[tokio::test]
+    async fn update_article_dedupes_changed_slug() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        let _a = create_draft(
+            &pool, "Taken", "s", "[]", "By", "Court report", "Crime", "admin", "", "", "[]",
+        ).await.unwrap();
+        let b = create_draft(
+            &pool, "Other", "s", "[]", "By", "Court report", "Crime", "admin", "", "", "[]",
+        ).await.unwrap();
+        // try to move b onto a's slug "taken" -> de-duped to "taken-2"
+        update_article(
+            &pool, b, "Other", "s", "[]", "Court report", "Crime", "admin",
+            "", "", "[]", "Taken",
+        ).await.unwrap();
+        let b2 = get_article(&pool, b).await.unwrap().unwrap();
+        assert_eq!(b2.slug, "taken-2");
+    }
+
+    #[tokio::test]
+    async fn update_article_refuses_slug_change_when_published() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+        bootstrap_admin(&pool, "admin", "Admin", "pw").await.unwrap();
+        let admin = find_user(&pool, "admin").await.unwrap().unwrap();
+        let id = create_draft(
+            &pool, "Live Story", "s", "[]", "By", "Court report", "Crime", "admin", "", "", "[]",
+        ).await.unwrap();
+        // drive it to Published via the legal-gated lifecycle
+        transition(&pool, id, State::Submitted, &admin, "").await.unwrap();
+        transition(&pool, id, State::EditorialReview, &admin, "").await.unwrap();
+        transition(&pool, id, State::LegalReview, &admin, "").await.unwrap();
+        transition(&pool, id, State::Published, &admin, "").await.unwrap();
+        let original = get_article(&pool, id).await.unwrap().unwrap().slug;
+        // changing the slug of a live article is refused...
+        assert!(update_article(
+            &pool, id, "Live Story", "s", "[]", "Court report", "Crime", "admin",
+            "", "", "[]", "a-different-slug",
+        ).await.is_err());
+        // ...but editing other SEO fields with the SAME slug is allowed
+        update_article(
+            &pool, id, "Live Story", "s", "[]", "Court report", "Crime", "admin",
+            "Edited meta", "", "[]", &original,
+        ).await.unwrap();
+        let a = get_article(&pool, id).await.unwrap().unwrap();
+        assert_eq!(a.slug, original);
+        assert_eq!(a.meta_description, "Edited meta");
     }
 }
