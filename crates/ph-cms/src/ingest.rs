@@ -247,13 +247,38 @@ pub struct PromotedDraft {
     pub slug_base: String,      // AI-suggested slug base (empty = derive from title)
 }
 
+/// Is this lead from an authoritative OFFICIAL source (a UK police force, the NCA,
+/// or a Find Case Law court record) rather than secondary press? Official sources
+/// are treated as reliable, so a promoted draft skips the "unverified external
+/// lead" framing (it still flags reporting restrictions and stays legal-gated).
+/// Classified by the stable source key: `pol-*` forces (incl. the Met `pol-met`),
+/// `nca`, and `caselaw-*`. Anything else (BBC `bbc-*`, custom feeds) is treated as
+/// press — the cautious default, so an unknown key never loses the caution.
+pub fn source_is_official(source_key: &str) -> bool {
+    source_key.starts_with("pol-") || source_key == "nca" || source_key.starts_with("caselaw")
+}
+
+/// The provenance banner prepended to a promoted draft's body, chosen by source
+/// trust. BOTH draft builders — [`banner_draft`] here and the AI assembler in the
+/// app's CMS glue — call this, so the wording can never drift between them. Either
+/// way the draft stays lead/AI-assisted and never auto-publishes; the human legal
+/// gate is the real control.
+pub fn lead_banner(source_key: &str) -> &'static str {
+    if source_is_official(source_key) {
+        "DRAFT from an official source. Confirm any reporting restrictions \
+         (complainant / child anonymity) still apply before publishing, and write \
+         it in our own words."
+    } else {
+        "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report from the \
+         public court record. Clear reporting restrictions (complainant / child \
+         anonymity) and confirm the conviction before it can be published. Use \
+         the source for context only; do not copy its wording."
+    }
+}
+
 /// The banner-only fallback content (today's behaviour) for a lead.
 pub fn banner_draft(lead: &IngestItem) -> PromotedDraft {
-    let banner = "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report from the \
-                  public court record. Clear reporting restrictions (complainant / child \
-                  anonymity) and confirm the conviction before it can be published. Use \
-                  the source for context only; do not copy its wording.";
-    let mut paras = vec![banner.to_string()];
+    let mut paras = vec![lead_banner(&lead.source_key).to_string()];
     let og_image_url = if !lead.image_url.is_empty() {
         let caption = if !lead.image_attribution.is_empty() {
             lead.image_attribution.as_str()
@@ -680,6 +705,25 @@ mod tests {
         }
         create_user(pool, name, name, role, "pw", "").await.unwrap();
         crate::find_user(pool, name).await.unwrap().unwrap()
+    }
+
+    #[test]
+    fn official_sources_skip_unverified_banner() {
+        // Police forces (incl. the Met), the NCA, and Find Case Law are official —
+        // no "unverified" framing, but the reporting-restrictions caution stays.
+        for k in ["pol-sussex", "pol-met", "nca", "caselaw-child"] {
+            assert!(source_is_official(k), "{k} should be official");
+            assert!(!lead_banner(k).contains("unverified"), "{k} must not say unverified");
+            assert!(
+                lead_banner(k).contains("reporting restrictions"),
+                "{k} keeps the legal caution"
+            );
+        }
+        // Press / unknown stay cautious (the safe default).
+        for k in ["bbc-leicester", "some-custom-feed", ""] {
+            assert!(!source_is_official(k), "{k} should be press");
+            assert!(lead_banner(k).contains("unverified"), "{k} keeps the unverified banner");
+        }
     }
 
     #[tokio::test]

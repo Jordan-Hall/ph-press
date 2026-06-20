@@ -944,10 +944,9 @@ fn assemble_promo_draft(
     d: ph_ai::AiDraft,
     lead: &ph_cms::ingest::IngestItem,
 ) -> ph_cms::ingest::PromotedDraft {
-    let banner_para = "DRAFT FROM AN EXTERNAL LEAD — unverified. Write this report \
-        from the public court record; clear reporting restrictions and confirm the \
-        conviction before publishing. Source for context only — do not copy its wording.";
-    let mut paras = vec![banner_para.to_string()];
+    // Source-aware banner (shared with the non-AI banner_draft so wording can't drift):
+    // official sources skip the "unverified" framing, press keeps the full caution.
+    let mut paras = vec![ph_cms::ingest::lead_banner(&lead.source_key).to_string()];
     paras.extend(d.body_paragraphs);
     let og_image_url = if !lead.image_url.is_empty() {
         let cap = if !lead.image_attribution.is_empty() {
