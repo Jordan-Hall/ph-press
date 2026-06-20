@@ -29,6 +29,17 @@
 		reverse_proxy 127.0.0.1:3000
 	}
 
+	# Self-hosted images the crawler/promote pipeline downloads live on the
+	# PERSISTENT /data volume (not the read-only SSG bundle). `handle_path` strips
+	# the /uploads prefix and roots ONLY at /data/uploads, so the web root can
+	# never reach the SQLite DB at /data/ph-press.db. Content-addressed names are
+	# immutable, so cache them hard.
+	handle_path /uploads/* {
+		root * /data/uploads
+		file_server
+		header Cache-Control "public, max-age=604800, immutable"
+	}
+
 	# Everything else: pre-rendered per-route HTML (SSG), falling back to the SPA
 	# shell. `{path}/index.html` serves the pre-rendered page for a route (e.g.
 	# /news/slug → /news/slug/index.html); unknown paths hit /index.html and the
