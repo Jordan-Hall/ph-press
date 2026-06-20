@@ -550,6 +550,31 @@ textarea.desk-in{width:100%;box-sizing:border-box;resize:vertical;font-family:va
 .desk-state.s-c-upheld{background:rgba(56,180,108,.14);border-color:rgba(56,180,108,.4);color:#5fce8e;}
 .desk-state.s-c-rejected{background:var(--tag);border-color:var(--rule-2);color:var(--red);}
 @media(max-width:640px){.desk-table th:nth-child(3),.desk-table td:nth-child(3),.desk-table th:nth-child(4),.desk-table td:nth-child(4){display:none;}.desk-new-row{flex-direction:column;}}
+
+/* ===== DESK MOBILE — stop horizontal overflow at ≤640 px ===== */
+@media(max-width:640px){
+  /* Tab bar: scroll horizontally rather than wrapping into a multi-line mess */
+  .desk-tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none;}
+  .desk-tabs::-webkit-scrollbar{display:none;}
+  .desk-tab{flex:0 0 auto;white-space:nowrap;}
+  /* Top bar: wrap the title + right controls to a second line when they don't fit */
+  .desk-top-in{flex-wrap:wrap;}
+  /* Panel heads: wrap h2 + action buttons rather than overflowing */
+  .desk-panel-head{flex-wrap:wrap;gap:10px;padding-left:14px;padding-right:14px;}
+  /* Tables: scroll within the panel — never push the page wider.
+     Keeping thead/tbody/tr/th/td at their natural display values (table-*)
+     means the existing column-hide rules (.desk-table th:nth-child(3) etc.) keep working. */
+  .desk-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;max-width:100%;}
+  /* Reduce cell padding on narrow screens so fewer columns need to scroll */
+  .desk-table th,.desk-table td{padding-left:12px;padding-right:12px;}
+  /* Cards (login / forgot-password): fill viewport width with comfortable padding */
+  .desk-card{max-width:100%;box-sizing:border-box;padding:28px 20px;}
+  .desk-field input{max-width:100%;box-sizing:border-box;}
+  /* Misc panel padding */
+  .desk-filters{padding-left:12px;padding-right:12px;}
+  .desk-new{padding:14px;}
+  .pad{padding:12px 14px;}
+}
     </style>
     <script>(function(){try{var t=localStorage.getItem('ph-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
   </head>
