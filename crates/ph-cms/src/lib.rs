@@ -460,6 +460,7 @@ pub async fn create_user(
     display_name: &str,
     role: Role,
     password: &str,
+    email: &str,
 ) -> Result<i64> {
     if count_users(pool).await? == 0 && role != Role::Admin {
         return Err(CmsError::Forbidden(
@@ -467,14 +468,17 @@ pub async fn create_user(
         ));
     }
     let hash = auth::hash_password(password)?;
+    let email = email.trim().to_lowercase();
+    let email_val: Option<String> = if email.is_empty() { None } else { Some(email) };
     let res = sqlx::query(
-        "INSERT INTO staff_user (username, display_name, role, password_hash, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO staff_user (username, display_name, role, password_hash, created_at, email) VALUES (?,?,?,?,?,?)",
     )
     .bind(username)
     .bind(display_name)
     .bind(role.as_str())
     .bind(hash)
     .bind(now())
+    .bind(email_val)
     .execute(pool)
     .await?;
     Ok(res.last_insert_rowid())
@@ -1150,7 +1154,7 @@ pub async fn bootstrap_admin(
     if count_users(pool).await? > 0 {
         return Ok(false);
     }
-    create_user(pool, username, display_name, Role::Admin, password).await?;
+    create_user(pool, username, display_name, Role::Admin, password, "").await?;
     append_audit(
         pool,
         "system",
@@ -1279,7 +1283,7 @@ mod tests {
     async fn password_reset_flow() {
         let pool = connect("sqlite::memory:").await.unwrap();
         init(&pool).await.unwrap();
-        create_user(&pool, "admin", "Admin", Role::Admin, "old-pass")
+        create_user(&pool, "admin", "Admin", Role::Admin, "old-pass", "")
             .await
             .unwrap();
 
@@ -1365,16 +1369,16 @@ mod tests {
         init(&pool).await.unwrap();
 
         // bootstrap gate: first user must be admin
-        assert!(create_user(&pool, "w", "Writer", Role::Writer, "pw")
+        assert!(create_user(&pool, "w", "Writer", Role::Writer, "pw", "")
             .await
             .is_err());
-        let _admin = create_user(&pool, "admin", "Admin", Role::Admin, "pw")
+        let _admin = create_user(&pool, "admin", "Admin", Role::Admin, "pw", "")
             .await
             .unwrap();
-        create_user(&pool, "jordan", "Jordan Upton", Role::Editor, "pw1")
+        create_user(&pool, "jordan", "Jordan Upton", Role::Editor, "pw1", "")
             .await
             .unwrap();
-        create_user(&pool, "scott", "Scott Taylor", Role::Legal, "pw2")
+        create_user(&pool, "scott", "Scott Taylor", Role::Legal, "pw2", "")
             .await
             .unwrap();
 

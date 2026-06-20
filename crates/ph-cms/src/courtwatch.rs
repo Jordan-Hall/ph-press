@@ -197,7 +197,7 @@ mod tests {
     async fn watch_status_workflow() {
         let pool = crate::connect("sqlite::memory:").await.unwrap();
         init(&pool).await.unwrap();
-        create_user(&pool, "admin", "Admin", Role::Admin, "pw")
+        create_user(&pool, "admin", "Admin", Role::Admin, "pw", "")
             .await
             .unwrap();
         let staff = crate::find_user(&pool, "admin").await.unwrap().unwrap();

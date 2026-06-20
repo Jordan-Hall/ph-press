@@ -116,6 +116,7 @@ pub struct StaffMember {
     pub username: String,
     pub display_name: String,
     pub role: String,
+    pub email: String,
 }
 
 /// A staff member as the PUBLIC team page sees them — name + role only.
@@ -289,6 +290,7 @@ fn to_staff(v: Vec<ph_cms::StaffUser>) -> Vec<StaffMember> {
             username: u.username,
             display_name: u.display_name,
             role: u.role,
+            email: u.email.unwrap_or_default(),
         })
         .collect()
 }
@@ -376,6 +378,24 @@ pub async fn staff_me() -> Result<Option<DeskSession>, ServerFnError> {
     #[cfg(not(feature = "server"))]
     {
         Ok(None)
+    }
+}
+
+/// Return the signed-in account's contact email (for the Profile tab).
+/// Returns an empty string when no email is set.
+#[server(endpoint = "staff_profile")]
+pub async fn staff_profile() -> Result<String, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        let email = crate::cms::get_user_email(&session.username)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(email.unwrap_or_default())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
     }
 }
 
@@ -770,11 +790,12 @@ pub async fn desk_add_staff(
     display_name: String,
     role: String,
     password: String,
+    email: String,
 ) -> Result<Vec<StaffMember>, ServerFnError> {
     #[cfg(feature = "server")]
     {
         require_admin().await?;
-        crate::cms::create_staff(&username, &display_name, &role, &password)
+        crate::cms::create_staff(&username, &display_name, &role, &password, &email)
             .await
             .map_err(ServerFnError::new)?;
         Ok(to_staff(
@@ -783,7 +804,7 @@ pub async fn desk_add_staff(
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (username, display_name, role, password);
+        let _ = (username, display_name, role, password, email);
         Err(ServerFnError::new("server only"))
     }
 }

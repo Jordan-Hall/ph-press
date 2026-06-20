@@ -13,9 +13,9 @@ use crate::api::{
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
     desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
     desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
-    staff_login, staff_logout, staff_me, staff_reset_password, DeskArticle, DeskComplaint,
-    DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch, PreviewArticle,
-    StaffMember,
+    staff_login, staff_logout, staff_me, staff_profile, staff_reset_password, DeskArticle,
+    DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch,
+    PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -281,6 +281,7 @@ enum Tab {
     Audit,
     CourtWatch,
     Settings,
+    Profile,
 }
 
 #[component]
@@ -326,6 +327,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 }
                 button { class: tab_class(Tab::CourtWatch), onclick: move |_| tab.set(Tab::CourtWatch), "Court watch" }
                 button { class: tab_class(Tab::Settings), onclick: move |_| tab.set(Tab::Settings), "Settings" }
+                button { class: tab_class(Tab::Profile), onclick: move |_| tab.set(Tab::Profile), "Profile" }
             }
         }
         main { class: "desk-main",
@@ -339,6 +341,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 Tab::Audit => rsx! { AuditPanel {} },
                 Tab::CourtWatch => rsx! { CourtWatchPanel {} },
                 Tab::Settings => rsx! { SettingsPanel {} },
+                Tab::Profile => rsx! { ProfilePanel { user: user.clone() } },
             }
         }
     }
@@ -811,6 +814,7 @@ fn StaffPanel() -> Element {
     let mut display = use_signal(String::new);
     let mut role = use_signal(|| "writer".to_string());
     let mut password = use_signal(String::new);
+    let mut email = use_signal(String::new);
 
     use_resource(move || async move {
         match desk_staff().await {
@@ -824,12 +828,13 @@ fn StaffPanel() -> Element {
         spawn(async move {
             busy.set(true);
             err.set(None);
-            match desk_add_staff(username(), display(), role(), password()).await {
+            match desk_add_staff(username(), display(), role(), password(), email()).await {
                 Ok(v) => {
                     staff.set(Some(v));
                     username.set(String::new());
                     display.set(String::new());
                     password.set(String::new());
+                    email.set(String::new());
                     show_new.set(false);
                 }
                 Err(e) => err.set(Some(e.to_string())),
@@ -868,11 +873,12 @@ fn StaffPanel() -> Element {
                         }
                         input { class: "desk-in", r#type: "password", autocomplete: "new-password", placeholder: "Temp password (8+ chars)", value: "{password}", oninput: move |e| password.set(e.value()) }
                     }
+                    input { class: "desk-in full", r#type: "email", autocomplete: "email", placeholder: "Email address (optional)", value: "{email}", oninput: move |e| email.set(e.value()) }
                     if let Some(e) = err() {
                         p { class: "desk-error", "{e}" }
                     }
                     div { class: "editor-actions",
-                        span { class: "editor-hint", "They can change their password in Settings after signing in." }
+                        span { class: "editor-hint", "They can change their password in Profile after signing in." }
                         button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Add staff" }
                     }
                 }
@@ -887,13 +893,14 @@ fn StaffPanel() -> Element {
                 Some(v) if v.is_empty() => rsx! { p { class: "desk-muted pad", "No staff yet." } },
                 Some(v) => rsx! {
                     table { class: "desk-table",
-                        thead { tr { th { "Name" } th { "Username" } th { "Role" } } }
+                        thead { tr { th { "Name" } th { "Username" } th { "Role" } th { "Email" } } }
                         tbody {
                             for m in v {
                                 tr { key: "{m.username}",
                                     td { span { class: "desk-row-title", "{m.display_name}" } }
                                     td { class: "desk-muted", "{m.username}" }
                                     td { span { class: "desk-role", "{role_label(&m.role)}" } }
+                                    td { class: "desk-muted", if m.email.is_empty() { "—" } else { "{m.email}" } }
                                 }
                             }
                         }
@@ -906,12 +913,27 @@ fn StaffPanel() -> Element {
 
 #[component]
 fn SettingsPanel() -> Element {
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Settings" }
+            }
+            p { class: "desk-muted pad", "Account settings are managed in the Profile tab." }
+        }
+    }
+}
+
+#[component]
+fn ProfilePanel(user: DeskSession) -> Element {
     let mut current = use_signal(String::new);
     let mut newpw = use_signal(String::new);
     let mut confirm = use_signal(String::new);
     let mut busy = use_signal(|| false);
     let mut ok = use_signal(|| Option::<String>::None);
     let mut err = use_signal(|| Option::<String>::None);
+
+    // Fetch the signed-in account's email from the server.
+    let email_res = use_resource(move || async move { staff_profile().await });
 
     let submit = move |evt: FormEvent| {
         evt.prevent_default();
@@ -936,44 +958,76 @@ fn SettingsPanel() -> Element {
         });
     };
 
+    let email_display = match &*email_res.read() {
+        Some(Ok(e)) if !e.is_empty() => e.clone(),
+        Some(Ok(_)) => "—".to_string(),
+        Some(Err(_)) => "—".to_string(),
+        None => "Loading…".to_string(),
+    };
+
     rsx! {
         section { class: "desk-panel",
             div { class: "desk-panel-head",
-                h2 { "Settings" }
+                h2 { "Profile" }
             }
-            form { class: "desk-new", onsubmit: submit,
+            div { class: "desk-new",
+                p { class: "desk-muted", style: "margin:0 0 6px;", "Account details" }
+                table { class: "desk-table",
+                    tbody {
+                        tr {
+                            td { class: "desk-muted", "Username" }
+                            td { "{user.username}" }
+                        }
+                        tr {
+                            td { class: "desk-muted", "Display name" }
+                            td { "{user.display_name}" }
+                        }
+                        tr {
+                            td { class: "desk-muted", "Role" }
+                            td { span { class: "desk-role", "{role_label(&user.role)}" } }
+                        }
+                        tr {
+                            td { class: "desk-muted", "Email" }
+                            td { "{email_display}" }
+                        }
+                    }
+                }
+            }
+            div { class: "desk-new", style: "margin-top:24px;",
                 p { class: "desk-muted", style: "margin:0 0 14px;", "Change your password." }
-                input {
-                    class: "desk-in full",
-                    r#type: "password",
-                    autocomplete: "current-password",
-                    placeholder: "Current password",
-                    value: "{current}",
-                    oninput: move |e| current.set(e.value()),
+                form { onsubmit: submit,
+                    input {
+                        class: "desk-in full",
+                        r#type: "password",
+                        autocomplete: "current-password",
+                        placeholder: "Current password",
+                        value: "{current}",
+                        oninput: move |e| current.set(e.value()),
+                    }
+                    input {
+                        class: "desk-in full",
+                        r#type: "password",
+                        autocomplete: "new-password",
+                        placeholder: "New password (at least 8 characters)",
+                        value: "{newpw}",
+                        oninput: move |e| newpw.set(e.value()),
+                    }
+                    input {
+                        class: "desk-in full",
+                        r#type: "password",
+                        autocomplete: "new-password",
+                        placeholder: "Confirm new password",
+                        value: "{confirm}",
+                        oninput: move |e| confirm.set(e.value()),
+                    }
+                    if let Some(m) = ok() {
+                        p { class: "desk-ok", "{m}" }
+                    }
+                    if let Some(e) = err() {
+                        p { class: "desk-error", "{e}" }
+                    }
+                    button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Change password" }
                 }
-                input {
-                    class: "desk-in full",
-                    r#type: "password",
-                    autocomplete: "new-password",
-                    placeholder: "New password (at least 8 characters)",
-                    value: "{newpw}",
-                    oninput: move |e| newpw.set(e.value()),
-                }
-                input {
-                    class: "desk-in full",
-                    r#type: "password",
-                    autocomplete: "new-password",
-                    placeholder: "Confirm new password",
-                    value: "{confirm}",
-                    oninput: move |e| confirm.set(e.value()),
-                }
-                if let Some(m) = ok() {
-                    p { class: "desk-ok", "{m}" }
-                }
-                if let Some(e) = err() {
-                    p { class: "desk-error", "{e}" }
-                }
-                button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Change password" }
             }
         }
     }

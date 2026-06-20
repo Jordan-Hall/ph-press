@@ -244,6 +244,7 @@ pub async fn create_staff(
     display_name: &str,
     role: &str,
     password: &str,
+    email: &str,
 ) -> Result<i64, String> {
     if username.trim().is_empty() || display_name.trim().is_empty() {
         return Err("username and display name are required".to_string());
@@ -253,12 +254,21 @@ pub async fn create_staff(
     }
     let role = ph_cms::Role::parse(role).map_err(|_| "unknown role".to_string())?;
     let pool = db().await.map_err(|e| e.to_string())?;
-    ph_cms::create_user(pool, username.trim(), display_name.trim(), role, password)
+    ph_cms::create_user(pool, username.trim(), display_name.trim(), role, password, email)
         .await
         .map_err(|e| match e {
             ph_cms::CmsError::Db(_) => "that username is already taken".to_string(),
             other => other.to_string(),
         })
+}
+
+/// Return the contact email for the given username (None when unset).
+pub async fn get_user_email(username: &str) -> Result<Option<String>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let user = ph_cms::find_user(pool, username)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(user.and_then(|u| u.email))
 }
 
 /// Any article by id, ANY state — for an authenticated staff draft preview.
