@@ -158,6 +158,7 @@ pub struct PreviewArticle {
     pub meta_description: String,
     pub og_image_url: String,
     pub tags: Vec<String>,
+    pub is_ai_assisted: bool,
 }
 
 // ---- server-only cookie helpers ---------------------------------------------
@@ -854,6 +855,7 @@ pub async fn desk_preview(id: i64) -> Result<Option<PreviewArticle>, ServerFnErr
             meta_description: a.meta_description,
             og_image_url: a.og_image_url,
             tags: tags_from_json(&a.tags),
+            is_ai_assisted: a.is_ai_assisted,
         }))
     }
     #[cfg(not(feature = "server"))]

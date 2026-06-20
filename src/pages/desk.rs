@@ -1047,6 +1047,7 @@ pub fn WriteArticle(id: i64) -> Element {
                         init_tags: String::new(),
                         init_slug: String::new(),
                         init_state: "draft".to_string(),
+                        init_ai_assisted: false,
                     }
                 } else {
                     WriteLoad { id }
@@ -1076,6 +1077,7 @@ fn WriteLoad(id: i64) -> Element {
                 init_tags: a.tags.join(", "),
                 init_slug: a.slug.clone(),
                 init_state: a.state.clone(),
+                init_ai_assisted: a.is_ai_assisted,
             }
         },
         _ => rsx! {
@@ -1100,6 +1102,7 @@ fn EditorForm(
     init_tags: String,
     init_slug: String,
     init_state: String,
+    init_ai_assisted: bool,
 ) -> Element {
     let mut title = use_signal(|| init_title.clone());
     let mut summary = use_signal(|| init_summary.clone());
@@ -1212,6 +1215,11 @@ fn EditorForm(
 
     rsx! {
         form { class: "editor", onsubmit: submit,
+            if init_ai_assisted {
+                div { class: "desk-error",
+                    "\u{26a0} AI-assisted draft \u{2014} written by AI from an unverified lead. Verify every fact against the court record, clear reporting restrictions, and confirm the conviction before submitting."
+                }
+            }
             input {
                 class: "editor-title",
                 r#type: "text",
