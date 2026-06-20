@@ -729,17 +729,18 @@ fn ai_config() -> Option<ph_ai::AiConfig> {
     let backend_env = std::env::var("PH_AI_BACKEND").unwrap_or_default();
     let backend = match backend_env.as_str() {
         "anthropic" => ph_ai::Backend::Anthropic,
+        "bedrock" => ph_ai::Backend::Bedrock,
         "" | "local" => ph_ai::Backend::Local, // default: local OpenAI-compatible
         other => {
             eprintln!(
-                "[ph-press] PH_AI_BACKEND={other:?} is not recognised (expected \"local\" or \
-                 \"anthropic\"); defaulting to local"
+                "[ph-press] PH_AI_BACKEND={other:?} is not recognised (expected \"local\", \
+                 \"anthropic\", or \"bedrock\"); defaulting to local"
             );
             ph_ai::Backend::Local
         }
     };
     let api_key = std::env::var("PH_AI_API_KEY").ok().unwrap_or_default();
-    // Anthropic requires a key; local does not.
+    // Anthropic requires a key; local and Bedrock do not (Bedrock uses the cred chain).
     if backend == ph_ai::Backend::Anthropic && api_key.trim().is_empty() {
         eprintln!("[ph-press] PH_AI_BACKEND=anthropic but PH_AI_API_KEY is empty; AI disabled");
         return None;
@@ -747,6 +748,7 @@ fn ai_config() -> Option<ph_ai::AiConfig> {
     let default_base = match backend {
         ph_ai::Backend::Anthropic => "https://api.anthropic.com",
         ph_ai::Backend::Local => "http://127.0.0.1:8080",
+        ph_ai::Backend::Bedrock => "", // unused for Bedrock
     };
     let base_url = std::env::var("PH_AI_BASE_URL")
         .ok()
@@ -762,13 +764,19 @@ fn ai_config() -> Option<ph_ai::AiConfig> {
     let default_model = match backend {
         ph_ai::Backend::Anthropic => "claude-sonnet-4-6",
         ph_ai::Backend::Local => "local-model",
+        ph_ai::Backend::Bedrock => "amazon.nova-lite-v1:0",
     };
     let model = model_env.unwrap_or_else(|| default_model.to_string());
     let timeout_secs = std::env::var("PH_AI_TIMEOUT_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(120);
-    Some(ph_ai::AiConfig { backend, api_key, model, base_url, max_tokens: 4000, timeout_secs })
+    let region = std::env::var("PH_AI_REGION")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("AWS_REGION").ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "eu-west-2".to_string());
+    Some(ph_ai::AiConfig { backend, api_key, model, base_url, max_tokens: 4000, timeout_secs, region })
 }
 
 /// Build LeadFacts from a stored lead (pull citation/court/id_risk from extracted_json).

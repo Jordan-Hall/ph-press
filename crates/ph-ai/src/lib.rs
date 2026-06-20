@@ -12,6 +12,8 @@ pub enum Backend {
     Local,
     /// Anthropic Messages API.
     Anthropic,
+    /// AWS Bedrock Converse API (default credential chain — instance role on EC2).
+    Bedrock,
 }
 
 /// Runtime config (resolved from env by the caller).
@@ -23,6 +25,8 @@ pub struct AiConfig {
     pub base_url: String,
     pub max_tokens: u32,
     pub timeout_secs: u64,
+    /// AWS region for Bedrock (e.g. "eu-west-2"). Ignored by Anthropic/Local.
+    pub region: String,
 }
 
 /// The facts handed to the model (all UNVERIFIED).
@@ -84,8 +88,11 @@ pub fn system_prompt(facts: &LeadFacts) -> String {
          pleas, or sentences.\n\
          - Write neutral, original house-style prose to connect the known facts. NEVER copy \
          or paraphrase the source's wording.\n\
-         - Wherever a fact must be confirmed against the court record, insert an explicit \
-         marker like **[VERIFY: defendant age]** or **[FROM RECORD: sentence length]**.\n\
+         - In body_paragraphs, wrap EVERY specific fact not present in the input — any name, \
+         age, exact sentence, date, plea, court, or place — in a **[VERIFY: …]** marker. \
+         Where you have no specific fact, keep the sentence general and add a **[VERIFY: …]** \
+         for what the editor must confirm from the record. Aim for at least 2-3 [VERIFY] \
+         markers in the body.\n\
          - Keep it short (3-6 short paragraphs). The editor will rewrite it from the record.\n\
          - summary is a one-line standfirst; meta_description is ~155 chars for search; \
          slug is a lowercase hyphenated URL slug; tags are 2-5 short topic tags; \
@@ -187,7 +194,13 @@ pub fn parse_openai_response(resp: &serde_json::Value) -> Result<AiDraft, AiErro
         .and_then(|m| m.get("content"))
         .and_then(|t| t.as_str())
         .ok_or(AiError::NoToolUse)?;
-    let slice = extract_json_object(content).ok_or_else(|| AiError::Parse("no JSON object in reply".into()))?;
+    parse_text_to_draft(content)
+}
+
+/// Shared tail: extract JSON object from text, deserialise, validate, normalise slug.
+fn parse_text_to_draft(text: &str) -> Result<AiDraft, AiError> {
+    let slice = extract_json_object(text)
+        .ok_or_else(|| AiError::Parse("no JSON object in reply".into()))?;
     let mut draft: AiDraft =
         serde_json::from_str(slice).map_err(|e| AiError::Parse(e.to_string()))?;
     if draft.body_paragraphs.is_empty() || draft.summary.trim().is_empty() {
@@ -234,6 +247,72 @@ fn extract_json_object(s: &str) -> Option<&str> {
 
 /// Call the configured backend and return a typed draft. Networked.
 pub async fn draft(facts: &LeadFacts, cfg: &AiConfig) -> Result<AiDraft, AiError> {
+    match cfg.backend {
+        Backend::Bedrock => draft_bedrock(facts, cfg).await,
+        _ => draft_http(facts, cfg).await,
+    }
+}
+
+/// Bedrock Converse API branch.
+async fn draft_bedrock(facts: &LeadFacts, cfg: &AiConfig) -> Result<AiDraft, AiError> {
+    use aws_sdk_bedrockruntime::types::{
+        ContentBlock, ConversationRole, InferenceConfiguration, Message, SystemContentBlock,
+    };
+
+    let aws_cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(aws_config::Region::new(cfg.region.clone()))
+        .load()
+        .await;
+    let client = aws_sdk_bedrockruntime::Client::new(&aws_cfg);
+
+    let user_text = {
+        let user = serde_json::to_string(facts).unwrap_or_else(|_| "{}".to_string());
+        format!(
+            "Draft a scaffold from these UNVERIFIED lead facts (JSON):\n{user}\n\n\
+             Reply with ONLY a JSON object, no prose, matching exactly: \
+             {{\"summary\":string, \"meta_description\":string, \"slug\":string, \
+             \"tags\":[string], \"body_paragraphs\":[string], \"figure_caption\":string}}"
+        )
+    };
+
+    let user_msg = Message::builder()
+        .role(ConversationRole::User)
+        .content(ContentBlock::Text(user_text))
+        .build()
+        .map_err(|e| AiError::Http(format!("{e:?}")))?;
+
+    let inference_cfg = InferenceConfiguration::builder()
+        .max_tokens(cfg.max_tokens as i32)
+        .temperature(0.0_f32)
+        .build();
+
+    let resp = client
+        .converse()
+        .model_id(&cfg.model)
+        .system(SystemContentBlock::Text(system_prompt(facts)))
+        .messages(user_msg)
+        .inference_config(inference_cfg)
+        .send()
+        .await
+        .map_err(|e| AiError::Http(format!("{e:?}")))?;
+
+    // Response: resp.output -> ConverseOutput enum -> Message -> content[0] -> Text
+    let text = resp
+        .output()
+        .ok_or_else(|| AiError::Parse("Bedrock: no output field".into()))?
+        .as_message()
+        .map_err(|_| AiError::Parse("Bedrock: output is not a Message".into()))?
+        .content()
+        .first()
+        .ok_or_else(|| AiError::Parse("Bedrock: empty content array".into()))?
+        .as_text()
+        .map_err(|_| AiError::Parse("Bedrock: first content block is not Text".into()))?;
+
+    parse_text_to_draft(text)
+}
+
+/// HTTP branch (Anthropic + Local).
+async fn draft_http(facts: &LeadFacts, cfg: &AiConfig) -> Result<AiDraft, AiError> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(cfg.timeout_secs))
         .build()
@@ -284,6 +363,7 @@ pub async fn draft(facts: &LeadFacts, cfg: &AiConfig) -> Result<AiDraft, AiError
                 resp.json().await.map_err(|e| AiError::Http(e.to_string()))?;
             parse_openai_response(&json)
         }
+        Backend::Bedrock => unreachable!("Bedrock handled above"),
     }
 }
 
@@ -324,7 +404,15 @@ mod tests {
     }
 
     fn cfg() -> AiConfig {
-        AiConfig { backend: Backend::Anthropic, api_key: "k".into(), model: "claude-sonnet-4-6".into(), base_url: "https://api.anthropic.com".into(), max_tokens: 4000, timeout_secs: 30 }
+        AiConfig {
+            backend: Backend::Anthropic,
+            api_key: "k".into(),
+            model: "claude-sonnet-4-6".into(),
+            base_url: "https://api.anthropic.com".into(),
+            max_tokens: 4000,
+            timeout_secs: 30,
+            region: "eu-west-2".into(),
+        }
     }
 
     #[test]
@@ -453,9 +541,50 @@ mod tests {
             base_url: base,
             max_tokens: 4000,
             timeout_secs: 120,
+            region: "eu-west-2".into(),
         };
         let d = draft(&facts(), &c).await.expect("draft should succeed");
         assert!(!d.summary.is_empty());
         assert!(!d.body_paragraphs.is_empty());
+    }
+
+    /// Live integration test — AWS Bedrock backend (Converse API).
+    /// Requires AWS credentials in the default chain (IAM user, instance role, etc.)
+    /// and the model enabled in the specified region.
+    /// Run with: cargo test -p ph-ai live_bedrock_draft -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn live_bedrock_draft() {
+        let bedrock_facts = LeadFacts {
+            title: "Man sentenced for child sexual offences".into(),
+            snippet: "A man has been sentenced after pleading guilty to multiple child sexual offences against a young victim.".into(),
+            offence_category: "child".into(),
+            kind: "Court report".into(),
+            section: "Crime".into(),
+            court: "Crown Court".into(),
+            id_risk: true,
+            ..Default::default()
+        };
+        let c = AiConfig {
+            backend: Backend::Bedrock,
+            api_key: String::new(),
+            model: "amazon.nova-lite-v1:0".into(),
+            base_url: String::new(),
+            max_tokens: 2000,
+            timeout_secs: 120,
+            region: "eu-west-2".into(),
+        };
+        let d = draft(&bedrock_facts, &c).await.expect("Bedrock draft should succeed");
+        eprintln!("=== live_bedrock_draft output ===");
+        eprintln!("summary: {}", d.summary);
+        eprintln!("meta_description: {}", d.meta_description);
+        eprintln!("slug: {}", d.slug);
+        eprintln!("tags: {:?}", d.tags);
+        eprintln!("figure_caption: {}", d.figure_caption);
+        for (i, p) in d.body_paragraphs.iter().enumerate() {
+            eprintln!("body_paragraphs[{}]: {}", i, p);
+        }
+        assert!(!d.body_paragraphs.is_empty(), "body_paragraphs must not be empty");
+        assert!(!d.summary.is_empty(), "summary must not be empty");
     }
 }
