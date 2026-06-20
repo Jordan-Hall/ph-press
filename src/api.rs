@@ -1466,6 +1466,7 @@ pub async fn desk_regenerate_draft(article_id: i64) -> Result<(), ServerFnError>
     { let _ = article_id; Err(ServerFnError::new("server only")) }
 }
 
+
 /// Trigger one crawl pass now (background). Admin only.
 #[server(endpoint = "desk_poll_now")]
 pub async fn desk_poll_now() -> Result<(), ServerFnError> {
