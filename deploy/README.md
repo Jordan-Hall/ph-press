@@ -96,6 +96,15 @@ files is ever auto-published: leads become our own legal-gated reports, and cour
 is private and never crosses into the public pipeline (the active-proceedings firewall).
 Any paid source credentials (e.g. CourtServe) belong in deploy env, never in the repo.
 
+**Lead images.** At crawl time the lead's image is captured from the feed, or backfilled
+from the article page's `og:image` when the feed carried none. The image is **downloaded and
+self-hosted only when an editor promotes** the lead — into `PH_MEDIA_DIR` (default
+`/data/uploads`, on the persistent volume), served by Caddy at `/uploads/*`. The download is
+SSRF-hardened (host must resolve to public IPs; no redirects; size-capped; jpg/png/webp only,
+by magic bytes) so a source-chosen `og:image` can't be used to reach internal addresses. A
+draft from an **official source** (police / NCA / Find Case Law) also drops the "unverified"
+banner — see `source_is_official`.
+
 ## AI drafting on promote (optional, off by default)
 
 Promoting an Intake lead can pre-fill a **guarded AI scaffold** (original prose + `[VERIFY]`

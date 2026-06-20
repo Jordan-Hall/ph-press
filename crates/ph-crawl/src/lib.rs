@@ -22,11 +22,13 @@ pub mod dedupe;
 pub mod extract;
 pub mod feed;
 pub mod fetch;
+pub mod image;
 pub mod presets;
 pub mod runner;
 pub mod source;
 
 pub use fetch::{Fetcher, DEFAULT_USER_AGENT};
+pub use image::{fetch_image_local, og_image};
 pub use runner::{run_once, seed_sources, spawn, RunReport};
 pub use source::{RawLead, RawWatch, SourceConfig};
 

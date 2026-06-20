@@ -179,6 +179,24 @@ pub async fn insert_lead(pool: &SqlitePool, lead: &NewLead) -> Result<Option<i64
     Ok(Some(id))
 }
 
+/// Backfill a lead's image reference. The runner calls this when a feed/listing
+/// carried no image but the article page's `og:image` supplied one. `attribution`
+/// is the source label; both are cleared to empty when `image_url` is empty.
+pub async fn update_lead_image(
+    pool: &SqlitePool,
+    id: i64,
+    image_url: &str,
+    attribution: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE ingest_item SET image_url = ?, image_attribution = ? WHERE id = ?")
+        .bind(image_url)
+        .bind(attribution)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// The lead that was promoted into the given article (if any).
 pub async fn lead_by_promoted_article(pool: &SqlitePool, article_id: i64) -> Result<Option<IngestItem>> {
     Ok(sqlx::query_as::<_, IngestItem>(
@@ -283,7 +301,7 @@ pub fn banner_draft(lead: &IngestItem) -> PromotedDraft {
         let caption = if !lead.image_attribution.is_empty() {
             lead.image_attribution.as_str()
         } else {
-            "Source image \u{2014} verify usage rights"
+            "Source image \u{2014} check it shows the right person and verify usage rights"
         };
         paras.push(format!("![{}]({})", caption, lead.image_url));
         lead.image_url.clone()

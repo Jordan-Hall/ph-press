@@ -899,11 +899,43 @@ fn lead_facts(lead: &ph_cms::ingest::IngestItem, kind: &str, section: &str) -> p
 /// Generate the promote content ONCE. When AI is enabled and succeeds, a provenance
 /// banner paragraph is prepended to the AI body and a figure placeholder is appended.
 /// When AI is disabled or the call fails, the banner draft is returned wholesale.
+/// Self-host the lead's image at PROMOTE time: download it into the local media
+/// dir (`PH_MEDIA_DIR`, default `/data/uploads`) and return a lead clone with
+/// `image_url` rewritten to the served `/uploads/<sha>.<ext>` path, so a published
+/// report self-hosts the photo. If the image can't be self-hosted (no image,
+/// SSRF-blocked, not a real image, oversize, fetch/write error) it is DROPPED, NOT
+/// hot-linked — so nothing published ever silently depends on the source staying
+/// up. The download is SSRF-hardened in `ph_crawl::image::fetch_image_local`.
+async fn localize_lead_image(lead: &ph_cms::ingest::IngestItem) -> ph_cms::ingest::IngestItem {
+    if lead.image_url.is_empty() || lead.image_url.starts_with("/uploads/") {
+        return lead.clone();
+    }
+    let dir = std::env::var("PH_MEDIA_DIR").unwrap_or_else(|_| "/data/uploads".to_string());
+    let mut l = lead.clone();
+    match ph_crawl::image::fetch_image_local(
+        &lead.image_url,
+        std::path::Path::new(&dir),
+        &crawler_user_agent(),
+    )
+    .await
+    {
+        Some(name) => l.image_url = format!("/uploads/{name}"),
+        None => {
+            // Drop rather than hot-link the source.
+            l.image_url = String::new();
+            l.image_attribution = String::new();
+        }
+    }
+    l
+}
+
 async fn generate_promo_content(
     lead: &ph_cms::ingest::IngestItem,
     kind: &str,
     section: &str,
 ) -> ph_cms::ingest::PromotedDraft {
+    let lead = localize_lead_image(lead).await;
+    let lead = &lead;
     let banner = ph_cms::ingest::banner_draft(lead);
     let Some(cfg) = ai_config() else {
         return banner;
@@ -928,6 +960,8 @@ async fn generate_promo_content_strict(
     kind: &str,
     section: &str,
 ) -> Result<ph_cms::ingest::PromotedDraft, String> {
+    let lead = localize_lead_image(lead).await;
+    let lead = &lead;
     let cfg = ai_config().ok_or_else(|| "AI drafting is not enabled".to_string())?;
     let facts = lead_facts(lead, kind, section);
     let d = ph_ai::draft(&facts, &cfg)
@@ -954,7 +988,7 @@ fn assemble_promo_draft(
         } else if !d.figure_caption.trim().is_empty() {
             d.figure_caption.trim()
         } else {
-            "Source image \u{2014} verify usage rights"
+            "Source image \u{2014} check it shows the right person and verify usage rights"
         };
         paras.push(format!("![{}]({})", cap, lead.image_url));
         lead.image_url.clone()

@@ -92,7 +92,7 @@ async fn poll_feed(
     } else {
         adapters::news::parse(&body)
     };
-    insert_leads(pool, src, leads).await
+    insert_leads(pool, fetcher, src, leads).await
 }
 
 /// Scrape a UK police-force news listing (GOSS/Police.UK CMS) into post-conviction
@@ -100,13 +100,17 @@ async fn poll_feed(
 async fn poll_police(pool: &Db, fetcher: &Fetcher, src: &ingest::IngestSource) -> Result<u64> {
     let body = fetcher.get_text(&src.url).await?;
     let leads = adapters::police::parse(&body, &src.url);
-    insert_leads(pool, src, leads).await
+    insert_leads(pool, fetcher, src, leads).await
 }
 
 /// Insert parsed leads, attributing any image reference to the source label when
-/// the adapter left it blank.
+/// the adapter left it blank. For a genuinely NEW lead that arrived without an
+/// image, backfill one from the article page's `og:image` (so a later promote has
+/// something to self-host). The image URL is only CAPTURED here — it is downloaded
+/// and self-hosted at promote time, not at crawl time.
 async fn insert_leads(
     pool: &Db,
+    fetcher: &Fetcher,
     src: &ingest::IngestSource,
     leads: Vec<crate::source::RawLead>,
 ) -> Result<u64> {
@@ -130,12 +134,31 @@ async fn insert_leads(
             image_attribution,
         };
         match ingest::insert_lead(pool, &lead).await {
-            Ok(Some(_)) => added += 1,
+            Ok(Some(id)) => {
+                added += 1;
+                // Backfill a missing image from the article page (NEW leads only —
+                // never re-fetched on a re-crawl). Best-effort: robots/parse/no-tag
+                // all just leave the image unset.
+                if lead.image_url.is_empty() {
+                    if let Some(img) = article_og_image(fetcher, &lead.url).await {
+                        let _ = ingest::update_lead_image(pool, id, &img, &src.label).await;
+                    }
+                }
+            }
             Ok(None) => {}
             Err(e) => return Err(Error::Cms(e.to_string())),
         }
     }
     Ok(added)
+}
+
+/// Fetch a lead's article page and read its `og:image` (resolved to an absolute
+/// http(s) URL). Best-effort — `None` on any fetch/parse failure. Goes through the
+/// polite [`Fetcher`] (robots + per-host rate limit).
+async fn article_og_image(fetcher: &Fetcher, url: &str) -> Option<String> {
+    let base = url::Url::parse(url).ok()?;
+    let html = fetcher.get_text(url).await.ok()?;
+    crate::image::og_image(&html, &base)
 }
 
 async fn poll_courtwatch(pool: &Db, fetcher: &Fetcher, src: &ingest::IngestSource) -> Result<u64> {
