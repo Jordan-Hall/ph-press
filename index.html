@@ -27,6 +27,11 @@
 /* ===== TOKENS ===== dark "press at night" (default) + light "paper". Palette
    anchored on the PH brand red; warm near-black / warm newsprint, not navy. */
 :root{
+  /* ===== BRAND PALETTE — to re-skin a fork, change the core colours here AND their
+     html[data-theme="light"] overrides below: --paper/--paper-2/--sunk (backgrounds),
+     --ink/--ink-2 (text), --red/--red-2/--on-red (accent), --tag (accent tint), plus
+     the --serif/--sans/--mono font stacks. Everything else derives from these.
+     Full rebrand guide: /BRANDING.md ===== */
   --paper:#14151A; --paper-2:#1B1D23; --sunk:#0F1014;
   --ink:#F4F1EA; --ink-2:#C6C2B7; --muted:#8E897D; --faint:#5C584F;
   /* Dark-mode hairlines are DARK (not cream) so they never read as white lines;
