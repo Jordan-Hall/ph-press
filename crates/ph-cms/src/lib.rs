@@ -452,6 +452,12 @@ pub async fn count_users(pool: &SqlitePool) -> Result<i64> {
     )
 }
 
+/// True when there are no staff users yet — the `/desk` first-run install screen
+/// shows until the first administrator account is created.
+pub async fn needs_install(pool: &SqlitePool) -> Result<bool> {
+    Ok(count_users(pool).await? == 0)
+}
+
 /// Create a staff user. The very first user must be an admin (bootstrap gate);
 /// after that, only an existing admin should call this (enforce at the API layer).
 pub async fn create_user(
@@ -1219,17 +1225,24 @@ pub async fn open_and_setup(
     url: &str,
     admin_user: &str,
     admin_display: &str,
-    admin_pass: &str,
+    admin_pass: Option<&str>,
     reset_admin: bool,
     seeds: &[ArticleSeed<'_>],
 ) -> Result<Db> {
     let pool = connect(url).await?;
     init(&pool).await?;
-    let created = bootstrap_admin(&pool, admin_user, admin_display, admin_pass).await?;
-    // Never overwrite the admin on a normal deploy. Only reset the password when
-    // the operator explicitly asks (PH_ADMIN_RESET), i.e. a deliberate takeover.
-    if !created && reset_admin && !reset_password(&pool, admin_user, admin_pass).await? {
-        eprintln!("[ph-cms] PH_ADMIN_RESET set but no user '{admin_user}' to reset");
+    // With a password supplied (PH_ADMIN_PASS), keep the env-seeded bootstrap +
+    // operator reset (PH_ADMIN_RESET). Without one, do NOT auto-create an admin —
+    // a fresh deploy is completed via the first-run install screen, so there is no
+    // default password anywhere. An EXISTING deployment already has users, so this
+    // changes nothing for it (bootstrap_admin no-ops once count_users > 0).
+    if let Some(pass) = admin_pass {
+        let created = bootstrap_admin(&pool, admin_user, admin_display, pass).await?;
+        if !created && reset_admin && !reset_password(&pool, admin_user, pass).await? {
+            eprintln!("[ph-cms] PH_ADMIN_RESET set but no user '{admin_user}' to reset");
+        }
+    } else if reset_admin {
+        eprintln!("[ph-cms] PH_ADMIN_RESET set but PH_ADMIN_PASS is empty — skipping reset");
     }
     seed_articles(&pool, seeds).await?;
     Ok(pool)
@@ -1361,6 +1374,24 @@ mod tests {
         assert!(consume_password_reset(&pool, &token_b, "valid-pass")
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn install_gate_password_optional() {
+        // No password → NO admin auto-seeded; the first-run install screen shows.
+        let pool = open_and_setup("sqlite::memory:", "admin", "Admin", None, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(count_users(&pool).await.unwrap(), 0);
+        assert!(needs_install(&pool).await.unwrap());
+
+        // A supplied password → the first admin IS env-seeded (operator opt-in).
+        let pool2 = open_and_setup("sqlite::memory:", "admin", "Admin", Some("install-pw"), false, &[])
+            .await
+            .unwrap();
+        assert_eq!(count_users(&pool2).await.unwrap(), 1);
+        assert!(!needs_install(&pool2).await.unwrap());
+        assert!(authenticate(&pool2, "admin", "install-pw").await.is_ok());
     }
 
     #[tokio::test]
