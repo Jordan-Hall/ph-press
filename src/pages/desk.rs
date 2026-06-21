@@ -8,14 +8,15 @@ use dioxus::prelude::*;
 
 use crate::api::{
     desk_add_correction, desk_add_staff, desk_add_watch, desk_articles, desk_audit,
-    desk_complaint_status, desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
+    desk_complaint_note, desk_complaint_reply, desk_complaint_status, desk_complaint_thread,
+    desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
     desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
     desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
     desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
     staff_install, staff_login, staff_logout, staff_me, staff_needs_install, staff_profile,
-    staff_reset_password, DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead,
-    DeskSession, DeskSource, DeskWatch, PreviewArticle, StaffMember,
+    staff_reset_password, DeskArticle, DeskComplaint, DeskComplaintMessage, DeskConviction,
+    DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -586,28 +587,48 @@ fn ComplaintsPanel() -> Element {
     let mut items = use_signal(|| Option::<Vec<DeskComplaint>>::None);
     let mut busy = use_signal(|| false);
     let mut err = use_signal(|| Option::<String>::None);
+    let mut selected = use_signal(|| Option::<i64>::None);
+    let mut reload = use_signal(|| 0u32);
     let mut show_new = use_signal(|| false);
     let mut slug = use_signal(String::new);
     let mut who = use_signal(String::new);
+    let mut email = use_signal(String::new);
+    let mut category = use_signal(String::new);
     let mut body = use_signal(String::new);
 
     use_resource(move || async move {
+        reload(); // refetch the inbox when returning from a complaint detail
         match desk_complaints().await {
             Ok(v) => items.set(Some(v)),
             Err(e) => err.set(Some(e.to_string())),
         }
     });
 
+    // An open complaint shows its full detail/thread instead of the list.
+    if let Some(cid) = selected() {
+        return rsx! {
+            ComplaintDetail {
+                id: cid,
+                on_back: move |_| {
+                    selected.set(None);
+                    reload.set(reload() + 1);
+                },
+            }
+        };
+    }
+
     let submit = move |evt: FormEvent| {
         evt.prevent_default();
         spawn(async move {
             busy.set(true);
             err.set(None);
-            match desk_log_complaint(slug(), who(), body()).await {
+            match desk_log_complaint(slug(), who(), email(), category(), body()).await {
                 Ok(v) => {
                     items.set(Some(v));
                     slug.set(String::new());
                     who.set(String::new());
+                    email.set(String::new());
+                    category.set(String::new());
                     body.set(String::new());
                     show_new.set(false);
                 }
@@ -631,11 +652,19 @@ fn ComplaintsPanel() -> Element {
                     if show_new() { "Close" } else { "Log a complaint" }
                 }
             }
+            p { class: "desk-muted pad", style: "padding-top:0;",
+                "Readers complain via each article's \u{201c}Make a complaint\u{201d} link. Open one to investigate, reply, and record the outcome — IMPRESS: acknowledge promptly, give a final response within 21 days."
+            }
             if show_new() {
                 form { class: "desk-new", onsubmit: submit,
+                    p { class: "desk-muted", style: "margin:0 0 8px;", "Log a complaint that arrived another way (phone, post, email)." }
                     div { class: "desk-new-row",
-                        input { class: "desk-in", r#type: "text", placeholder: "Article slug (optional)", value: "{slug}", oninput: move |e| slug.set(e.value()) }
-                        input { class: "desk-in", r#type: "text", placeholder: "Complainant (optional)", value: "{who}", oninput: move |e| who.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Article slug", value: "{slug}", oninput: move |e| slug.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Complainant name", value: "{who}", oninput: move |e| who.set(e.value()) }
+                    }
+                    div { class: "desk-new-row",
+                        input { class: "desk-in", r#type: "email", placeholder: "Complainant email", value: "{email}", oninput: move |e| email.set(e.value()) }
+                        input { class: "desk-in", r#type: "text", placeholder: "Concerns (Code clause)", value: "{category}", oninput: move |e| category.set(e.value()) }
                     }
                     textarea { class: "desk-in full", rows: "3", placeholder: "What is the complaint?", value: "{body}", oninput: move |e| body.set(e.value()) }
                     button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Record complaint" }
@@ -652,7 +681,7 @@ fn ComplaintsPanel() -> Element {
                         thead { tr { th { "Complaint" } th { "Re" } th { "From" } th { "Status" } th { "Logged" } } }
                         tbody {
                             for c in v {
-                                ComplaintRow { key: "{c.id}", c, items, busy, err }
+                                ComplaintRow { key: "{c.id}", c, selected }
                             }
                         }
                     }
@@ -663,19 +692,8 @@ fn ComplaintsPanel() -> Element {
 }
 
 #[component]
-fn ComplaintRow(
-    c: DeskComplaint,
-    mut items: Signal<Option<Vec<DeskComplaint>>>,
-    mut busy: Signal<bool>,
-    mut err: Signal<Option<String>>,
-) -> Element {
+fn ComplaintRow(c: DeskComplaint, mut selected: Signal<Option<i64>>) -> Element {
     let id = c.id;
-    // The next statuses an editor can move this complaint to.
-    let nexts: Vec<(&str, &str)> = match c.status.as_str() {
-        "received" => vec![("under_review", "Review")],
-        "under_review" => vec![("upheld", "Uphold"), ("rejected", "Reject")],
-        _ => vec![],
-    };
     let re = if c.article_slug.is_empty() {
         "—".to_string()
     } else {
@@ -687,33 +705,180 @@ fn ComplaintRow(
         c.complainant.clone()
     };
     rsx! {
-        tr {
-            td { class: "desk-wrap", "{c.body}" }
+        tr { class: "desk-rowlink", onclick: move |_| selected.set(Some(id)),
+            td { class: "desk-wrap",
+                span { class: "desk-row-title", "{c.body}" }
+                if c.decision_overdue {
+                    span { class: "desk-flag", "decision overdue" }
+                } else if c.ack_overdue {
+                    span { class: "desk-flag", "ack overdue" }
+                }
+            }
             td { class: "desk-muted", "{re}" }
             td { class: "desk-muted", "{from}" }
-            td {
-                span { class: "desk-state s-c-{c.status}", "{complaint_label(&c.status)}" }
+            td { span { class: "desk-state s-c-{c.status}", "{complaint_label(&c.status)}" } }
+            td { class: "desk-muted", "{ymd(c.ts)}" }
+        }
+    }
+}
+
+/// The investigate-and-communicate view for one complaint: the case, the IMPRESS
+/// status workflow + timeline flags, the handling thread (internal notes + replies),
+/// and forms to add a note or send the complainant an emailed reply.
+#[component]
+fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
+    let mut data = use_signal(|| Option::<(DeskComplaint, Vec<DeskComplaintMessage>)>::None);
+    let mut err = use_signal(|| Option::<String>::None);
+    let mut busy = use_signal(|| false);
+    let mut note = use_signal(String::new);
+    let mut reply = use_signal(String::new);
+
+    use_resource(move || async move {
+        match desk_complaint_thread(id).await {
+            Ok(d) => data.set(Some(d)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let d = data.read().clone();
+    rsx! {
+        section { class: "desk-panel",
+            div { class: "desk-panel-head",
+                h2 { "Complaint" }
+                button { class: "desk-btn ghost", onclick: move |_| on_back.call(()), "← Back" }
             }
-            td { class: "desk-muted",
-                div { "{ymd(c.ts)}" }
-                div { class: "desk-actions",
-                    for (to, label) in nexts {
+            if let Some(e) = err() {
+                p { class: "desk-error pad", "{e}" }
+            }
+            match d {
+                None => rsx! { p { class: "desk-muted pad", "Loading…" } },
+                Some((c, thread)) => rsx! {
+                    div { class: "desk-new",
+                        p { class: "desk-muted", style: "margin:0 0 6px;",
+                            "PH-C{c.id} · "
+                            {complaint_label(&c.status)}
+                        }
+                        if c.decision_overdue {
+                            p { class: "desk-error", "Decision overdue — IMPRESS expects a final response within 21 days." }
+                        } else if c.ack_overdue {
+                            p { class: "desk-error", "Acknowledgement overdue — IMPRESS expects prompt acknowledgement (7 days)." }
+                        }
+                        table { class: "desk-table",
+                            tbody {
+                                tr {
+                                    td { class: "desk-muted", "Article" }
+                                    td { if c.article_slug.is_empty() { "—" } else { "{c.article_slug}" } }
+                                }
+                                tr {
+                                    td { class: "desk-muted", "Name" }
+                                    td { "{c.complainant}" }
+                                }
+                                tr {
+                                    td { class: "desk-muted", "Email" }
+                                    td { "{c.complainant_email}" }
+                                }
+                                if !c.category.is_empty() {
+                                    tr {
+                                        td { class: "desk-muted", "Concerns" }
+                                        td { "{c.category}" }
+                                    }
+                                }
+                                tr {
+                                    td { class: "desk-muted", "Received" }
+                                    td { "{ymd(c.ts)}" }
+                                }
+                            }
+                        }
+                        p { class: "desk-wrap", style: "margin-top:10px;white-space:pre-wrap;", "{c.body}" }
+                    }
+                    div { class: "desk-new", style: "margin-top:16px;",
+                        p { class: "desk-muted", style: "margin:0 0 8px;", "Move status" }
+                        div { class: "desk-actions",
+                            for (to , label) in complaint_next_statuses(&c.status) {
+                                button {
+                                    key: "{to}",
+                                    class: "desk-act",
+                                    disabled: busy(),
+                                    onclick: move |_| {
+                                        spawn(async move {
+                                            busy.set(true);
+                                            err.set(None);
+                                            match desk_complaint_status(id, to.to_string()).await {
+                                                Ok(_) => {
+                                                    if let Ok(x) = desk_complaint_thread(id).await {
+                                                        data.set(Some(x));
+                                                    }
+                                                }
+                                                Err(e) => err.set(Some(e.to_string())),
+                                            }
+                                            busy.set(false);
+                                        });
+                                    },
+                                    "{label}"
+                                }
+                            }
+                        }
+                    }
+                    div { class: "desk-new", style: "margin-top:16px;",
+                        p { class: "desk-muted", style: "margin:0 0 8px;", "Handling notes & replies" }
+                        if thread.is_empty() {
+                            p { class: "desk-muted", "Nothing recorded yet." }
+                        }
+                        for (i , m) in thread.iter().enumerate() {
+                            div { key: "{i}", class: "complaint-msg c-{m.channel}",
+                                p { class: "desk-muted", style: "margin:0 0 2px;font-size:12px;",
+                                    {format!("{} \u{00b7} {} \u{00b7} {}",
+                                        if m.channel == "reply" { "\u{21a9} Reply to complainant" } else { "Internal note" },
+                                        m.author, ymd(m.ts))}
+                                }
+                                p { class: "desk-wrap", style: "margin:0;white-space:pre-wrap;", "{m.body}" }
+                            }
+                        }
+                    }
+                    div { class: "desk-new", style: "margin-top:16px;",
+                        p { class: "desk-muted", style: "margin:0 0 6px;", "Add internal note (staff only)" }
+                        textarea { class: "desk-in full", rows: "2", value: "{note}", oninput: move |e| note.set(e.value()) }
                         button {
-                            key: "{to}",
-                            class: "desk-act",
+                            class: "desk-btn sm",
                             disabled: busy(),
                             onclick: move |_| {
                                 spawn(async move {
                                     busy.set(true);
                                     err.set(None);
-                                    match desk_complaint_status(id, to.to_string()).await {
-                                        Ok(v) => items.set(Some(v)),
+                                    match desk_complaint_note(id, note()).await {
+                                        Ok(x) => {
+                                            data.set(Some(x));
+                                            note.set(String::new());
+                                        }
                                         Err(e) => err.set(Some(e.to_string())),
                                     }
                                     busy.set(false);
                                 });
                             },
-                            "{label}"
+                            "Add note"
+                        }
+                    }
+                    div { class: "desk-new", style: "margin-top:12px;",
+                        p { class: "desk-muted", style: "margin:0 0 6px;", "Reply to the complainant (emailed + recorded)" }
+                        textarea { class: "desk-in full", rows: "3", value: "{reply}", oninput: move |e| reply.set(e.value()) }
+                        button {
+                            class: "desk-btn sm",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match desk_complaint_reply(id, reply()).await {
+                                        Ok(x) => {
+                                            data.set(Some(x));
+                                            reply.set(String::new());
+                                        }
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "Send reply"
                         }
                     }
                 }
@@ -1127,10 +1292,32 @@ fn ProfilePanel(user: DeskSession) -> Element {
 fn complaint_label(status: &str) -> &str {
     match status {
         "received" => "Received",
-        "under_review" => "Under review",
+        "acknowledged" => "Acknowledged",
+        "under_investigation" => "Under investigation",
         "upheld" => "Upheld",
-        "rejected" => "Rejected",
+        "partly_upheld" => "Partly upheld",
+        "not_upheld" => "Not upheld",
+        "closed" => "Closed",
+        "escalated" => "Escalated to IMPRESS",
         _ => status,
+    }
+}
+
+/// The next statuses an editor can move a complaint to (the IMPRESS workflow).
+fn complaint_next_statuses(status: &str) -> Vec<(&'static str, &'static str)> {
+    match status {
+        "received" => vec![("acknowledged", "Acknowledge")],
+        "acknowledged" => vec![("under_investigation", "Start investigation")],
+        "under_investigation" => vec![
+            ("upheld", "Uphold"),
+            ("partly_upheld", "Partly uphold"),
+            ("not_upheld", "Not upheld"),
+        ],
+        "upheld" | "partly_upheld" | "not_upheld" => {
+            vec![("closed", "Close"), ("escalated", "Escalated to IMPRESS")]
+        }
+        "closed" => vec![("escalated", "Escalated to IMPRESS")],
+        _ => vec![],
     }
 }
 

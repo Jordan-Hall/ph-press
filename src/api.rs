@@ -65,8 +65,24 @@ pub struct DeskComplaint {
     pub id: i64,
     pub article_slug: String,
     pub complainant: String,
+    pub complainant_email: String,
+    pub category: String,
     pub body: String,
     pub status: String,
+    pub acknowledged_at: Option<i64>,
+    pub resolved_at: Option<i64>,
+    /// IMPRESS targets: not acknowledged within 7 days / not resolved within 21.
+    pub ack_overdue: bool,
+    pub decision_overdue: bool,
+    pub ts: i64,
+}
+
+/// One message in a complaint's handling thread (the desk detail view).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskComplaintMessage {
+    pub author: String,
+    pub channel: String, // "internal" | "reply"
+    pub body: String,
     pub ts: i64,
 }
 
@@ -640,13 +656,24 @@ pub async fn desk_create(
 
 #[cfg(feature = "server")]
 fn to_complaints(v: Vec<ph_cms::Complaint>) -> Vec<DeskComplaint> {
+    const DAY: i64 = 86_400;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     v.into_iter()
         .map(|c| DeskComplaint {
             id: c.id,
             article_slug: c.article_slug,
             complainant: c.complainant,
+            complainant_email: c.complainant_email,
+            category: c.category,
             body: c.body,
+            ack_overdue: c.acknowledged_at.is_none() && now - c.ts > 7 * DAY,
+            decision_overdue: c.resolved_at.is_none() && now - c.ts > 21 * DAY,
             status: c.status,
+            acknowledged_at: c.acknowledged_at,
+            resolved_at: c.resolved_at,
             ts: c.ts,
         })
         .collect()
@@ -682,17 +709,20 @@ pub async fn desk_complaints() -> Result<Vec<DeskComplaint>, ServerFnError> {
     }
 }
 
-/// Record a complaint received by any means, then return the refreshed inbox.
+/// Record a complaint received another way (staff log it on the complainant's
+/// behalf), then return the refreshed inbox.
 #[server(endpoint = "desk_log_complaint")]
 pub async fn desk_log_complaint(
     article_slug: String,
     complainant: String,
+    email: String,
+    category: String,
     body: String,
 ) -> Result<Vec<DeskComplaint>, ServerFnError> {
     #[cfg(feature = "server")]
     {
         require_session().await?;
-        crate::cms::log_complaint(&article_slug, &complainant, &body)
+        crate::cms::log_complaint(&article_slug, &complainant, &email, &category, &body)
             .await
             .map_err(ServerFnError::new)?;
         Ok(to_complaints(
@@ -701,7 +731,7 @@ pub async fn desk_log_complaint(
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (article_slug, complainant, body);
+        let _ = (article_slug, complainant, email, category, body);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -725,6 +755,89 @@ pub async fn desk_complaint_status(
     #[cfg(not(feature = "server"))]
     {
         let _ = (id, status);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Build the (complaint, thread) DTO pair. Server-only helper — callers do auth.
+#[cfg(feature = "server")]
+async fn complaint_thread_dto(
+    id: i64,
+) -> Result<(DeskComplaint, Vec<DeskComplaintMessage>), ServerFnError> {
+    let (c, thread) = crate::cms::complaint_detail(id)
+        .await
+        .map_err(ServerFnError::new)?;
+    let complaint = to_complaints(vec![c])
+        .into_iter()
+        .next()
+        .ok_or_else(|| ServerFnError::new("complaint not found"))?;
+    let messages = thread
+        .into_iter()
+        .map(|m| DeskComplaintMessage {
+            author: m.author,
+            channel: m.channel,
+            body: m.body,
+            ts: m.ts,
+        })
+        .collect();
+    Ok((complaint, messages))
+}
+
+/// A complaint + its full handling thread (the desk detail view). Session required.
+#[server(endpoint = "desk_complaint_thread")]
+pub async fn desk_complaint_thread(
+    id: i64,
+) -> Result<(DeskComplaint, Vec<DeskComplaintMessage>), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        complaint_thread_dto(id).await
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = id;
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Add a staff-only internal note to a complaint; returns the refreshed thread.
+#[server(endpoint = "desk_complaint_note")]
+pub async fn desk_complaint_note(
+    id: i64,
+    body: String,
+) -> Result<(DeskComplaint, Vec<DeskComplaintMessage>), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::add_complaint_note(&session.username, id, &body)
+            .await
+            .map_err(ServerFnError::new)?;
+        complaint_thread_dto(id).await
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, body);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Reply to the complainant (recorded + emailed via SES); returns the refreshed thread.
+#[server(endpoint = "desk_complaint_reply")]
+pub async fn desk_complaint_reply(
+    id: i64,
+    body: String,
+) -> Result<(DeskComplaint, Vec<DeskComplaintMessage>), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::send_complaint_reply(&session.username, id, &body)
+            .await
+            .map_err(ServerFnError::new)?;
+        complaint_thread_dto(id).await
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, body);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -887,22 +1000,54 @@ pub async fn desk_audit() -> Result<AuditLog, ServerFnError> {
 
 /// Submit a complaint from the PUBLIC site (no session) — it lands straight in the
 /// /desk Complaints inbox (status "received"), audited. The body is required.
+/// Per-email cooldown for the public complaint form (one / 5 min), to bound
+/// acknowledgement-email abuse and duplicate submissions.
+#[cfg(feature = "server")]
+fn complaint_rate_ok(email: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    const COOLDOWN_SECS: u64 = 300;
+    static LAST: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut map = LAST.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    map.retain(|_, &mut t| now.saturating_sub(t) < COOLDOWN_SECS);
+    let key = email.trim().to_lowercase();
+    if map.get(&key).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN_SECS) {
+        return false;
+    }
+    map.insert(key, now);
+    true
+}
+
+/// Public per-article complaint submission. Records the complaint and emails the
+/// complainant a prompt acknowledgement (IMPRESS). Returns the reference for the
+/// confirmation screen. No auth.
 #[server(endpoint = "submit_complaint")]
 pub async fn submit_complaint(
     article_slug: String,
     complainant: String,
+    email: String,
+    category: String,
     body: String,
-) -> Result<(), ServerFnError> {
+) -> Result<String, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        crate::cms::log_complaint(&article_slug, &complainant, &body)
+        if !complaint_rate_ok(email.trim()) {
+            return Err(ServerFnError::new(
+                "You've just submitted a complaint from this email — please wait a few minutes before sending another.",
+            ));
+        }
+        crate::cms::submit_complaint(&article_slug, &complainant, &email, &category, &body)
             .await
-            .map(|_| ())
             .map_err(ServerFnError::new)
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (article_slug, complainant, body);
+        let _ = (article_slug, complainant, email, category, body);
         Err(ServerFnError::new("server only"))
     }
 }
