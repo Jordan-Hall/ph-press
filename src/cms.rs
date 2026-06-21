@@ -9,34 +9,23 @@ use tokio::sync::OnceCell;
 
 static DB: OnceCell<Db> = OnceCell::const_new();
 
-/// Known default for the first admin when PH_ADMIN_PASS isn't set. Meant to be
-/// changed immediately via /desk → Settings (logged as a warning at boot).
-const DEFAULT_ADMIN_PASS: &str = "PH-med!a1";
-
 /// Lazily open + set up the database. Config via env:
 ///   PH_DB         sqlite url (default sqlite:/data/ph-press.db?mode=rwc)
 ///   PH_ADMIN_USER first admin username (default "admin")
-///   PH_ADMIN_PASS first admin password (default: generated + logged once)
+///   PH_ADMIN_PASS optional. UNSET → no admin is seeded; a fresh deploy creates the
+///                 first admin via the /desk install screen (no default password).
+///                 SET → env-seeds the first admin (+ resets it with PH_ADMIN_RESET).
 async fn db() -> Result<&'static Db, ph_cms::CmsError> {
     DB.get_or_try_init(|| async {
         let url = std::env::var("PH_DB")
             .unwrap_or_else(|_| "sqlite:/data/ph-press.db?mode=rwc".to_string());
         let admin_user = std::env::var("PH_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
-        // PH_ADMIN_PASS is an OPTIONAL deploy override. When it isn't set (empty =
-        // unset, since GitHub renders an unset secret as ""), the first admin gets
-        // a KNOWN default so you can always log in — then change it in /desk →
-        // Settings. The default is only meaningful on the very first deploy
-        // (bootstrap is create-once); it never overwrites an existing admin.
-        let admin_pass = std::env::var("PH_ADMIN_PASS")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                eprintln!(
-                    "[ph-press] PH_ADMIN_PASS not set; first admin uses the default password. \
-                     Sign in and change it in /desk → Settings."
-                );
-                DEFAULT_ADMIN_PASS.to_string()
-            });
+        // PH_ADMIN_PASS is OPTIONAL. Unset (empty — GitHub renders an unset secret
+        // as "") → None: no admin is auto-created, and a fresh deploy is finished
+        // via the /desk first-run install screen. Set → env-seed the first admin.
+        // There is no default password anywhere.
+        let admin_pass: Option<String> =
+            std::env::var("PH_ADMIN_PASS").ok().filter(|s| !s.is_empty());
         // PH_ADMIN_RESET=1 (or true) on a deploy deliberately resets the admin
         // password to PH_ADMIN_PASS (operator takeover). Otherwise the existing
         // admin is never touched on an update.
@@ -49,7 +38,7 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
             &url,
             &admin_user,
             "Administrator",
-            &admin_pass,
+            admin_pass.as_deref(),
             reset,
             &seeds,
         )
@@ -73,6 +62,60 @@ async fn db() -> Result<&'static Db, ph_cms::CmsError> {
         Ok(pool)
     })
     .await
+}
+
+/// Does the site still need first-run setup (no staff users yet)? Drives the
+/// `/desk` install screen.
+pub async fn needs_install() -> Result<bool, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::needs_install(pool).await.map_err(|e| e.to_string())
+}
+
+/// First-run install: create the very first administrator account and mint a
+/// session for them. Valid ONLY while no users exist (re-checked here to close the
+/// race), so it can never create a second account or run after setup. Returns the
+/// raw session token for the API layer to put in the cookie.
+pub async fn install_admin(
+    username: &str,
+    display_name: &str,
+    email: &str,
+    password: &str,
+) -> Result<String, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    if !ph_cms::needs_install(pool).await.map_err(|e| e.to_string())? {
+        return Err("setup has already been completed".to_string());
+    }
+    if username.trim().is_empty() || display_name.trim().is_empty() {
+        return Err("username and display name are required".to_string());
+    }
+    ph_cms::create_user(
+        pool,
+        username.trim(),
+        display_name.trim(),
+        ph_cms::Role::Admin,
+        password,
+        email,
+    )
+    .await
+    .map_err(|e| match e {
+        ph_cms::CmsError::Db(_) => "that username is already taken".to_string(),
+        other => other.to_string(),
+    })?;
+    let user = ph_cms::authenticate(pool, username.trim(), password)
+        .await
+        .map_err(|e| e.to_string())?;
+    let token = ph_cms::create_session(pool, &user, ph_cms::SESSION_TTL_SECS)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = ph_cms::append_audit(
+        pool,
+        &user.username,
+        "install.admin",
+        &user.username,
+        "first-run install",
+    )
+    .await;
+    Ok(token)
 }
 
 /// Number of publicly visible (published/corrected) articles in the DB. Used by

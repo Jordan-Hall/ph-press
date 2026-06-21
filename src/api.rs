@@ -357,6 +357,55 @@ pub async fn staff_login(username: String, password: String) -> Result<DeskSessi
     }
 }
 
+/// Does this deployment still need first-run setup (no users yet)? Drives the
+/// `/desk` install screen. No auth — this is the pre-account state.
+#[server(endpoint = "staff_needs_install")]
+pub async fn staff_needs_install() -> Result<bool, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::needs_install().await.map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Ok(false)
+    }
+}
+
+/// First-run install: create the first administrator account and sign them in.
+/// Valid ONLY while no users exist (enforced server-side); no prior auth.
+#[server(endpoint = "staff_install")]
+pub async fn staff_install(
+    username: String,
+    display_name: String,
+    email: String,
+    password: String,
+) -> Result<DeskSession, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        if password.chars().count() < 8 {
+            return Err(ServerFnError::new("password must be at least 8 characters"));
+        }
+        let token = crate::cms::install_admin(&username, &display_name, &email, &password)
+            .await
+            .map_err(ServerFnError::new)?;
+        let session = crate::cms::session_for(&token)
+            .await
+            .map_err(ServerFnError::new)?
+            .ok_or_else(|| ServerFnError::new("session could not be established"))?;
+        set_session_cookie(&token, ph_cms::SESSION_TTL_SECS);
+        Ok(DeskSession {
+            username: session.username,
+            display_name: session.display_name,
+            role: session.role,
+        })
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (username, display_name, email, password);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
 /// Who am I? Returns the current session, or None when logged out. Called on
 /// `/desk` load to decide between the login form and the dashboard.
 #[server(endpoint = "staff_me")]

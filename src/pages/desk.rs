@@ -13,9 +13,9 @@ use crate::api::{
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
     desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
     desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
-    staff_login, staff_logout, staff_me, staff_profile, staff_reset_password, DeskArticle,
-    DeskComplaint, DeskConviction, DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch,
-    PreviewArticle, StaffMember,
+    staff_install, staff_login, staff_logout, staff_me, staff_needs_install, staff_profile,
+    staff_reset_password, DeskArticle, DeskComplaint, DeskConviction, DeskCorrection, DeskLead,
+    DeskSession, DeskSource, DeskWatch, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -41,6 +41,8 @@ enum EdMode {
 #[derive(Clone, PartialEq)]
 enum Auth {
     Loading,
+    /// Fresh deploy with no users yet — show the first-run install screen.
+    NeedsInstall,
     Out,
     In(DeskSession),
 }
@@ -49,10 +51,16 @@ enum Auth {
 pub fn Desk() -> Element {
     let mut auth = use_signal(|| Auth::Loading);
 
-    // Resolve the current session once on load (server reads the HttpOnly cookie).
+    // Resolve state once on load: an existing session wins; otherwise, if no users
+    // exist yet, show first-run install; else the login form.
     use_resource(move || async move {
-        let me = staff_me().await.ok().flatten();
-        auth.set(me.map_or(Auth::Out, Auth::In));
+        if let Some(me) = staff_me().await.ok().flatten() {
+            auth.set(Auth::In(me));
+        } else if staff_needs_install().await.unwrap_or(false) {
+            auth.set(Auth::NeedsInstall);
+        } else {
+            auth.set(Auth::Out);
+        }
     });
 
     let state = auth.read().clone();
@@ -62,6 +70,7 @@ pub fn Desk() -> Element {
         div { class: "desk-root",
             match state {
                 Auth::Loading => rsx! { div { class: "desk-loading", "Loading the desk…" } },
+                Auth::NeedsInstall => rsx! { InstallPanel { auth } },
                 Auth::Out => rsx! { DeskLogin { auth } },
                 Auth::In(user) => rsx! { DeskDashboard { user, auth } },
             }
@@ -121,6 +130,103 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
                     if busy() { "Signing in…" } else { "Sign in" }
                 }
                 Link { class: "desk-forgot", to: Route::DeskForgot {}, "Forgot password?" }
+            }
+        }
+    }
+}
+
+/// First-run install: shown only when the deployment has no users yet. Creates
+/// the first administrator account (and signs them in) — there is no default
+/// password. The server re-checks "no users" so it can't run twice.
+#[component]
+fn InstallPanel(auth: Signal<Auth>) -> Element {
+    let mut username = use_signal(String::new);
+    let mut display = use_signal(String::new);
+    let mut email = use_signal(String::new);
+    let mut password = use_signal(String::new);
+    let mut confirm = use_signal(String::new);
+    let mut error = use_signal(|| Option::<String>::None);
+    let mut busy = use_signal(|| false);
+
+    let submit = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            error.set(None);
+            if password().chars().count() < 8 {
+                error.set(Some("Use at least 8 characters.".to_string()));
+                return;
+            }
+            if password() != confirm() {
+                error.set(Some("The two passwords don't match.".to_string()));
+                return;
+            }
+            busy.set(true);
+            match staff_install(username(), display(), email(), password()).await {
+                Ok(user) => auth.set(Auth::In(user)),
+                Err(e) => error.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "desk-login",
+            form { class: "desk-card", onsubmit: submit,
+                p { class: "desk-eyebrow", "Predator Hunters" }
+                h1 { class: "desk-title", "Set up the newsroom" }
+                p { class: "desk-sub", "Create the administrator account for this site." }
+                label { class: "desk-field",
+                    span { "Username" }
+                    input {
+                        r#type: "text",
+                        autocomplete: "username",
+                        value: "{username}",
+                        oninput: move |e| username.set(e.value()),
+                        autofocus: true,
+                    }
+                }
+                label { class: "desk-field",
+                    span { "Display name" }
+                    input {
+                        r#type: "text",
+                        autocomplete: "name",
+                        value: "{display}",
+                        oninput: move |e| display.set(e.value()),
+                    }
+                }
+                label { class: "desk-field",
+                    span { "Email (for password recovery)" }
+                    input {
+                        r#type: "email",
+                        autocomplete: "email",
+                        value: "{email}",
+                        oninput: move |e| email.set(e.value()),
+                    }
+                }
+                label { class: "desk-field",
+                    span { "Password" }
+                    input {
+                        r#type: "password",
+                        autocomplete: "new-password",
+                        value: "{password}",
+                        oninput: move |e| password.set(e.value()),
+                    }
+                }
+                label { class: "desk-field",
+                    span { "Confirm password" }
+                    input {
+                        r#type: "password",
+                        autocomplete: "new-password",
+                        value: "{confirm}",
+                        oninput: move |e| confirm.set(e.value()),
+                    }
+                }
+                if let Some(msg) = error() {
+                    p { class: "desk-error", "{msg}" }
+                }
+                button { class: "desk-btn", r#type: "submit", disabled: busy(),
+                    if busy() { "Creating…" } else { "Create administrator" }
+                }
             }
         }
     }
