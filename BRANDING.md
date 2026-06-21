@@ -50,6 +50,13 @@ components under `src/pages/`; a fork rewrites those directly.
 
 ---
 
-Then rebuild and redeploy — that's the entire brand surface. The first run of a
-fresh deploy opens a one-time **"Set up the newsroom"** screen at `/desk` to create
-the first administrator (no default password).
+Then rebuild and redeploy — that's the entire brand surface.
+
+## First run
+
+A fresh deploy with no users opens a one-time **"Set up the newsroom"** screen at
+`/desk` to create the first administrator — there is no default password. This setup
+screen is **open** until that first account exists, so on a public instance whoever
+reaches `/desk` first claims the admin. For a sensitive deploy, pre-seed the admin
+instead by setting the deploy secret `PH_ADMIN_PASS` (the install screen is then
+skipped) and change it after first sign-in.
