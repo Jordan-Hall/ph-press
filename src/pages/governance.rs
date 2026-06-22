@@ -7,12 +7,12 @@ use crate::icons::svg;
 
 /// (term, definition) — ownership & funding facts.
 const OWNERSHIP: [(&str, &str); 6] = [
-    ("Who we are", "Predator Hunters is an independent publisher reporting since 2022. It is owned and operated by [CONFIRM: legal entity — e.g. \"Jordan Upton and Scott Taylor, trading as Predator Hunters\" or the registered company name and number]."),
+    ("Who we are", "Predator Hunters is an independent publisher reporting since 2022. It is owned and operated by Jordan Upton as a sole trader, trading as Predator Hunters."),
     ("Editors-in-chief", "The publication has two editors-in-chief: Jordan Upton and Scott Taylor. They are jointly responsible for all editorial decisions."),
-    ("How we are funded", "The publication is self-funded, primarily by Jordan Upton, with Scott Taylor contributing when needed. We do not carry advertising that targets our editorial decisions and we receive no grant from [CONFIRM: any public or charitable fund — state if true, or list any grants received]."),
-    ("External investment", "[CONFIRM: Do you have any external investors, loans, or other funding relationships? If none, state \"We have no external investors or institutional funders.\"]"),
+    ("How we are funded", "The publication is self-funded by Jordan Upton. We receive no public or charitable grants and no external funding, and we do not carry advertising that targets our editorial decisions."),
+    ("External investment", "We have no external investors, loans, or institutional funders."),
     ("No payment from subjects", "We do not accept payment, gifts, hospitality, or any other benefit from the subjects of our coverage, from people seeking to influence coverage, or from parties with an interest in the outcome of a story. Acceptance of any such benefit is grounds for immediate disciplinary action."),
-    ("Registered address", "[CONFIRM: Registered address or correspondence address for the publication.]"),
+    ("How to contact us", "Predator Hunters operates as a sole trader and has no registered company address. You can reach us through our contact page, by email at press@predatorhunters.co.uk, or in confidence at confidential@predatorhunters.co.uk."),
 ];
 
 /// (term, definition) — conflicts of interest policy.
@@ -135,7 +135,7 @@ pub fn Governance() -> Element {
                             style: "color:var(--green-2); text-decoration:underline; text-underline-offset:3px;",
                             "confidential@predatorhunters.co.uk"
                         }
-                        ". If the matter is highly sensitive or you need to contact us without using standard email, [CONFIRM: secure contact route — e.g. Signal number, SecureDrop address, or encrypted submission form URL]."
+                        ". We treat every message to this address with the strictest confidence."
                     }
                     p { "We will not report on a source or whistleblower as a subject of a story without their informed consent." }
                 }
@@ -148,7 +148,7 @@ pub fn Governance() -> Element {
                 div { class: "card reveal", style: "max-width:680px;",
                     div { class: "card-ic", dangerous_inner_html: svg("doc") }
                     h3 { "Policy review" }
-                    p { "These policies are reviewed at least annually and whenever there is a material change in our funding, ownership, or editorial structure. [CONFIRM: date these policies were last reviewed, e.g. \"Last reviewed June 2026.\"]" }
+                    p { "These policies are reviewed at least annually and whenever there is a material change in our funding, ownership, or editorial structure. Last reviewed June 2026." }
                     p { style: "margin-top:12px;",
                         "Questions about any of this can be sent to "
                         a {
