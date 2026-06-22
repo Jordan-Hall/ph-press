@@ -15,7 +15,8 @@ use crate::api::{
     desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
     desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
     staff_install, staff_login, staff_logout, staff_me, staff_needs_install, staff_profile,
-    staff_reset_password, DeskArticle, DeskComplaint, DeskComplaintMessage, DeskConviction,
+    staff_reset_password, staff_totp_begin, staff_totp_disable, staff_totp_enable,
+    staff_totp_status, DeskArticle, DeskComplaint, DeskComplaintMessage, DeskConviction,
     DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch, PreviewArticle, StaffMember,
 };
 use crate::app::Route;
@@ -83,6 +84,10 @@ pub fn Desk() -> Element {
 fn DeskLogin(auth: Signal<Auth>) -> Element {
     let mut username = use_signal(String::new);
     let mut password = use_signal(String::new);
+    // TOTP code — always sent; empty when user has no 2FA enrolled.
+    let mut code = use_signal(String::new);
+    // Whether the server has indicated this account requires a TOTP code.
+    let mut need_totp = use_signal(|| false);
     let mut error = use_signal(|| Option::<String>::None);
     let mut busy = use_signal(|| false);
 
@@ -91,9 +96,26 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
         spawn(async move {
             busy.set(true);
             error.set(None);
-            match staff_login(username(), password()).await {
+            match staff_login(username(), password(), code()).await {
                 Ok(user) => auth.set(Auth::In(user)),
-                Err(_) => error.set(Some("Invalid username or password.".to_string())),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("two-factor") {
+                        need_totp.set(true);
+                        if msg.contains("required") {
+                            error.set(Some(
+                                "This account has two-factor authentication. \
+                                 Enter your 6-digit authenticator code."
+                                    .to_string(),
+                            ));
+                        } else {
+                            error.set(Some("Invalid authenticator code — please try again.".to_string()));
+                        }
+                    } else {
+                        need_totp.set(false);
+                        error.set(Some("Invalid username or password.".to_string()));
+                    }
+                }
             }
             busy.set(false);
         });
@@ -122,6 +144,21 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
                         autocomplete: "current-password",
                         value: "{password}",
                         oninput: move |e| password.set(e.value()),
+                    }
+                }
+                if need_totp() {
+                    label { class: "desk-field",
+                        span { "Authenticator code" }
+                        input {
+                            r#type: "text",
+                            autocomplete: "one-time-code",
+                            inputmode: "numeric",
+                            pattern: "[0-9]*",
+                            maxlength: 6,
+                            placeholder: "6-digit code",
+                            value: "{code}",
+                            oninput: move |e| code.set(e.value()),
+                        }
                     }
                 }
                 if let Some(msg) = error() {
@@ -1284,6 +1321,196 @@ fn ProfilePanel(user: DeskSession) -> Element {
                     }
                     button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Change password" }
                 }
+            }
+            TotpSection { username: user.username.clone() }
+        }
+    }
+}
+
+// ── Two-factor authentication section for ProfilePanel ────────────────────
+
+/// The three states the 2FA section can be in.
+#[derive(Clone, PartialEq)]
+enum TotpState {
+    /// Checking whether TOTP is enrolled.
+    Loading,
+    /// TOTP is not enrolled — show "Set up" button.
+    Off,
+    /// Enrolment started — show the secret/URI + a code field.
+    Enrolling {
+        secret: String,
+        uri: String,
+    },
+    /// TOTP is enrolled — show "Disable" button.
+    On,
+}
+
+#[component]
+fn TotpSection(username: String) -> Element {
+    let mut state = use_signal(|| TotpState::Loading);
+    let mut totp_code = use_signal(String::new);
+    let mut disable_pw = use_signal(String::new);
+    let mut totp_busy = use_signal(|| false);
+    let mut totp_ok = use_signal(|| Option::<String>::None);
+    let mut totp_err = use_signal(|| Option::<String>::None);
+
+    // On mount, check if TOTP is already enrolled.
+    use_resource(move || async move {
+        match staff_totp_status().await {
+            Ok(true) => state.set(TotpState::On),
+            Ok(false) => state.set(TotpState::Off),
+            Err(_) => state.set(TotpState::Off),
+        }
+    });
+
+    // "Set up two-factor authentication"
+    let begin = move |_| {
+        spawn(async move {
+            totp_busy.set(true);
+            totp_err.set(None);
+            totp_ok.set(None);
+            match staff_totp_begin().await {
+                Ok((secret, uri)) => state.set(TotpState::Enrolling { secret, uri }),
+                Err(e) => totp_err.set(Some(e.to_string())),
+            }
+            totp_busy.set(false);
+        });
+    };
+
+    // "Confirm" — verifies the code and persists the pending secret.
+    let confirm_enrol = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            totp_busy.set(true);
+            totp_err.set(None);
+            totp_ok.set(None);
+            match staff_totp_enable(totp_code()).await {
+                Ok(()) => {
+                    state.set(TotpState::On);
+                    totp_code.set(String::new());
+                    totp_ok.set(Some("Two-factor authentication is now active.".to_string()));
+                }
+                Err(e) => totp_err.set(Some(e.to_string())),
+            }
+            totp_busy.set(false);
+        });
+    };
+
+    // "Disable two-factor authentication"
+    let disable = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            totp_busy.set(true);
+            totp_err.set(None);
+            totp_ok.set(None);
+            match staff_totp_disable(disable_pw()).await {
+                Ok(()) => {
+                    state.set(TotpState::Off);
+                    disable_pw.set(String::new());
+                    totp_ok.set(Some("Two-factor authentication has been disabled.".to_string()));
+                }
+                Err(e) => totp_err.set(Some(e.to_string())),
+            }
+            totp_busy.set(false);
+        });
+    };
+
+    let cur_state = state.read().clone();
+    rsx! {
+        div { class: "desk-new", style: "margin-top:24px;",
+            p { class: "desk-muted", style: "margin:0 0 14px;", "Two-factor authentication (2FA)" }
+            match cur_state {
+                TotpState::Loading => rsx! {
+                    p { class: "desk-muted", "Checking…" }
+                },
+                TotpState::Off => rsx! {
+                    p { style: "margin:0 0 10px; font-size:.9rem;",
+                        "2FA is not enabled. Add an extra layer of security by requiring \
+                         an authenticator code at login."
+                    }
+                    if let Some(m) = totp_ok() {
+                        p { class: "desk-ok", "{m}" }
+                    }
+                    if let Some(e) = totp_err() {
+                        p { class: "desk-error", "{e}" }
+                    }
+                    button {
+                        class: "desk-btn sm",
+                        r#type: "button",
+                        disabled: totp_busy(),
+                        onclick: begin,
+                        "Set up two-factor authentication"
+                    }
+                },
+                TotpState::Enrolling { secret, uri } => rsx! {
+                    p { style: "margin:0 0 8px; font-size:.9rem;",
+                        "Scan the URI below with your authenticator app (Google Authenticator, \
+                         Authy, 1Password, etc.), then enter the 6-digit code it shows to confirm."
+                    }
+                    p { class: "desk-muted", style: "margin:0 0 4px; font-size:.75rem;", "Secret key (manual entry)" }
+                    p {
+                        class: "desk-code",
+                        style: "font-family:monospace; word-break:break-all; margin:0 0 8px; padding:6px 8px; \
+                                background:var(--surface2,#f4f4f5); border-radius:4px; font-size:.85rem;",
+                        "{secret}"
+                    }
+                    p { class: "desk-muted", style: "margin:0 0 4px; font-size:.75rem;", "otpauth URI" }
+                    p {
+                        style: "font-family:monospace; word-break:break-all; margin:0 0 12px; padding:6px 8px; \
+                                background:var(--surface2,#f4f4f5); border-radius:4px; font-size:.75rem;",
+                        "{uri}"
+                    }
+                    form { onsubmit: confirm_enrol,
+                        input {
+                            class: "desk-in",
+                            r#type: "text",
+                            autocomplete: "one-time-code",
+                            inputmode: "numeric",
+                            pattern: "[0-9]*",
+                            maxlength: 6,
+                            placeholder: "6-digit code from app",
+                            value: "{totp_code}",
+                            oninput: move |e| totp_code.set(e.value()),
+                        }
+                        if let Some(e) = totp_err() {
+                            p { class: "desk-error", "{e}" }
+                        }
+                        button {
+                            class: "desk-btn sm",
+                            r#type: "submit",
+                            disabled: totp_busy(),
+                            "Confirm and enable 2FA"
+                        }
+                    }
+                },
+                TotpState::On => rsx! {
+                    p { style: "margin:0 0 10px; font-size:.9rem;",
+                        "Two-factor authentication is enabled. \
+                         You will be asked for your authenticator code each time you sign in."
+                    }
+                    form { onsubmit: disable,
+                        input {
+                            class: "desk-in full",
+                            r#type: "password",
+                            autocomplete: "current-password",
+                            placeholder: "Current password to confirm",
+                            value: "{disable_pw}",
+                            oninput: move |e| disable_pw.set(e.value()),
+                        }
+                        if let Some(m) = totp_ok() {
+                            p { class: "desk-ok", "{m}" }
+                        }
+                        if let Some(e) = totp_err() {
+                            p { class: "desk-error", "{e}" }
+                        }
+                        button {
+                            class: "desk-btn sm danger",
+                            r#type: "submit",
+                            disabled: totp_busy(),
+                            "Disable two-factor authentication"
+                        }
+                    }
+                },
             }
         }
     }

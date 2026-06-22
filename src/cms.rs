@@ -130,16 +130,93 @@ pub async fn published_count() -> Result<i64, String> {
 
 /// Authenticate a staff member + mint a session. Returns the RAW token, which the
 /// API layer puts in an HttpOnly cookie. A login is recorded in the audit chain.
-pub async fn login(username: &str, password: &str) -> Result<String, String> {
+///
+/// `code` is the TOTP code (pass an empty string if the user has no 2FA).
+/// If the user has 2FA enrolled and the code is missing or wrong, an error
+/// starting with "two-factor" is returned — the UI tests for that prefix to
+/// show the code input field.
+pub async fn login(username: &str, password: &str, code: &str) -> Result<String, String> {
     let pool = db().await.map_err(|e| e.to_string())?;
+    // Verify password first to avoid leaking which accounts exist / have 2FA.
     let user = ph_cms::authenticate(pool, username, password)
         .await
         .map_err(|_| "invalid username or password".to_string())?;
+    // If TOTP is enrolled, enforce it.
+    if let Some(ref secret) = user.totp_secret {
+        if code.is_empty() {
+            return Err("two-factor code required".to_string());
+        }
+        if !ph_cms::totp::verify_totp(secret, code) {
+            return Err("two-factor code invalid".to_string());
+        }
+    }
     let token = ph_cms::create_session(pool, &user, ph_cms::SESSION_TTL_SECS)
         .await
         .map_err(|e| e.to_string())?;
     let _ = ph_cms::append_audit(pool, &user.username, "staff.login", &user.username, "").await;
     Ok(token)
+}
+
+// ── TOTP enrolment helpers ────────────────────────────────────────────────
+
+/// In-memory store for pending (unconfirmed) TOTP secrets during enrolment.
+/// Keyed by username.  Lost on restart — that's fine; enrolment is interactive.
+static PENDING_TOTP: std::sync::OnceLock<tokio::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+fn pending_totp() -> &'static tokio::sync::Mutex<std::collections::HashMap<String, String>> {
+    PENDING_TOTP.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Begin TOTP enrolment for the calling user: generate a fresh secret and store
+/// it pending confirmation. Returns `(secret_base32, otpauth_uri)`. Requires a
+/// valid session (enforced by the API caller).
+pub async fn totp_begin(username: &str) -> Result<(String, String), String> {
+    let secret = ph_cms::totp::generate_totp_secret();
+    let uri = ph_cms::totp::totp_uri(&secret, username, "PH Press");
+    pending_totp().lock().await.insert(username.to_string(), secret.clone());
+    Ok((secret, uri))
+}
+
+/// Confirm TOTP enrolment: verifies `code` against the pending secret and, if
+/// correct, persists it to the database.
+pub async fn totp_enable(username: &str, code: &str) -> Result<(), String> {
+    let secret = {
+        let guard = pending_totp().lock().await;
+        guard.get(username).cloned()
+    };
+    let secret = secret.ok_or_else(|| "no pending two-factor enrolment — please start again".to_string())?;
+    if !ph_cms::totp::verify_totp(&secret, code) {
+        return Err("two-factor code invalid — please try again".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::set_totp_secret(pool, username, Some(&secret))
+        .await
+        .map_err(|e| e.to_string())?;
+    // Remove from pending store
+    pending_totp().lock().await.remove(username);
+    let _ = ph_cms::append_audit(pool, username, "staff.totp.enable", username, "").await;
+    Ok(())
+}
+
+/// Disable TOTP after password confirmation.
+pub async fn totp_disable(username: &str, password: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    // Verify the password before allowing 2FA removal.
+    ph_cms::authenticate(pool, username, password)
+        .await
+        .map_err(|_| "invalid password".to_string())?;
+    ph_cms::set_totp_secret(pool, username, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = ph_cms::append_audit(pool, username, "staff.totp.disable", username, "").await;
+    Ok(())
+}
+
+/// Whether the given user has TOTP enrolled (for the Profile panel).
+pub async fn user_totp_enabled(username: &str) -> Result<bool, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    Ok(ph_cms::user_has_totp(pool, username).await)
 }
 
 /// Resolve a raw session token to a validated session (None if absent/expired).

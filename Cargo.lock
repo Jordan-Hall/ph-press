@@ -3747,9 +3747,11 @@ name = "ph-cms"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "hmac 0.12.1",
  "ph-audit",
  "serde",
  "serde_json",
+ "sha1",
  "sha2 0.10.9",
  "sqlx",
  "thiserror 2.0.18",
