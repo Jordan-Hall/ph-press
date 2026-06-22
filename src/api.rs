@@ -50,6 +50,12 @@ pub struct DeskArticle {
     pub updated_at: i64,
     pub is_ai_assisted: bool,
     pub actions: Vec<DeskAction>,
+    /// True when the source lead carried an `identification_risk` flag — victim
+    /// may be identifiable (IPSO Clauses 7 & 11 / IMPRESS children+justice).
+    pub id_risk: bool,
+    /// True when the source lead is in a sexual-offence or child category —
+    /// automatic anonymity duties apply (IMPRESS; IPSO Clauses 7 & 11).
+    pub restrictions_review: bool,
 }
 
 /// One allowed lifecycle transition: the target state + a human button label.
@@ -247,6 +253,27 @@ async fn build_desk(role_str: &str) -> Result<Vec<DeskArticle>, ServerFnError> {
     let arts = crate::cms::all_articles()
         .await
         .map_err(ServerFnError::new)?;
+    // Build a lookup: promoted_article_id -> (id_risk, restrictions_review).
+    // Fetching all leads in one query is cheaper than N+1 per article.
+    let all_leads = crate::cms::leads(None).await.map_err(ServerFnError::new)?;
+    let lead_flags: std::collections::HashMap<i64, (bool, bool)> = all_leads
+        .into_iter()
+        .filter_map(|l| {
+            l.promoted_article_id.map(|art_id| {
+                let v: serde_json::Value =
+                    serde_json::from_str(&l.extracted_json).unwrap_or_default();
+                let id_risk = v
+                    .get("identification_risk")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false);
+                let restrictions_review = v
+                    .get("restrictions_review")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false);
+                (art_id, (id_risk, restrictions_review))
+            })
+        })
+        .collect();
     Ok(arts
         .into_iter()
         .map(|a| {
@@ -262,6 +289,8 @@ async fn build_desk(role_str: &str) -> Result<Vec<DeskArticle>, ServerFnError> {
                         .collect()
                 })
                 .unwrap_or_default();
+            let (id_risk, restrictions_review) =
+                lead_flags.get(&a.id).copied().unwrap_or((false, false));
             DeskArticle {
                 id: a.id,
                 slug: a.slug,
@@ -272,6 +301,8 @@ async fn build_desk(role_str: &str) -> Result<Vec<DeskArticle>, ServerFnError> {
                 updated_at: a.updated_at,
                 is_ai_assisted: a.is_ai_assisted,
                 actions,
+                id_risk,
+                restrictions_review,
             }
         })
         .collect())
