@@ -195,6 +195,175 @@ pub mod auth {
     }
 }
 
+// ===================== totp =====================
+pub mod totp {
+    //! RFC 6238 TOTP (HMAC-SHA1, 30-second steps, 6 digits).
+    //! Base-32 encoding/decoding is done inline so we keep deps minimal.
+
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+
+    // ── base-32 (RFC 4648, uppercase, no padding required) ─────────────────
+
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+    /// Encode raw bytes to uppercase base-32 (no `=` padding).
+    pub fn base32_encode(data: &[u8]) -> String {
+        let mut out = String::new();
+        let mut buf: u64 = 0;
+        let mut bits: u32 = 0;
+        for &b in data {
+            buf = (buf << 8) | b as u64;
+            bits += 8;
+            while bits >= 5 {
+                bits -= 5;
+                let idx = ((buf >> bits) & 0x1f) as usize;
+                out.push(ALPHA[idx] as char);
+            }
+        }
+        if bits > 0 {
+            let idx = ((buf << (5 - bits)) & 0x1f) as usize;
+            out.push(ALPHA[idx] as char);
+        }
+        out
+    }
+
+    /// Decode uppercase (or lowercase) base-32 string to bytes.
+    /// Padding characters `=` are ignored.  Returns `None` on invalid input.
+    pub fn base32_decode(s: &str) -> Option<Vec<u8>> {
+        let mut buf: u64 = 0;
+        let mut bits: u32 = 0;
+        let mut out = Vec::new();
+        for c in s.chars() {
+            if c == '=' {
+                continue;
+            }
+            let upper = c.to_ascii_uppercase();
+            let val = ALPHA.iter().position(|&a| a == upper as u8)? as u64;
+            buf = (buf << 5) | val;
+            bits += 5;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((buf >> bits) as u8);
+            }
+        }
+        Some(out)
+    }
+
+    // ── HOTP / TOTP core ────────────────────────────────────────────────────
+
+    /// Compute HOTP(key, counter) → 6-digit code string (zero-padded).
+    pub fn hotp(key: &[u8], counter: u64) -> String {
+        let msg = counter.to_be_bytes();
+        let mut mac = Hmac::<Sha1>::new_from_slice(key)
+            .expect("HMAC accepts any key length");
+        mac.update(&msg);
+        let result = mac.finalize().into_bytes();
+
+        // Dynamic truncation (RFC 4226 §5.3)
+        let offset = (result[19] & 0x0f) as usize;
+        let code = u32::from_be_bytes([
+            result[offset] & 0x7f,
+            result[offset + 1],
+            result[offset + 2],
+            result[offset + 3],
+        ]) % 1_000_000;
+        format!("{:06}", code)
+    }
+
+    // ── public API ──────────────────────────────────────────────────────────
+
+    /// Verify a 6-digit code against a base-32 secret at an arbitrary Unix
+    /// timestamp.  Accepts the current and previous 30-second windows to
+    /// tolerate clock skew.  Useful for unit-testing against known vectors.
+    pub fn verify_totp_at(secret_base32: &str, code: &str, unix_secs: u64) -> bool {
+        let key = match base32_decode(secret_base32) {
+            Some(k) => k,
+            None => return false,
+        };
+        if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        let step = unix_secs / 30;
+        // Check current window and one previous window for clock skew
+        for &t in &[step, step.saturating_sub(1)] {
+            if hotp(&key, t) == code {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Verify a 6-digit TOTP code against a base-32 secret using the current
+    /// system time.
+    pub fn verify_totp(secret_base32: &str, code: &str) -> bool {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        verify_totp_at(secret_base32, code, secs)
+    }
+
+    /// Generate a fresh TOTP secret: 20 random bytes encoded as base-32.
+    pub fn generate_totp_secret() -> String {
+        use argon2::password_hash::rand_core::{OsRng, RngCore};
+        let mut raw = [0u8; 20];
+        OsRng.fill_bytes(&mut raw);
+        base32_encode(&raw)
+    }
+
+    /// Build an `otpauth://totp/` URI for use in authenticator apps / QR codes.
+    pub fn totp_uri(secret: &str, account: &str, issuer: &str) -> String {
+        let account_enc = percent_encode(account);
+        let issuer_enc = percent_encode(issuer);
+        format!(
+            "otpauth://totp/{issuer_enc}:{account_enc}?secret={secret}&issuer={issuer_enc}&algorithm=SHA1&digits=6&period=30",
+            issuer_enc = issuer_enc,
+            account_enc = account_enc,
+            secret = secret,
+        )
+    }
+
+    fn percent_encode(s: &str) -> String {
+        let mut out = String::new();
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+                | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+                _ => {
+                    out.push('%');
+                    out.push(char::from_digit((b >> 4) as u32, 16).unwrap().to_ascii_uppercase());
+                    out.push(char::from_digit((b & 0xf) as u32, 16).unwrap().to_ascii_uppercase());
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Set (or clear) the TOTP secret for a staff user.
+/// Pass `Some(secret)` to enable; `None` to disable.
+pub async fn set_totp_secret(
+    pool: &SqlitePool,
+    username: &str,
+    secret: Option<&str>,
+) -> Result<()> {
+    sqlx::query("UPDATE staff_user SET totp_secret = ? WHERE username = ?")
+        .bind(secret)
+        .bind(username)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Returns true if the given user has a TOTP secret enrolled.
+pub async fn user_has_totp(pool: &SqlitePool, username: &str) -> bool {
+    matches!(
+        find_user(pool, username).await,
+        Ok(Some(u)) if u.totp_secret.is_some()
+    )
+}
+
 // ===================== models =====================
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct StaffUser {
@@ -1356,6 +1525,77 @@ pub async fn open_and_setup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── TOTP tests ─────────────────────────────────────────────────────────
+
+    /// RFC 4226 Appendix D / RFC 6238 Appendix B test vector using SHA-1.
+    /// ASCII secret "12345678901234567890" (20 bytes), counter 0 → HOTP = 755224.
+    #[test]
+    fn totp_rfc4226_vector_counter_0() {
+        // The well-known 20-byte ASCII test key from RFC 4226 Appendix D
+        let ascii_key = b"12345678901234567890";
+        let code = totp::hotp(ascii_key, 0);
+        assert_eq!(code, "755224", "RFC 4226 App.D counter=0 failed");
+    }
+
+    #[test]
+    fn totp_rfc4226_vector_counter_1() {
+        let ascii_key = b"12345678901234567890";
+        assert_eq!(totp::hotp(ascii_key, 1), "287082");
+    }
+
+    #[test]
+    fn totp_base32_roundtrip() {
+        let ascii_key = b"12345678901234567890";
+        // Known base-32 encoding of the RFC test key
+        let b32 = totp::base32_encode(ascii_key);
+        assert_eq!(b32, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+        let decoded = totp::base32_decode(&b32).unwrap();
+        assert_eq!(decoded, ascii_key);
+    }
+
+    #[test]
+    fn totp_verify_at_known_counter() {
+        // counter 0 → step 0 → unix_secs anywhere in [0, 30)
+        let ascii_key = b"12345678901234567890";
+        let b32 = totp::base32_encode(ascii_key);
+        // At unix_secs=0, step=0 → expect "755224"
+        assert!(totp::verify_totp_at(&b32, "755224", 0));
+        // Wrong code
+        assert!(!totp::verify_totp_at(&b32, "000000", 0));
+    }
+
+    #[test]
+    fn totp_verify_clock_skew_previous_window() {
+        // counter 1 (unix_secs 30-59); code from counter 0 should be accepted
+        // as "previous window" when unix_secs = 30 (step=1, prev=0).
+        let ascii_key = b"12345678901234567890";
+        let b32 = totp::base32_encode(ascii_key);
+        // unix_secs=30 → step=1; prev=0 → code "755224" should pass
+        assert!(totp::verify_totp_at(&b32, "755224", 30));
+    }
+
+    #[test]
+    fn totp_generate_secret_is_valid_base32() {
+        let secret = totp::generate_totp_secret();
+        assert!(!secret.is_empty());
+        let decoded = totp::base32_decode(&secret);
+        assert!(decoded.is_some(), "generated secret is not valid base-32");
+        assert_eq!(decoded.unwrap().len(), 20, "secret should be 20 bytes");
+    }
+
+    #[test]
+    fn totp_uri_format() {
+        let uri = totp::totp_uri("TESTSECRET", "alice", "Acme News");
+        assert!(uri.starts_with("otpauth://totp/"));
+        assert!(uri.contains("secret=TESTSECRET"));
+        assert!(uri.contains("issuer="));
+        assert!(uri.contains("algorithm=SHA1"));
+        assert!(uri.contains("digits=6"));
+        assert!(uri.contains("period=30"));
+    }
+
+    // ── Lifecycle tests ─────────────────────────────────────────────────────
 
     #[test]
     fn lifecycle_gates_publish_behind_legal() {
