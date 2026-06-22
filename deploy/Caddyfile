@@ -29,6 +29,24 @@
 		reverse_proxy 127.0.0.1:3000
 	}
 
+	# Sitemap and RSS feed — pretty URLs that forward to the Dioxus server fns.
+	# Both server fns use `input = GetUrl` so they accept plain GET requests.
+	# The server fn prefix is /api and the endpoint names are sitemap_xml /
+	# feed_xml, so the canonical paths are /api/sitemap_xml and /api/feed_xml.
+	# `rewrite` replaces the request path before reverse-proxying, letting the
+	# server fn handler see its registered path.  The Content-Type returned by
+	# the server fn is `application/xml; charset=utf-8` (set by the custom Xml
+	# codec inside feeds.rs), so no header manipulation is needed here.
+	handle /sitemap.xml {
+		rewrite * /api/sitemap_xml
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	handle /feed.xml {
+		rewrite * /api/feed_xml
+		reverse_proxy 127.0.0.1:3000
+	}
+
 	# Self-hosted images the crawler/promote pipeline downloads live on the
 	# PERSISTENT /data volume (not the read-only SSG bundle). `handle_path` strips
 	# the /uploads prefix and roots ONLY at /data/uploads, so the web root can
