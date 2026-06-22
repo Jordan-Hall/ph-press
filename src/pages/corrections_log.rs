@@ -87,8 +87,8 @@ pub fn CorrectionsLog() -> Element {
                     div { class: "research-list", style: "margin-top:18px;",
                         for c in list.iter() {
                             {
-                                let article_label = if c.article_slug.is_empty() {
-                                    format!("Article #{}", c.article_id)
+                                let article_label = if c.article_title.is_empty() {
+                                    format!("Correction #{}", c.id)
                                 } else {
                                     c.article_title.clone()
                                 };

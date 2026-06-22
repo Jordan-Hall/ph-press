@@ -10,7 +10,7 @@ use crate::icons::svg;
 const PROCEDURE: [(&str, &str); 5] = [
     (
         "How to make a complaint",
-        "Use the "Make a complaint" link on any article, or email \
+        "Use the \"Make a complaint\" link on any article, or email \
          complaints@predatorhunters.co.uk with the article link or title, the \
          date of publication, and what you believe is inaccurate or unfair. You \
          do not need a lawyer, and there is no charge.",
