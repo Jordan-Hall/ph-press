@@ -2,6 +2,7 @@
 
 mod about;
 mod article;
+mod complaints_report;
 mod contact;
 mod database;
 mod desk;
@@ -16,6 +17,7 @@ mod watch;
 
 pub use about::About;
 pub use article::Article;
+pub use complaints_report::ComplaintsReport;
 pub use contact::Contact;
 pub use database::Database;
 pub use desk::{Desk, DeskForgot, DeskPreview, DeskReset, WriteArticle};

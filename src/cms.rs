@@ -657,6 +657,105 @@ pub async fn log_complaint(
     .map_err(|e| e.to_string())
 }
 
+/// Aggregate complaints-handling statistics for the public transparency report.
+/// Returns ONLY counts/percentages — no complainant names, emails, or message text.
+///
+/// # Denominators
+/// Every percentage is calculated over *all complaints received* (total) so the
+/// figures are always conservative and consistent. A complaint received two days
+/// ago that has not yet been acknowledged counts as "not yet acknowledged within
+/// 7 days" rather than being silently excluded.
+///
+/// # Outcome definitions (IMPRESS Standards Code)
+/// - **Upheld** = status `upheld` or `partly_upheld`
+/// - **Not upheld** = status `not_upheld`
+/// - **Resolved** = any terminal status: `upheld | partly_upheld | not_upheld | closed`
+///   (`escalated` is not yet terminal; `closed` is terminal-without-finding)
+/// - **Acknowledged in time** = `acknowledged_at` is set AND `acknowledged_at − ts ≤ 7 days`
+/// - **Resolved in time** = `resolved_at` is set AND `resolved_at − ts ≤ 21 days`
+pub async fn complaints_report_stats() -> Result<crate::api::ComplaintsReportStats, String> {
+    let complaints = complaints().await?;
+    const DAY: i64 = 86_400;
+    let total = complaints.len() as i64;
+    // Count per status (all 8 IMPRESS statuses, zero-padded so every status shows).
+    let mut by_status: Vec<(String, i64)> = ph_cms::COMPLAINT_STATUSES
+        .iter()
+        .map(|&s| {
+            let n = complaints.iter().filter(|c| c.status == s).count() as i64;
+            (s.to_string(), n)
+        })
+        .collect();
+    // Sort by count descending, then label ascending for stable display.
+    by_status.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    let upheld = complaints
+        .iter()
+        .filter(|c| c.status == "upheld" || c.status == "partly_upheld")
+        .count() as i64;
+    let not_upheld = complaints.iter().filter(|c| c.status == "not_upheld").count() as i64;
+    let resolved = complaints
+        .iter()
+        .filter(|c| ph_cms::is_resolved_status(&c.status))
+        .count() as i64;
+    let upheld_pct = if resolved > 0 {
+        upheld as f64 / resolved as f64 * 100.0
+    } else {
+        0.0
+    };
+    let acked_in_time = complaints
+        .iter()
+        .filter(|c| {
+            c.acknowledged_at
+                .map(|ack| ack - c.ts <= 7 * DAY)
+                .unwrap_or(false)
+        })
+        .count() as i64;
+    let acked_pct = if total > 0 {
+        acked_in_time as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let resolved_in_time = complaints
+        .iter()
+        .filter(|c| {
+            c.resolved_at
+                .map(|res| res - c.ts <= 21 * DAY)
+                .unwrap_or(false)
+        })
+        .count() as i64;
+    let resolved_pct = if total > 0 {
+        resolved_in_time as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    // Category breakdown. Empty/whitespace-only category → "Unspecified".
+    let mut cat_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for c in &complaints {
+        let key = if c.category.trim().is_empty() {
+            "Unspecified".to_string()
+        } else {
+            c.category.trim().to_string()
+        };
+        *cat_map.entry(key).or_insert(0) += 1;
+    }
+    let mut by_category: Vec<(String, i64)> = cat_map.into_iter().collect();
+    by_category.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    Ok(crate::api::ComplaintsReportStats {
+        total,
+        by_status,
+        upheld,
+        not_upheld,
+        resolved,
+        upheld_pct,
+        acked_in_time,
+        acked_pct,
+        resolved_in_time,
+        resolved_pct,
+        by_category,
+    })
+}
+
 /// A complaint + its handling thread (for the desk detail view).
 pub async fn complaint_detail(
     id: i64,

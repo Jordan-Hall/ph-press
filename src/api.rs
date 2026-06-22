@@ -159,6 +159,37 @@ pub struct AuditLog {
     pub rows: Vec<AuditRow>,
 }
 
+/// Aggregate complaints-handling statistics for the PUBLIC transparency report.
+/// Contains ONLY counts and percentages — zero complainant-identifying data
+/// (no names, emails, message text, or article slugs).
+///
+/// Denominator: every percentage is over `total` (all complaints received).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComplaintsReportStats {
+    /// Total complaints received in all time.
+    pub total: i64,
+    /// Count per IMPRESS status label (all 8 statuses included, zeros shown).
+    pub by_status: Vec<(String, i64)>,
+    /// Complaints with outcome `upheld` or `partly_upheld`.
+    pub upheld: i64,
+    /// Complaints with outcome `not_upheld`.
+    pub not_upheld: i64,
+    /// Complaints with any terminal status (upheld | partly_upheld | not_upheld | closed).
+    pub resolved: i64,
+    /// upheld / resolved × 100 (0.0 when no complaints are resolved).
+    pub upheld_pct: f64,
+    /// Complaints acknowledged within 7 days (IMPRESS target).
+    pub acked_in_time: i64,
+    /// acked_in_time / total × 100 (0.0 when total is 0).
+    pub acked_pct: f64,
+    /// Complaints given a final response within 21 days (IMPRESS target).
+    pub resolved_in_time: i64,
+    /// resolved_in_time / total × 100 (0.0 when total is 0).
+    pub resolved_pct: f64,
+    /// Count per complaint category (empty category shown as "Unspecified").
+    pub by_category: Vec<(String, i64)>,
+}
+
 /// An article in ANY state, for an authenticated staff draft preview (carries the
 /// lifecycle state so the preview can banner "Draft — not yet published").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1737,6 +1768,26 @@ pub async fn desk_poll_now() -> Result<(), ServerFnError> {
     {
         require_admin().await?;
         crate::cms::crawl_now().await.map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Aggregate complaints-handling statistics for the public transparency report.
+/// Returns ONLY counts and percentages — no complainant names, emails, message
+/// text, or any other identifying data. Public — no session required.
+///
+/// IMPRESS members are required to publish this data. The report covers all
+/// complaints received since the publication launched.
+#[server(endpoint = "public_complaints_report")]
+pub async fn public_complaints_report() -> Result<ComplaintsReportStats, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::complaints_report_stats()
+            .await
+            .map_err(ServerFnError::new)
     }
     #[cfg(not(feature = "server"))]
     {

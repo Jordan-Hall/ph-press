@@ -1209,8 +1209,9 @@ pub const COMPLAINT_STATUSES: [&str; 8] = [
     "escalated",
 ];
 
-/// A terminal (resolved) outcome — stamps `resolved_at`.
-fn is_resolved_status(status: &str) -> bool {
+/// A terminal (resolved) outcome — stamps `resolved_at`. Public so the
+/// aggregation layer can reuse the same definition without duplicating it.
+pub fn is_resolved_status(status: &str) -> bool {
     matches!(status, "upheld" | "partly_upheld" | "not_upheld" | "closed")
 }
 
