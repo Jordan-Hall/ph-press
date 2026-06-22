@@ -8,8 +8,9 @@ use crate::assets::{FAVICON, PH_LOGO};
 use crate::components::{ClosingCta, SiteFooter};
 use crate::icons::svg;
 use crate::pages::{
-    About, Article, ComplaintPage, Contact, Database, Desk, DeskForgot, DeskPreview, DeskReset,
-    Home, News, NotFound, Podcast, Privacy, Standards, Team, Watch, WriteArticle,
+    About, Article, ComplaintPage, ComplaintsReport, Contact, Database, Desk, DeskForgot,
+    DeskPreview, DeskReset, Home, News, NotFound, Podcast, Privacy, Standards, Team, Watch,
+    WriteArticle,
 };
 
 #[derive(Routable, Clone, PartialEq)]
@@ -51,6 +52,8 @@ pub enum Route {
     Contact {},
     #[route("/privacy")]
     Privacy {},
+    #[route("/complaints-report")]
+    ComplaintsReport {},
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
 }
