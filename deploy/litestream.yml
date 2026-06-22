@@ -1,0 +1,7 @@
+dbs:
+  - path: /data/ph-press.db
+    replicas:
+      - type: s3
+        bucket: ${PH_BACKUP_BUCKET}
+        path: ph-press.db
+        region: ${AWS_REGION}

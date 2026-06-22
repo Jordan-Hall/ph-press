@@ -31,8 +31,27 @@ if [ -x /srvapp/server ]; then
       export "PH_CRAWL_${k}_FEEDS=$val"
     fi
   done
-  ( cd /srvapp && IP=127.0.0.1 PORT=3000 ./server ) &
-  echo "started fullstack server on 127.0.0.1:3000"
+  if [ -n "${PH_BACKUP_BUCKET:-}" ]; then
+    # --- Litestream mode: restore then replicate ---
+    # Restore from S3 if a replica already exists (no-op on first deploy).
+    # The -if-replica-exists flag exits 0 when there is nothing to restore;
+    # errors (bad bucket name, wrong region) are logged but do NOT kill the
+    # container — the site must stay up even if backup config is wrong.
+    litestream restore -if-replica-exists -config /etc/litestream.yml \
+      /data/ph-press.db \
+      && echo "litestream restore complete (or no replica found)" \
+      || echo "WARN: litestream restore failed — starting with existing/empty DB"
+    # Run the server supervised by Litestream so every write is streamed to S3.
+    # The sh -c wrapper ensures cd + env work regardless of how litestream
+    # parses the -exec argument. Inner exec forwards signals to the server.
+    litestream replicate -config /etc/litestream.yml \
+      -exec "sh -c 'cd /srvapp && export IP=127.0.0.1 PORT=3000 && exec ./server'" &
+    echo "started fullstack server under litestream replication (bucket: ${PH_BACKUP_BUCKET})"
+  else
+    # --- No-backup mode: today's exact behaviour ---
+    ( cd /srvapp && IP=127.0.0.1 PORT=3000 ./server ) &
+    echo "started fullstack server on 127.0.0.1:3000"
+  fi
 else
   echo "WARN: /srvapp/server missing or not executable — /api disabled"
 fi

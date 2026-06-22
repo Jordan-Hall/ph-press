@@ -136,6 +136,37 @@ The container reads `AWS_REGION` (passed from the `AWS_REGION` var) and needs on
 HTTPS to the Bedrock endpoint. For `local`/`anthropic` backends set `PH_AI_BASE_URL` /
 `PH_AI_API_KEY` instead (see the project README).
 
+## Backups (Litestream → S3)
+
+Continuous SQLite replication to S3 via [Litestream](https://litestream.io) is **off by default**. It activates only when the `PH_BACKUP_BUCKET` repo variable is set (non-empty). When active, every write to `/data/ph-press.db` is streamed to `s3://<bucket>/ph-press.db`; on a fresh box the DB is automatically restored from S3 before the server starts.
+
+### One-time AWS setup
+
+1. **S3 bucket** — create a private bucket (e.g. `ph-press-db-backup`) in the same region as the box (`eu-west-2`). Enable versioning if you want point-in-time recovery via Litestream generations.
+2. **IAM** — attach `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on `arn:aws:s3:::ph-press-db-backup` and `arn:aws:s3:::ph-press-db-backup/*` to the `ph-bulwark-ssm` EC2 instance role. Litestream uses the role automatically via IMDS — no keys in the container.
+3. **IMDS hop limit** — Litestream calls the AWS SDK inside the container, which is one network hop from the EC2 host. The metadata hop limit must be ≥ 2 (same requirement as the Bedrock client). If you haven't already set this for AI drafting:
+   ```
+   aws ec2 modify-instance-metadata-options --region eu-west-2 \
+     --instance-id i-0a3aa9dc27f8e1c91 --http-tokens required \
+     --http-put-response-hop-limit 2 --http-endpoint enabled
+   ```
+4. **Enable** — set the `production` repo **variable** `PH_BACKUP_BUCKET=ph-press-db-backup` and redeploy. The container logs `litestream restore complete` (or "no replica found" on the first deploy) at startup, then streams all writes to S3 for the lifetime of the container.
+
+### Behaviour summary
+
+| `PH_BACKUP_BUCKET` | Behaviour |
+|---|---|
+| unset / empty | No Litestream; server starts exactly as before |
+| set | Restore from S3 on startup (if replica exists), then server runs supervised by `litestream replicate` |
+
+### Manual restore
+
+If you need to restore to a specific point in time or to a different path:
+```sh
+# Inside the container (or on the host with litestream installed):
+litestream restore -config /etc/litestream.yml /data/ph-press.db
+```
+
 ## Password recovery (`/desk` forgot / reset)
 
 Staff accounts carry a contact email so a locked-out user can recover via **/desk → Sign in
