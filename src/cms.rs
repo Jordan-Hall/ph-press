@@ -506,6 +506,47 @@ pub async fn corrections() -> Result<Vec<ph_cms::Correction>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// A correction enriched with article metadata for public display.
+pub struct PublicCorrectionRow {
+    pub id: i64,
+    pub article_id: i64,
+    pub article_slug: String,
+    pub article_title: String,
+    pub original: String,
+    pub corrected: String,
+    pub reason: String,
+    pub ts: i64,
+}
+
+/// Published corrections with article slug + title resolved — the public
+/// `/corrections` read. No auth required. Corrections with no resolvable
+/// article still appear (article_slug/title left empty) so nothing is silently
+/// dropped.
+pub async fn public_corrections() -> Result<Vec<PublicCorrectionRow>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let rows = ph_cms::list_corrections(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(rows.len());
+    for c in rows {
+        let (slug, title) = match ph_cms::get_article(pool, c.article_id).await {
+            Ok(Some(a)) => (a.slug, a.title),
+            _ => (String::new(), String::new()),
+        };
+        out.push(PublicCorrectionRow {
+            id: c.id,
+            article_id: c.article_id,
+            article_slug: slug,
+            article_title: title,
+            original: c.original,
+            corrected: c.corrected,
+            reason: c.reason,
+            ts: c.ts,
+        });
+    }
+    Ok(out)
+}
+
 /// Record a correction against an article (both versions kept), audited as `actor`.
 /// The engine gates this to Editor/Admin and review-logs the Published→Corrected flip.
 pub async fn add_correction(
