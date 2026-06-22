@@ -24,6 +24,6 @@ pub use news::News;
 pub use notfound::NotFound;
 pub use podcast::Podcast;
 pub use privacy::Privacy;
-pub use standards::Standards;
+pub use standards::{ComplaintPage, Standards};
 pub use team::Team;
 pub use watch::Watch;

@@ -218,6 +218,74 @@ async fn send_reset_email(cfg: &ph_email::EmailConfig, to: &str, link: &str) {
     }
 }
 
+/// Minimal HTML escaping for staff/complainant text placed in an HTML email part.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Email the complainant an acknowledgement (IMPRESS: prompt acknowledgement).
+/// Best-effort — logged, never fatal to the submission; no-op without an email
+/// backend (PH_EMAIL_BACKEND) configured.
+async fn send_complaint_ack(to: &str, reference: &str, article_slug: &str) {
+    let Some(cfg) = ph_email::EmailConfig::from_env() else {
+        return;
+    };
+    if to.is_empty() {
+        return;
+    }
+    let subject = format!("We've received your complaint ({reference})");
+    let text = format!(
+        "Thank you for your complaint about our article \"{article_slug}\".\n\n\
+         Your reference is {reference}. In line with the IMPRESS Standards Code we acknowledge \
+         complaints promptly and aim to give a final response within 21 days. We may contact you \
+         for more detail, and will let you know the outcome.\n\n\
+         If you are unhappy with our final response you can refer your complaint to IMPRESS, our \
+         independent regulator: https://impress.press/complaints/\n\n\
+         \u{2014} Predator Hunters"
+    );
+    let html = format!(
+        "<p>Thank you for your complaint about our article \u{201c}{}\u{201d}.</p>\
+         <p>Your reference is <strong>{reference}</strong>. In line with the IMPRESS Standards Code \
+         we acknowledge complaints promptly and aim to give a final response within 21 days. We may \
+         contact you for more detail, and will let you know the outcome.</p>\
+         <p>If you are unhappy with our final response you can refer your complaint to \
+         <a href=\"https://impress.press/complaints/\">IMPRESS</a>, our independent regulator.</p>\
+         <p>\u{2014} Predator Hunters</p>",
+        html_escape(article_slug)
+    );
+    let msg = ph_email::Email { to, subject: &subject, text: &text, html: &html };
+    match ph_email::send(&cfg, &msg).await {
+        Ok(id) => eprintln!("[ph-press] complaint ack emailed to {to} ({reference}, id {id})"),
+        Err(e) => eprintln!("[ph-press] complaint ack to {to} failed: {e}"),
+    }
+}
+
+/// Email a staff reply to the complainant. Best-effort; logged. When no email
+/// backend is configured the reply is still recorded (the caller did that).
+async fn send_complaint_reply_email(to: &str, reference: &str, body: &str) {
+    let Some(cfg) = ph_email::EmailConfig::from_env() else {
+        eprintln!("[ph-press] complaint reply {reference} recorded but NOT emailed (no email backend)");
+        return;
+    };
+    if to.is_empty() {
+        eprintln!("[ph-press] complaint reply {reference} recorded but no complainant email on file");
+        return;
+    }
+    let subject = format!("Re: your complaint ({reference})");
+    let html = body
+        .lines()
+        .map(|l| format!("<p>{}</p>", html_escape(l)))
+        .collect::<String>();
+    let msg = ph_email::Email { to, subject: &subject, text: body, html: &html };
+    match ph_email::send(&cfg, &msg).await {
+        Ok(id) => eprintln!("[ph-press] complaint reply emailed to {to} ({reference}, id {id})"),
+        Err(e) => eprintln!("[ph-press] complaint reply to {to} failed: {e}"),
+    }
+}
+
 /// Complete password recovery: redeem the reset token and set the new password
 /// (which destroys the account's existing sessions). Password-strength validation
 /// is the API layer's responsibility, as elsewhere. A bad/expired/used token gives
@@ -475,23 +543,172 @@ pub async fn complaints() -> Result<Vec<ph_cms::Complaint>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Record a complaint received by any means (currently the public route is email
-/// to complaints@predatorhunters.co.uk; staff log it here).
+/// A human-friendly complaint reference shown to the complainant.
+pub fn complaint_reference(id: i64) -> String {
+    format!("PH-C{id}")
+}
+
+/// Public per-article complaint submission. Records the complaint, emails the
+/// complainant an acknowledgement (IMPRESS: prompt acknowledgement) when email is
+/// configured, and returns the reference for the confirmation screen.
+pub async fn submit_complaint(
+    article_slug: &str,
+    complainant: &str,
+    email: &str,
+    category: &str,
+    body: &str,
+) -> Result<String, String> {
+    if complainant.trim().is_empty() {
+        return Err("Please give your name.".to_string());
+    }
+    if !email.contains('@') {
+        return Err("Please give a valid email so we can respond.".to_string());
+    }
+    if body.trim().is_empty() {
+        return Err("Please describe the problem with the article.".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let id = ph_cms::log_complaint(
+        pool,
+        article_slug.trim(),
+        complainant.trim(),
+        email,
+        category,
+        body.trim(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let reference = complaint_reference(id);
+    // The complaint is recorded above no matter what; only the outbound ack is
+    // rate-capped, so this public endpoint can't relay mail to arbitrary addresses.
+    if ack_send_allowed(email.trim()) {
+        send_complaint_ack(email.trim(), &reference, article_slug.trim()).await;
+    } else {
+        eprintln!("[ph-press] complaint {reference} recorded; ack email rate-capped");
+    }
+    Ok(reference)
+}
+
+/// Rate-gate for acknowledgement emails. A GLOBAL cap bounds total outbound volume
+/// regardless of how an attacker varies the email (the per-email cooldown alone is
+/// trivially bypassed), plus a per-email cooldown for honest duplicates. The
+/// complaint itself is always recorded — only the ack send is gated.
+fn ack_send_allowed(email: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    const PER_EMAIL_COOLDOWN: u64 = 300; // one ack per email per 5 min
+    const GLOBAL_WINDOW: u64 = 60;
+    const GLOBAL_MAX: usize = 10; // at most 10 acks/min across everyone
+    static PER_EMAIL: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    static GLOBAL: OnceLock<Mutex<Vec<u64>>> = OnceLock::new();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Global cap first (the abuse bound).
+    {
+        let mut g = GLOBAL.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap();
+        g.retain(|&t| now.saturating_sub(t) < GLOBAL_WINDOW);
+        if g.len() >= GLOBAL_MAX {
+            return false;
+        }
+    }
+    // Per-email cooldown.
+    let key = email.trim().to_lowercase();
+    {
+        let mut m = PER_EMAIL.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+        m.retain(|_, &mut t| now.saturating_sub(t) < PER_EMAIL_COOLDOWN);
+        if m.get(&key).is_some_and(|&t| now.saturating_sub(t) < PER_EMAIL_COOLDOWN) {
+            return false;
+        }
+        m.insert(key, now);
+    }
+    GLOBAL
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+        .push(now);
+    true
+}
+
+/// Record a complaint that arrived another way (staff log it on the complainant's
+/// behalf). No acknowledgement email is sent.
 pub async fn log_complaint(
     article_slug: &str,
     complainant: &str,
+    email: &str,
+    category: &str,
     body: &str,
 ) -> Result<i64, String> {
     if body.trim().is_empty() {
         return Err("the complaint details are required".to_string());
     }
     let pool = db().await.map_err(|e| e.to_string())?;
-    ph_cms::log_complaint(pool, article_slug.trim(), complainant.trim(), body.trim())
+    ph_cms::log_complaint(
+        pool,
+        article_slug.trim(),
+        complainant.trim(),
+        email,
+        category,
+        body.trim(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// A complaint + its handling thread (for the desk detail view).
+pub async fn complaint_detail(
+    id: i64,
+) -> Result<(ph_cms::Complaint, Vec<ph_cms::ComplaintMessage>), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let complaint = ph_cms::get_complaint(pool, id)
         .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no complaint {id}"))?;
+    let thread = ph_cms::list_complaint_messages(pool, id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((complaint, thread))
+}
+
+/// Add a staff-only internal note to a complaint's handling thread.
+pub async fn add_complaint_note(actor: &str, id: i64, body: &str) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("the note is empty".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::add_complaint_message(pool, id, actor, "internal", body.trim())
+        .await
+        .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
-/// Advance a complaint's status (received → under_review → upheld/rejected), audited.
+/// Reply to the complainant: record it on the thread AND email it (via SES). The
+/// record is kept even if email isn't configured / delivery fails.
+pub async fn send_complaint_reply(actor: &str, id: i64, body: &str) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("the reply is empty".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let complaint = ph_cms::get_complaint(pool, id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no complaint {id}"))?;
+    ph_cms::add_complaint_message(pool, id, actor, "reply", body.trim())
+        .await
+        .map_err(|e| e.to_string())?;
+    send_complaint_reply_email(
+        complaint.complainant_email.trim(),
+        &complaint_reference(id),
+        body.trim(),
+    )
+    .await;
+    Ok(())
+}
+
+/// Advance a complaint's status (the IMPRESS workflow), audited; stamps the
+/// acknowledged/resolved timestamps in ph-cms.
 pub async fn set_complaint_status(actor: &str, id: i64, status: &str) -> Result<(), String> {
     let pool = db().await.map_err(|e| e.to_string())?;
     ph_cms::set_complaint_status(pool, id, status, actor)

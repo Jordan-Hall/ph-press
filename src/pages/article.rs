@@ -170,6 +170,9 @@ pub fn Article(slug: String) -> Element {
                             span { class: "ic", dangerous_inner_html: svg("scale") }
                             "Our standards"
                         }
+                        Link { class: "btn btn-ghost", to: Route::ComplaintPage { slug: a.slug.to_string() },
+                            "Make a complaint about this article"
+                        }
                     }
                 }
             }
@@ -294,6 +297,9 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
                         Link { class: "btn btn-ghost", to: Route::Standards {},
                             span { class: "ic", dangerous_inner_html: svg("scale") }
                             "Our standards"
+                        }
+                        Link { class: "btn btn-ghost", to: Route::ComplaintPage { slug: a.slug.clone() },
+                            "Make a complaint about this article"
                         }
                     }
                 }

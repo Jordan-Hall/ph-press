@@ -977,8 +977,28 @@ pub struct Complaint {
     pub id: i64,
     pub article_slug: String,
     pub complainant: String,
+    pub complainant_email: String,
+    /// The IMPRESS Standards Code clause the complaint concerns (free text/key).
+    pub category: String,
     pub body: String,
     pub status: String,
+    /// When the complaint was acknowledged / resolved (IMPRESS 7-day / 21-day
+    /// targets are measured from `ts`). None until reached.
+    pub acknowledged_at: Option<i64>,
+    pub resolved_at: Option<i64>,
+    pub ts: i64,
+}
+
+/// One message in a complaint's handling thread: a staff-only internal note, or a
+/// reply that was emailed to the complainant. Both are recorded for the IMPRESS
+/// audit record of how the complaint was handled.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ComplaintMessage {
+    pub id: i64,
+    pub complaint_id: i64,
+    pub author: String,
+    pub channel: String, // 'internal' | 'reply'
+    pub body: String,
     pub ts: i64,
 }
 
@@ -1093,19 +1113,24 @@ pub async fn list_corrections(pool: &SqlitePool) -> Result<Vec<Correction>> {
     )
 }
 
-/// Log a reader complaint (kept on record) + audit it. Recorded by staff however
-/// the complaint arrived (the public route is currently email).
+/// Log a reader complaint (kept on record) + audit it. Submitted from the
+/// per-article complaint form, or recorded by staff if it arrived another way.
 pub async fn log_complaint(
     pool: &SqlitePool,
     article_slug: &str,
     complainant: &str,
+    complainant_email: &str,
+    category: &str,
     body: &str,
 ) -> Result<i64> {
     let res = sqlx::query(
-        "INSERT INTO complaint (article_slug, complainant, body, status, ts) VALUES (?,?,?,'received',?)",
+        "INSERT INTO complaint (article_slug, complainant, complainant_email, category, body, status, ts) \
+         VALUES (?,?,?,?,?,'received',?)",
     )
     .bind(article_slug)
     .bind(complainant)
+    .bind(complainant_email.trim().to_lowercase())
+    .bind(category)
     .bind(body)
     .bind(now())
     .execute(pool)
@@ -1123,10 +1148,75 @@ pub async fn list_complaints(pool: &SqlitePool) -> Result<Vec<Complaint>> {
     )
 }
 
-/// Valid complaint statuses (a simple documented workflow for IMPRESS).
-pub const COMPLAINT_STATUSES: [&str; 4] = ["received", "under_review", "upheld", "rejected"];
+/// A single complaint by id.
+pub async fn get_complaint(pool: &SqlitePool, id: i64) -> Result<Option<Complaint>> {
+    Ok(
+        sqlx::query_as::<_, Complaint>("SELECT * FROM complaint WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
 
-/// Update a complaint's status, audited under `actor`. Returns true if a row changed.
+/// The handling thread for a complaint (internal notes + replies), oldest first.
+pub async fn list_complaint_messages(
+    pool: &SqlitePool,
+    complaint_id: i64,
+) -> Result<Vec<ComplaintMessage>> {
+    Ok(sqlx::query_as::<_, ComplaintMessage>(
+        "SELECT * FROM complaint_message WHERE complaint_id = ? ORDER BY ts",
+    )
+    .bind(complaint_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Add a message to a complaint's thread. `channel` is `internal` (staff-only) or
+/// `reply` (a message emailed to the complainant). Audited.
+pub async fn add_complaint_message(
+    pool: &SqlitePool,
+    complaint_id: i64,
+    author: &str,
+    channel: &str,
+    body: &str,
+) -> Result<i64> {
+    if !matches!(channel, "internal" | "reply") {
+        return Err(CmsError::Bad(format!("complaint message channel: {channel}")));
+    }
+    let res = sqlx::query(
+        "INSERT INTO complaint_message (complaint_id, author, channel, body, ts) VALUES (?,?,?,?,?)",
+    )
+    .bind(complaint_id)
+    .bind(author)
+    .bind(channel)
+    .bind(body)
+    .bind(now())
+    .execute(pool)
+    .await?;
+    append_audit(pool, author, "complaint.message", &complaint_id.to_string(), channel).await?;
+    Ok(res.last_insert_rowid())
+}
+
+/// The IMPRESS-aligned complaint workflow.
+pub const COMPLAINT_STATUSES: [&str; 8] = [
+    "received",
+    "acknowledged",
+    "under_investigation",
+    "upheld",
+    "partly_upheld",
+    "not_upheld",
+    "closed",
+    "escalated",
+];
+
+/// A terminal (resolved) outcome — stamps `resolved_at`.
+fn is_resolved_status(status: &str) -> bool {
+    matches!(status, "upheld" | "partly_upheld" | "not_upheld" | "closed")
+}
+
+/// Update a complaint's status, audited under `actor`. Stamps `acknowledged_at`
+/// the first time it leaves `received`, and `resolved_at` on a terminal outcome,
+/// so the IMPRESS 7-day / 21-day targets can be measured. True if a row changed.
 pub async fn set_complaint_status(
     pool: &SqlitePool,
     id: i64,
@@ -1136,7 +1226,22 @@ pub async fn set_complaint_status(
     if !COMPLAINT_STATUSES.contains(&status) {
         return Err(CmsError::Bad(format!("complaint status: {status}")));
     }
-    let res = sqlx::query("UPDATE complaint SET status=? WHERE id=?")
+    let t = now();
+    if status != "received" {
+        sqlx::query("UPDATE complaint SET acknowledged_at = ? WHERE id = ? AND acknowledged_at IS NULL")
+            .bind(t)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    if is_resolved_status(status) {
+        sqlx::query("UPDATE complaint SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL")
+            .bind(t)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    let res = sqlx::query("UPDATE complaint SET status = ? WHERE id = ?")
         .bind(status)
         .bind(id)
         .execute(pool)
@@ -1468,17 +1573,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(list_corrections(&pool).await.unwrap().len(), 1);
-        log_complaint(&pool, "test-case", "anon", "you got X wrong")
-            .await
-            .unwrap();
+        log_complaint(
+            &pool,
+            "test-case",
+            "anon",
+            "anon@example.com",
+            "accuracy",
+            "you got X wrong",
+        )
+        .await
+        .unwrap();
         assert_eq!(list_complaints(&pool).await.unwrap().len(), 1);
         let cid = list_complaints(&pool).await.unwrap()[0].id;
-        assert!(set_complaint_status(&pool, cid, "under_review", "editor")
+        assert!(set_complaint_status(&pool, cid, "under_investigation", "editor")
             .await
             .unwrap());
         assert!(set_complaint_status(&pool, cid, "bogus", "editor")
             .await
             .is_err());
+        // Leaving 'received' stamps acknowledged_at.
+        assert!(get_complaint(&pool, cid)
+            .await
+            .unwrap()
+            .unwrap()
+            .acknowledged_at
+            .is_some());
+        // Handling thread: internal note + reply recorded; bad channel rejected.
+        add_complaint_message(&pool, cid, "editor", "internal", "looking into it")
+            .await
+            .unwrap();
+        add_complaint_message(&pool, cid, "editor", "reply", "thanks for getting in touch")
+            .await
+            .unwrap();
+        assert!(add_complaint_message(&pool, cid, "editor", "bogus", "x")
+            .await
+            .is_err());
+        assert_eq!(list_complaint_messages(&pool, cid).await.unwrap().len(), 2);
+        // A terminal outcome stamps resolved_at.
+        set_complaint_status(&pool, cid, "not_upheld", "editor")
+            .await
+            .unwrap();
+        assert!(get_complaint(&pool, cid)
+            .await
+            .unwrap()
+            .unwrap()
+            .resolved_at
+            .is_some());
         assert_eq!(published_articles(&pool).await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "Test").await.unwrap().len(), 1);
         assert_eq!(search_articles(&pool, "zzznomatch").await.unwrap().len(), 0);

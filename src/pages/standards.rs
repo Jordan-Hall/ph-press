@@ -73,7 +73,7 @@ pub fn Standards() -> Element {
                         div { class: "def", dt { "If we got it wrong" } dd { "We correct or clarify it quickly, with prominence equal to the original, and we keep both versions on the record." } }
                         div { class: "def", dt { "If you are not satisfied" } dd { "You can take your complaint to our independent press regulator. We keep a record of every complaint we receive." } }
                     }
-                    ComplaintForm {}
+                    ComplaintForm { slug: String::new() }
                 }
             }
 
@@ -124,14 +124,20 @@ pub fn Standards() -> Element {
         }
 }
 
-/// Public complaint form — submits straight into the /desk Complaints inbox.
+/// Public complaint form — submits into the /desk Complaints inbox (IMPRESS).
+/// When `slug` is supplied (the per-article entry point) it is the fixed subject;
+/// otherwise the reader names the article themselves.
 #[component]
-fn ComplaintForm() -> Element {
-    let mut slug = use_signal(String::new);
+pub fn ComplaintForm(slug: String) -> Element {
+    let fixed_slug = slug;
+    let init_about = fixed_slug.clone();
+    let mut about = use_signal(move || init_about);
     let mut name = use_signal(String::new);
+    let mut email = use_signal(String::new);
+    let mut category = use_signal(String::new);
     let mut body = use_signal(String::new);
     let mut busy = use_signal(|| false);
-    let mut done = use_signal(|| false);
+    let mut reference = use_signal(|| Option::<String>::None);
     let mut err = use_signal(|| Option::<String>::None);
 
     let submit = move |evt: FormEvent| {
@@ -139,49 +145,54 @@ fn ComplaintForm() -> Element {
         spawn(async move {
             busy.set(true);
             err.set(None);
-            match submit_complaint(slug(), name(), body()).await {
-                Ok(()) => done.set(true),
+            match submit_complaint(about(), name(), email(), category(), body()).await {
+                Ok(r) => reference.set(Some(r)),
                 Err(e) => err.set(Some(e.to_string())),
             }
             busy.set(false);
         });
     };
 
-    if done() {
+    if let Some(r) = reference() {
         return rsx! {
             div { class: "card reveal", style: "margin-top:24px; max-width:680px;",
                 div { class: "card-ic", dangerous_inner_html: svg("check") }
                 h3 { "Thank you — your complaint is logged" }
-                p { "We have received it and will acknowledge it within 7 days. If you left a way to reach you, we will be in touch." }
+                p { {format!("Your reference is {r}. We've emailed an acknowledgement to the address you gave. In line with the IMPRESS Standards Code we aim to give a final response within 21 days.")} }
+                p { "If you're unhappy with our final response you can refer the matter to "
+                    a { href: "https://impress.press/complaints/", "IMPRESS" }
+                    ", our independent regulator."
+                }
             }
         };
     }
 
+    let has_fixed = !fixed_slug.is_empty();
     rsx! {
         form { class: "complaint-form reveal", onsubmit: submit,
+            if has_fixed {
+                p { class: "cf-about", {format!("About: {fixed_slug}")} }
+            }
             div { class: "cf-row",
-                input {
-                    class: "cf-in",
-                    r#type: "text",
-                    placeholder: "Which article or video? (link or title — optional)",
-                    value: "{slug}",
-                    oninput: move |e| slug.set(e.value()),
+                if !has_fixed {
+                    input { class: "cf-in", r#type: "text", placeholder: "Which article or video? (link or title)", value: "{about}", oninput: move |e| about.set(e.value()) }
                 }
-                input {
-                    class: "cf-in",
-                    r#type: "text",
-                    placeholder: "Your name or email (optional)",
-                    value: "{name}",
-                    oninput: move |e| name.set(e.value()),
+                input { class: "cf-in", r#type: "text", placeholder: "Your name", value: "{name}", oninput: move |e| name.set(e.value()), required: true }
+            }
+            div { class: "cf-row",
+                input { class: "cf-in", r#type: "email", placeholder: "Your email (so we can respond)", value: "{email}", oninput: move |e| email.set(e.value()), required: true }
+                select { class: "cf-in", value: "{category}", oninput: move |e| category.set(e.value()),
+                    option { value: "", "What does it concern? (optional)" }
+                    option { value: "Accuracy", "Accuracy" }
+                    option { value: "Privacy", "Privacy" }
+                    option { value: "Harassment", "Harassment" }
+                    option { value: "Children", "Children" }
+                    option { value: "Discrimination", "Discrimination" }
+                    option { value: "Right of reply", "Right of reply" }
+                    option { value: "Other", "Other" }
                 }
             }
-            textarea {
-                class: "cf-in cf-body",
-                rows: "5",
-                placeholder: "What do you believe is inaccurate or unfair?",
-                value: "{body}",
-                oninput: move |e| body.set(e.value()),
-            }
+            textarea { class: "cf-in cf-body", rows: "5", placeholder: "What do you believe is inaccurate or unfair?", value: "{body}", oninput: move |e| body.set(e.value()), required: true }
             if let Some(e) = err() {
                 p { class: "cf-err", "{e}" }
             }
@@ -191,6 +202,25 @@ fn ComplaintForm() -> Element {
                 }
                 a { class: "btn btn-ghost", href: "mailto:complaints@predatorhunters.co.uk?subject=Complaint", "Or email us instead" }
             }
+        }
+    }
+}
+
+/// `/complaints/:slug` — the per-article complaint entry point (linked from each
+/// article). Pre-fills the subject and explains the IMPRESS process.
+#[component]
+pub fn ComplaintPage(slug: String) -> Element {
+    rsx! {
+        document::Title { "Make a complaint · Predator Hunters" }
+        section { class: "wrap", style: "padding:56px 0;max-width:700px;",
+            p { class: "eyebrow", "Complaints" }
+            h1 { "Make a complaint about this article" }
+            p { class: "lead",
+                "Tell us what's wrong — an inaccuracy, a privacy concern, or another breach of the "
+                Link { to: crate::app::Route::Standards {}, "IMPRESS Standards Code" }
+                ". We acknowledge complaints promptly and aim to give a final response within 21 days. If you're unhappy with that response you can refer the matter to IMPRESS, our independent regulator."
+            }
+            ComplaintForm { slug }
         }
     }
 }
