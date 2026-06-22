@@ -1000,32 +1000,10 @@ pub async fn desk_audit() -> Result<AuditLog, ServerFnError> {
 
 /// Submit a complaint from the PUBLIC site (no session) — it lands straight in the
 /// /desk Complaints inbox (status "received"), audited. The body is required.
-/// Per-email cooldown for the public complaint form (one / 5 min), to bound
-/// acknowledgement-email abuse and duplicate submissions.
-#[cfg(feature = "server")]
-fn complaint_rate_ok(email: &str) -> bool {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    const COOLDOWN_SECS: u64 = 300;
-    static LAST: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let mut map = LAST.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
-    map.retain(|_, &mut t| now.saturating_sub(t) < COOLDOWN_SECS);
-    let key = email.trim().to_lowercase();
-    if map.get(&key).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN_SECS) {
-        return false;
-    }
-    map.insert(key, now);
-    true
-}
-
-/// Public per-article complaint submission. Records the complaint and emails the
-/// complainant a prompt acknowledgement (IMPRESS). Returns the reference for the
-/// confirmation screen. No auth.
+/// Public per-article complaint submission. The complaint is ALWAYS recorded; the
+/// acknowledgement email is rate-capped in the glue so the unauthenticated endpoint
+/// can't be used to relay mail to arbitrary addresses through our domain. Returns
+/// the reference for the confirmation screen. No auth.
 #[server(endpoint = "submit_complaint")]
 pub async fn submit_complaint(
     article_slug: String,
@@ -1036,11 +1014,6 @@ pub async fn submit_complaint(
 ) -> Result<String, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        if !complaint_rate_ok(email.trim()) {
-            return Err(ServerFnError::new(
-                "You've just submitted a complaint from this email — please wait a few minutes before sending another.",
-            ));
-        }
         crate::cms::submit_complaint(&article_slug, &complainant, &email, &category, &body)
             .await
             .map_err(ServerFnError::new)

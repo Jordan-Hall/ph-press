@@ -579,8 +579,57 @@ pub async fn submit_complaint(
     .await
     .map_err(|e| e.to_string())?;
     let reference = complaint_reference(id);
-    send_complaint_ack(email.trim(), &reference, article_slug.trim()).await;
+    // The complaint is recorded above no matter what; only the outbound ack is
+    // rate-capped, so this public endpoint can't relay mail to arbitrary addresses.
+    if ack_send_allowed(email.trim()) {
+        send_complaint_ack(email.trim(), &reference, article_slug.trim()).await;
+    } else {
+        eprintln!("[ph-press] complaint {reference} recorded; ack email rate-capped");
+    }
     Ok(reference)
+}
+
+/// Rate-gate for acknowledgement emails. A GLOBAL cap bounds total outbound volume
+/// regardless of how an attacker varies the email (the per-email cooldown alone is
+/// trivially bypassed), plus a per-email cooldown for honest duplicates. The
+/// complaint itself is always recorded — only the ack send is gated.
+fn ack_send_allowed(email: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    const PER_EMAIL_COOLDOWN: u64 = 300; // one ack per email per 5 min
+    const GLOBAL_WINDOW: u64 = 60;
+    const GLOBAL_MAX: usize = 10; // at most 10 acks/min across everyone
+    static PER_EMAIL: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    static GLOBAL: OnceLock<Mutex<Vec<u64>>> = OnceLock::new();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Global cap first (the abuse bound).
+    {
+        let mut g = GLOBAL.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap();
+        g.retain(|&t| now.saturating_sub(t) < GLOBAL_WINDOW);
+        if g.len() >= GLOBAL_MAX {
+            return false;
+        }
+    }
+    // Per-email cooldown.
+    let key = email.trim().to_lowercase();
+    {
+        let mut m = PER_EMAIL.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+        m.retain(|_, &mut t| now.saturating_sub(t) < PER_EMAIL_COOLDOWN);
+        if m.get(&key).is_some_and(|&t| now.saturating_sub(t) < PER_EMAIL_COOLDOWN) {
+            return false;
+        }
+        m.insert(key, now);
+    }
+    GLOBAL
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+        .push(now);
+    true
 }
 
 /// Record a complaint that arrived another way (staff log it on the complainant's
