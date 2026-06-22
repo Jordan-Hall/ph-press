@@ -134,6 +134,9 @@ jobs:
           PH_AI_ENABLED: ${{ vars.PH_AI_ENABLED }}
           PH_AI_BACKEND: ${{ vars.PH_AI_BACKEND }}
           PH_AI_MODEL: ${{ vars.PH_AI_MODEL }}
+          # Litestream continuous backup to S3 (OFF unless PH_BACKUP_BUCKET is set).
+          # The container uses the EC2 instance role for S3 access — no extra keys.
+          PH_BACKUP_BUCKET: ${{ vars.PH_BACKUP_BUCKET }}
           DEPLOY_AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
@@ -162,6 +165,8 @@ jobs:
           PH_AI_ENABLED="${PH_AI_ENABLED:-0}"
           PH_AI_BACKEND="${PH_AI_BACKEND:-bedrock}"
           PH_AI_MODEL="${PH_AI_MODEL:-amazon.nova-lite-v1:0}"
+          # Litestream backup (off unless bucket name set; empty = disabled).
+          PH_BACKUP_BUCKET="${PH_BACKUP_BUCKET:-}"
           DEPLOY_AWS_REGION="${DEPLOY_AWS_REGION:-eu-west-2}"
           # Bind loopback-only (127.0.0.1:8090) so the port is NOT exposed to the
           # network — only the edge Caddy on the same host reaches it. A /data
@@ -174,7 +179,7 @@ jobs:
             "mkdir -p /var/lib/ph-press/uploads && chmod 700 /var/lib/ph-press",
             "docker network create ph-net 2>/dev/null || true",
             "docker rm -f ph-press || true",
-            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data -e PH_ADMIN_USER='${PH_ADMIN_USER}' -e PH_ADMIN_PASS_B64='${PH_ADMIN_PASS_B64}' -e PH_ADMIN_RESET='${PH_ADMIN_RESET}' -e PH_ADMIN_EMAIL='${PH_ADMIN_EMAIL}' -e PH_EMAIL_BACKEND='${PH_EMAIL_BACKEND}' -e PH_EMAIL_FROM_B64='${PH_EMAIL_FROM_B64}' -e PH_CRAWL_ENABLED='${PH_CRAWL_ENABLED}' -e PH_CRAWL_INTERVAL_SECS='${PH_CRAWL_INTERVAL_SECS}' -e PH_CRAWL_CASELAW_FEEDS_B64='${PH_CRAWL_CASELAW_FEEDS_B64}' -e PH_CRAWL_NEWS_FEEDS_B64='${PH_CRAWL_NEWS_FEEDS_B64}' -e PH_CRAWL_COURTWATCH_FEEDS_B64='${PH_CRAWL_COURTWATCH_FEEDS_B64}' -e PH_AI_ENABLED='${PH_AI_ENABLED}' -e PH_AI_BACKEND='${PH_AI_BACKEND}' -e PH_AI_MODEL='${PH_AI_MODEL}' -e AWS_REGION='${DEPLOY_AWS_REGION}' '${REF}'",
+            "docker run -d --name ph-press --restart unless-stopped --network ph-net -p 127.0.0.1:8090:8090 -v /var/lib/ph-press:/data -e PH_ADMIN_USER='${PH_ADMIN_USER}' -e PH_ADMIN_PASS_B64='${PH_ADMIN_PASS_B64}' -e PH_ADMIN_RESET='${PH_ADMIN_RESET}' -e PH_ADMIN_EMAIL='${PH_ADMIN_EMAIL}' -e PH_EMAIL_BACKEND='${PH_EMAIL_BACKEND}' -e PH_EMAIL_FROM_B64='${PH_EMAIL_FROM_B64}' -e PH_CRAWL_ENABLED='${PH_CRAWL_ENABLED}' -e PH_CRAWL_INTERVAL_SECS='${PH_CRAWL_INTERVAL_SECS}' -e PH_CRAWL_CASELAW_FEEDS_B64='${PH_CRAWL_CASELAW_FEEDS_B64}' -e PH_CRAWL_NEWS_FEEDS_B64='${PH_CRAWL_NEWS_FEEDS_B64}' -e PH_CRAWL_COURTWATCH_FEEDS_B64='${PH_CRAWL_COURTWATCH_FEEDS_B64}' -e PH_AI_ENABLED='${PH_AI_ENABLED}' -e PH_AI_BACKEND='${PH_AI_BACKEND}' -e PH_AI_MODEL='${PH_AI_MODEL}' -e PH_BACKUP_BUCKET='${PH_BACKUP_BUCKET}' -e AWS_REGION='${DEPLOY_AWS_REGION}' '${REF}'",
             "sleep 8",
             "docker ps --filter name=ph-press --format '{{.Status}}' | grep -q Up || { docker logs --tail 80 ph-press; exit 1; }",
             "curl -fsS http://127.0.0.1:8090/healthz || { docker logs --tail 80 ph-press; exit 1; }",
