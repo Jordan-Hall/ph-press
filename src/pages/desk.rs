@@ -1325,6 +1325,11 @@ fn complaint_next_statuses(status: &str) -> Vec<(&'static str, &'static str)> {
 /// IMPRESS pre-publish checklist. Shown when an editor moves a story to Published
 /// or Scheduled; the confirmations are recorded in the review log + audit trail as
 /// the sign-off note. Publishing is blocked until all are ticked.
+///
+/// A fourth mandatory checkbox enforces victim-anonymity / reporting-restriction
+/// confirmation (IMPRESS children+justice; IPSO Clauses 7 & 11). If the source
+/// lead flagged `identification_risk` or `restrictions_review` a prominent warning
+/// banner is also shown.
 #[component]
 fn PublishGate(
     mut pending: Signal<Option<(i64, String, String)>>,
@@ -1335,29 +1340,51 @@ fn PublishGate(
     let mut c1 = use_signal(|| false);
     let mut c2 = use_signal(|| false);
     let mut c3 = use_signal(|| false);
+    let mut c4 = use_signal(|| false);
 
     let p = pending.read().clone();
     let Some((id, to, label)) = p else {
         return rsx! {};
     };
-    let ready = c1() && c2() && c3();
+
+    // Look up the pending article's risk flags from the already-loaded article list.
+    let (id_risk, restrictions_review) = articles
+        .read()
+        .as_ref()
+        .and_then(|list| list.iter().find(|a| a.id == id))
+        .map(|a| (a.id_risk, a.restrictions_review))
+        .unwrap_or((false, false));
+
+    let show_banner = id_risk || restrictions_review;
+    let ready = c1() && c2() && c3() && c4();
 
     let confirm = move |_| {
-        if !(c1() && c2() && c3()) {
+        if !(c1() && c2() && c3() && c4()) {
             return;
         }
         let to = to.clone();
+        // Build the note dynamically so the audit trail records what was confirmed.
+        let anon_clause = if id_risk {
+            "; victim-anonymity + jigsaw-ID risk confirmed (IPSO Cl.7/11 — id_risk flag)"
+        } else if restrictions_review {
+            "; victim-anonymity confirmed (IPSO Cl.7/11 — sexual/child category)"
+        } else {
+            "; victim-anonymity / reporting-restriction confirmed (IPSO Cl.7/11)"
+        };
+        let note = format!(
+            "IMPRESS sign-off: case concluded (no active proceedings); public interest + accuracy checked; AI-assistance + pre-charge naming reviewed{anon_clause}"
+        );
         spawn(async move {
             busy.set(true);
             err.set(None);
-            let note = "IMPRESS sign-off: case concluded (no active proceedings); public interest + accuracy checked; AI-assistance + pre-charge naming reviewed";
-            match desk_transition(id, to, note.to_string()).await {
+            match desk_transition(id, to, note).await {
                 Ok(list) => {
                     articles.set(Some(list));
                     pending.set(None);
                     c1.set(false);
                     c2.set(false);
                     c3.set(false);
+                    c4.set(false);
                 }
                 Err(e) => err.set(Some(e.to_string())),
             }
@@ -1370,6 +1397,27 @@ fn PublishGate(
             div { class: "modal", onclick: move |e| e.stop_propagation(),
                 p { class: "desk-eyebrow", "Pre-publish checks" }
                 h3 { class: "modal-title", "Going public: {label}" }
+                if show_banner {
+                    div { class: "modal-warn-banner",
+                        if id_risk {
+                            span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                            strong { "Identification risk flagged" }
+                            p {
+                                "The source lead indicates a victim or child may be identifiable. "
+                                "Jigsaw identification is prohibited even when no single detail alone "
+                                "names the person (IPSO Clause 7 — children; Clause 11 — sexual-assault victims; IMPRESS Standards)."
+                            }
+                        } else {
+                            span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                            strong { "Reporting restrictions apply" }
+                            p {
+                                "This article covers a sexual-offence or child case. "
+                                "Automatic anonymity duties apply to victims and children under the Sexual Offences (Amendment) Act 1992 "
+                                "and the Children and Young Persons Act 1933. Verify before publishing (IPSO Clauses 7 & 11; IMPRESS Standards)."
+                            }
+                        }
+                    }
+                }
                 p { class: "desk-muted", style: "margin:0 0 14px;", "Confirm our published standards before this story goes live:" }
                 label { class: "modal-check",
                     input { r#type: "checkbox", checked: c1(), onchange: move |e| c1.set(e.checked()) }
@@ -1382,6 +1430,14 @@ fn PublishGate(
                 label { class: "modal-check",
                     input { r#type: "checkbox", checked: c3(), onchange: move |e| c3.set(e.checked()) }
                     span { "Any AI assistance is labelled; no one is named before charge without justification." }
+                }
+                label { class: "modal-check modal-check-anon",
+                    input { r#type: "checkbox", checked: c4(), onchange: move |e| c4.set(e.checked()) }
+                    span {
+                        "I confirm that publishing this does not breach any reporting restriction "
+                        "and that no victim or child is identifiable, directly or by jigsaw "
+                        "(IMPRESS; IPSO Clauses 7 \u{0026} 11)."
+                    }
                 }
                 div { class: "modal-actions",
                     button { class: "desk-btn ghost", onclick: move |_| pending.set(None), "Cancel" }
