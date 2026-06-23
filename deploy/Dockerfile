@@ -47,6 +47,10 @@ RUN apt-get update \
 # Stock Caddy (no DNS plugin needed — this container serves plain HTTP; the edge
 # terminates TLS).
 COPY --from=caddy:2 /usr/bin/caddy /usr/bin/caddy
+# Litestream continuous SQLite → S3 backup. The static binary from the official
+# litestream image is copied directly — no curl/tar/cleanup needed.
+COPY --from=litestream/litestream:0.3.14 /usr/local/bin/litestream /usr/local/bin/litestream
+COPY deploy/litestream.yml /etc/litestream.yml
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /site /srv
 COPY --from=build /srvapp /srvapp

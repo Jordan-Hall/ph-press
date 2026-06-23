@@ -17,6 +17,7 @@ mod cms;
 mod components;
 mod config;
 mod content;
+mod feeds;
 mod icons;
 mod md;
 mod pages;

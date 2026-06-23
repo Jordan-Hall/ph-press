@@ -192,6 +192,12 @@ async fn poll_courtwatch(pool: &Db, fetcher: &Fetcher, src: &ingest::IngestSourc
 
 /// Spawn the background poll loop on the current Tokio runtime. Seeds sources
 /// once, then polls every `interval`. Errors are logged, not fatal.
+///
+/// Alert emails are sent when:
+///   - `PH_EMAIL_BACKEND=ses` + `PH_EMAIL_FROM` are set (i.e. `ph_email::EmailConfig::from_env()` returns `Some`)
+///   - `PH_ALERT_EMAIL` is set to a non-empty recipient address
+///   - The poll produced at least one error
+///   - At least one hour has elapsed since the last alert (throttle)
 pub fn spawn(pool: Db, sources: Vec<SourceConfig>, interval: Duration, user_agent: String) {
     tokio::spawn(async move {
         let fetcher = match Fetcher::new(user_agent) {
@@ -204,10 +210,23 @@ pub fn spawn(pool: Db, sources: Vec<SourceConfig>, interval: Duration, user_agen
         if let Err(e) = seed_sources(&pool, &sources).await {
             eprintln!("[ph-crawl] seeding sources failed: {e}");
         }
+
+        // Resolve alert configuration once — both are static for the process lifetime.
+        let email_cfg = ph_email::EmailConfig::from_env();
+        let alert_recipient = std::env::var("PH_ALERT_EMAIL")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
+        // Throttle: track when the last alert was sent (monotonic clock).
+        let mut last_alert: Option<std::time::Instant> = None;
+        const ALERT_THROTTLE: Duration = Duration::from_secs(3_600); // 1 hour
+
         let mut tick = tokio::time::interval(interval);
         loop {
             tick.tick().await;
             let report = run_once(&pool, &fetcher).await;
+
+            // Always log — behaviour is unchanged when email is not configured.
             eprintln!(
                 "[ph-crawl] poll: {} leads, {} watch, {} sources, {} errors",
                 report.leads_added,
@@ -217,6 +236,68 @@ pub fn spawn(pool: Db, sources: Vec<SourceConfig>, interval: Duration, user_agen
             );
             for e in &report.errors {
                 eprintln!("[ph-crawl]   {e}");
+            }
+
+            // Send an alert email when errors are present and conditions are met.
+            if !report.errors.is_empty() {
+                if let (Some(cfg), Some(recipient)) = (&email_cfg, &alert_recipient) {
+                    let throttle_ok =
+                        last_alert.map_or(true, |t| t.elapsed() >= ALERT_THROTTLE);
+                    if throttle_ok {
+                        // Mark attempted *before* the send so a persistently-failing
+                        // send doesn't retry every tick (would defeat the throttle).
+                        last_alert = Some(std::time::Instant::now());
+
+                        // Build the alert body.
+                        let error_count = report.errors.len();
+                        let shown: Vec<&String> = report.errors.iter().take(20).collect();
+                        let truncation_note = if error_count > 20 {
+                            format!("\n…and {} more errors (capped at 20)", error_count - 20)
+                        } else {
+                            String::new()
+                        };
+
+                        let subject = format!(
+                            "[PH Press] Crawl alert: {} error{} on {} source{}",
+                            error_count,
+                            if error_count == 1 { "" } else { "s" },
+                            report.sources_polled,
+                            if report.sources_polled == 1 { "" } else { "s" },
+                        );
+                        let text = format!(
+                            "PH Press crawl poll summary\n\
+                             Leads added:    {leads}\n\
+                             Watch added:    {watch}\n\
+                             Sources polled: {polled}\n\
+                             Errors:         {errors}\n\
+                             \n\
+                             Error detail:\n\
+                             {detail}{trunc}",
+                            leads = report.leads_added,
+                            watch = report.watch_added,
+                            polled = report.sources_polled,
+                            errors = error_count,
+                            detail = shown
+                                .iter()
+                                .map(|e| format!("  - {e}"))
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                            trunc = truncation_note,
+                        );
+                        let html = format!("<pre>{text}</pre>");
+
+                        let msg = ph_email::Email {
+                            to: recipient,
+                            subject: &subject,
+                            text: &text,
+                            html: &html,
+                        };
+                        match ph_email::send(cfg, &msg).await {
+                            Ok(id) => eprintln!("[ph-crawl] alert email sent (id={id})"),
+                            Err(e) => eprintln!("[ph-crawl] alert email failed: {e}"),
+                        }
+                    }
+                }
             }
         }
     });

@@ -12,11 +12,14 @@ use crate::api::{
     desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
     desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
-    desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
+    desk_promote_lead_conviction, desk_regenerate_draft, desk_removal_decide,
+    desk_removal_requests, desk_set_conviction_status, desk_sources,
     desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
     staff_install, staff_login, staff_logout, staff_me, staff_needs_install, staff_profile,
-    staff_reset_password, DeskArticle, DeskComplaint, DeskComplaintMessage, DeskConviction,
-    DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch, PreviewArticle, StaffMember,
+    staff_reset_password, staff_totp_begin, staff_totp_disable, staff_totp_enable,
+    staff_totp_status, DeskArticle, DeskComplaint, DeskComplaintMessage, DeskConviction,
+    DeskCorrection, DeskLead, DeskRemovalRequest, DeskSession, DeskSource, DeskWatch,
+    PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -25,9 +28,8 @@ use taino_edit_dx::{
     markdown_to_doc, newsroom_keymap, newsroom_schema, state_to_markdown, EditorState, KeymapProp,
     TainoEditor,
 };
-// The Source mode's live preview is rendered by the dioxus-markdown crate (not our
-// md.rs). preserve_html=false so staff markdown can't inject raw HTML.
-use dioxus_markdown::Markdown;
+// The Source mode's live preview uses crate::md::block_html — the same renderer
+// as the public article page — so authors see the real published look as they type.
 
 /// Which editor surface the writer is using.
 #[derive(Clone, Copy, PartialEq)]
@@ -83,6 +85,10 @@ pub fn Desk() -> Element {
 fn DeskLogin(auth: Signal<Auth>) -> Element {
     let mut username = use_signal(String::new);
     let mut password = use_signal(String::new);
+    // TOTP code — always sent; empty when user has no 2FA enrolled.
+    let mut code = use_signal(String::new);
+    // Whether the server has indicated this account requires a TOTP code.
+    let mut need_totp = use_signal(|| false);
     let mut error = use_signal(|| Option::<String>::None);
     let mut busy = use_signal(|| false);
 
@@ -91,9 +97,26 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
         spawn(async move {
             busy.set(true);
             error.set(None);
-            match staff_login(username(), password()).await {
+            match staff_login(username(), password(), code()).await {
                 Ok(user) => auth.set(Auth::In(user)),
-                Err(_) => error.set(Some("Invalid username or password.".to_string())),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("two-factor") {
+                        need_totp.set(true);
+                        if msg.contains("required") {
+                            error.set(Some(
+                                "This account has two-factor authentication. \
+                                 Enter your 6-digit authenticator code."
+                                    .to_string(),
+                            ));
+                        } else {
+                            error.set(Some("Invalid authenticator code — please try again.".to_string()));
+                        }
+                    } else {
+                        need_totp.set(false);
+                        error.set(Some("Invalid username or password.".to_string()));
+                    }
+                }
             }
             busy.set(false);
         });
@@ -122,6 +145,21 @@ fn DeskLogin(auth: Signal<Auth>) -> Element {
                         autocomplete: "current-password",
                         value: "{password}",
                         oninput: move |e| password.set(e.value()),
+                    }
+                }
+                if need_totp() {
+                    label { class: "desk-field",
+                        span { "Authenticator code" }
+                        input {
+                            r#type: "text",
+                            autocomplete: "one-time-code",
+                            inputmode: "numeric",
+                            pattern: "[0-9]*",
+                            maxlength: 6,
+                            placeholder: "6-digit code",
+                            value: "{code}",
+                            oninput: move |e| code.set(e.value()),
+                        }
                     }
                 }
                 if let Some(msg) = error() {
@@ -383,6 +421,7 @@ enum Tab {
     Intake,
     Database,
     Complaints,
+    RemovalRequests,
     Corrections,
     Staff,
     Audit,
@@ -426,6 +465,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 button { class: tab_class(Tab::Intake), onclick: move |_| tab.set(Tab::Intake), "Intake" }
                 button { class: tab_class(Tab::Database), onclick: move |_| tab.set(Tab::Database), "Database" }
                 button { class: tab_class(Tab::Complaints), onclick: move |_| tab.set(Tab::Complaints), "Complaints" }
+                button { class: tab_class(Tab::RemovalRequests), onclick: move |_| tab.set(Tab::RemovalRequests), "Removal reqs" }
                 button { class: tab_class(Tab::Corrections), onclick: move |_| tab.set(Tab::Corrections), "Corrections" }
                 if user.role == "admin" {
                     button { class: tab_class(Tab::Staff), onclick: move |_| tab.set(Tab::Staff), "Staff" }
@@ -441,6 +481,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 Tab::Intake => rsx! { IntakePanel {} },
                 Tab::Database => rsx! { DatabasePanel {} },
                 Tab::Complaints => rsx! { ComplaintsPanel {} },
+                Tab::RemovalRequests => rsx! { RemovalRequestsPanel {} },
                 Tab::Corrections => rsx! { CorrectionsPanel {} },
                 Tab::Staff => rsx! { StaffPanel {} },
                 Tab::Audit => rsx! { AuditPanel {} },
@@ -887,6 +928,209 @@ fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
     }
 }
 
+// ---------- Removal requests panel ----------
+
+fn removal_label(status: &str) -> &'static str {
+    match status {
+        "received" => "Received",
+        "under_review" => "Under review",
+        "upheld_removed" => "Upheld — removed",
+        "rejected" => "Rejected",
+        _ => "Unknown",
+    }
+}
+
+fn removal_next_statuses(status: &str) -> &'static [&'static str] {
+    match status {
+        "received" => &["under_review", "upheld_removed", "rejected"],
+        "under_review" => &["upheld_removed", "rejected"],
+        _ => &[],
+    }
+}
+
+#[component]
+fn RemovalRequestsPanel() -> Element {
+    let mut items = use_signal(|| Option::<Vec<DeskRemovalRequest>>::None);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let selected = use_signal(|| Option::<i64>::None);
+
+    use_effect(move || {
+        spawn(async move {
+            busy.set(true);
+            match desk_removal_requests().await {
+                Ok(v) => {
+                    items.set(Some(v));
+                    err.set(None);
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    });
+
+    if let Some(id) = selected() {
+        if let Some(ref list) = *items.read() {
+            if let Some(req) = list.iter().find(|r| r.id == id) {
+                return rsx! { RemovalDetail {
+                    req: req.clone(),
+                    items: items,
+                    selected: selected,
+                    busy: busy,
+                    err: err,
+                } };
+            }
+        }
+    }
+
+    rsx! {
+        div { class: "panel-head",
+            h2 { "Removal requests" }
+            if busy() { span { class: "badge badge-muted", "Loading\u{2026}" } }
+        }
+        if let Some(e) = err() {
+            p { class: "desk-err", "{e}" }
+        }
+        match &*items.read() {
+            None => rsx! { p { class: "desk-empty", "Loading\u{2026}" } },
+            Some(list) if list.is_empty() => rsx! { p { class: "desk-empty", "No removal requests yet." } },
+            Some(list) => rsx! {
+                div { class: "complaint-list",
+                    for req in list.iter() {
+                        RemovalRow { req: req.clone(), selected: selected }
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn RemovalRow(req: DeskRemovalRequest, mut selected: Signal<Option<i64>>) -> Element {
+    let id = req.id;
+    let label = removal_label(&req.status);
+    let badge_class = match req.status.as_str() {
+        "upheld_removed" => "badge badge-ok",
+        "rejected" => "badge badge-warn",
+        "under_review" => "badge badge-info",
+        _ => "badge badge-muted",
+    };
+    let date = ymd(req.created_at);
+    rsx! {
+        button { class: "complaint-row", onclick: move |_| selected.set(Some(id)),
+            div { class: "cr-meta",
+                span { class: badge_class, "{label}" }
+                span { class: "cr-ref", "PH-R{id}" }
+                span { class: "cr-date", "{date}" }
+            }
+            div { class: "cr-subject", "{req.target_ref}" }
+            div { class: "cr-from", "{req.requester_name}" }
+        }
+    }
+}
+
+#[component]
+fn RemovalDetail(
+    req: DeskRemovalRequest,
+    mut items: Signal<Option<Vec<DeskRemovalRequest>>>,
+    mut selected: Signal<Option<i64>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+) -> Element {
+    let mut note = use_signal(String::new);
+    let id = req.id;
+    let next = removal_next_statuses(&req.status);
+    let decided_date = req.decided_at.map(ymd).unwrap_or_default();
+    let created_date = ymd(req.created_at);
+    let label = removal_label(&req.status);
+
+    let badge_class = match req.status.as_str() {
+        "upheld_removed" => "badge badge-ok",
+        "rejected" => "badge badge-warn",
+        "under_review" => "badge badge-info",
+        _ => "badge badge-muted",
+    };
+
+    rsx! {
+        div { class: "panel-head",
+            button { class: "btn btn-ghost btn-sm", onclick: move |_| selected.set(None), "\u{2190} Back" }
+            h2 { "PH-R{id}" }
+        }
+        div { class: "complaint-detail",
+            div { class: "cd-header",
+                span { class: badge_class, "{label}" }
+                span { class: "cd-ref", "PH-R{id}" }
+                span { class: "cd-date", "Received {created_date}" }
+                if !req.decided_by.is_empty() {
+                    span { class: "cd-date", "Decided {decided_date} by {req.decided_by}" }
+                }
+            }
+            div { class: "cd-body",
+                dl { class: "deflist",
+                    div { class: "def", dt { "Entry" } dd { "{req.target_ref}" } }
+                    div { class: "def", dt { "Requester" } dd { "{req.requester_name} ({req.requester_email})" } }
+                    div { class: "def", dt { "Reason" } dd { "{req.reason}" } }
+                    if !req.decision_note.is_empty() {
+                        div { class: "def", dt { "Decision note" } dd { "{req.decision_note}" } }
+                    }
+                }
+            }
+            if !next.is_empty() {
+                div { class: "cd-actions",
+                    h4 { "Decision" }
+                    textarea {
+                        class: "cf-in cf-body",
+                        rows: "3",
+                        placeholder: "Decision note (required for upheld/rejected decisions)",
+                        value: "{note}",
+                        oninput: move |e| note.set(e.value()),
+                    }
+                    div { style: "display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;",
+                        for &s in next.iter() {
+                            {
+                                let note_val = note.clone();
+                                let s_owned = s.to_string();
+                                let btn_label = removal_label(s);
+                                let btn_class = if s == "upheld_removed" {
+                                    "btn btn-primary btn-sm"
+                                } else {
+                                    "btn btn-ghost btn-sm"
+                                };
+                                rsx! {
+                                    button {
+                                        class: btn_class,
+                                        disabled: busy(),
+                                        onclick: move |_| {
+                                            let s2 = s_owned.clone();
+                                            let n2 = note_val();
+                                            spawn(async move {
+                                                busy.set(true);
+                                                match desk_removal_decide(id, s2, n2).await {
+                                                    Ok(v) => {
+                                                        items.set(Some(v));
+                                                        selected.set(None);
+                                                        err.set(None);
+                                                    }
+                                                    Err(e) => err.set(Some(e.to_string())),
+                                                }
+                                                busy.set(false);
+                                            });
+                                        },
+                                        "{btn_label}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-err", "{e}" }
+            }
+        }
+    }
+}
+
 #[component]
 fn CorrectionsPanel() -> Element {
     let mut items = use_signal(|| Option::<Vec<DeskCorrection>>::None);
@@ -1030,15 +1274,35 @@ fn AuditPanel() -> Element {
                         thead { tr { th { "When" } th { "Who" } th { "Action" } th { "Subject" } } }
                         tbody {
                             for (i , r) in d.rows.iter().enumerate() {
-                                tr { key: "{i}",
-                                    td { class: "desk-muted", "{ymd(r.ts)}" }
-                                    td { "{r.actor}" }
-                                    td { span { class: "desk-row-title", "{audit_label(&r.action)}" }
-                                        if !r.detail.is_empty() {
-                                            div { class: "desk-muted", style: "font-size:12px;", "{r.detail}" }
+                                {
+                                    let row_cat = audit_category(&r.action);
+                                    let actor = r.actor.clone();
+                                    let label = audit_label(&r.action);
+                                    let detail = r.detail.clone();
+                                    let subject = r.subject.clone();
+                                    // Truncate long subjects for display; full value in title=
+                                    let subject_short = if subject.chars().count() > 60 {
+                                        let s: String = subject.chars().take(57).collect();
+                                        format!("{s}\u{2026}")
+                                    } else {
+                                        subject.clone()
+                                    };
+                                    let when = ymd(r.ts);
+                                    rsx! {
+                                        tr { key: "{i}", class: "{row_cat}",
+                                            td { class: "desk-muted", "{when}" }
+                                            td { span { class: "pill", "{actor}" } }
+                                            td {
+                                                span { class: "desk-row-title", "{label}" }
+                                                if !detail.is_empty() {
+                                                    div { class: "desk-muted", style: "font-size:12px;", "{detail}" }
+                                                }
+                                            }
+                                            td { class: "desk-muted desk-wrap",
+                                                span { title: "{subject}", "{subject_short}" }
+                                            }
                                         }
                                     }
-                                    td { class: "desk-muted desk-wrap", "{r.subject}" }
                                 }
                             }
                         }
@@ -1069,6 +1333,33 @@ fn audit_label(action: &str) -> &str {
         "user.create" => "Staff added",
         "seed" => "Seeded content",
         other => other,
+    }
+}
+
+/// Map an action string to a CSS category class for audit row color-coding.
+fn audit_category(action: &str) -> &str {
+    if action.starts_with("crawler.") || action.starts_with("lead.") {
+        "a-crawler"
+    } else if action.starts_with("article.create")
+        || action.starts_with("article.edit")
+        || action.starts_with("article.submitted")
+    {
+        "a-draft"
+    } else if action.starts_with("article.published")
+        || action.starts_with("article.corrected")
+        || action.starts_with("article.correction")
+        || action.starts_with("article.retracted")
+        || action.starts_with("article.scheduled")
+    {
+        "a-publish"
+    } else if action.starts_with("article.")
+        || action.starts_with("complaint.")
+    {
+        "a-ingest"
+    } else if action.starts_with("staff.") || action.starts_with("admin.") || action.starts_with("user.") {
+        "a-system"
+    } else {
+        "a-system"
     }
 }
 
@@ -1285,6 +1576,196 @@ fn ProfilePanel(user: DeskSession) -> Element {
                     button { class: "desk-btn sm", r#type: "submit", disabled: busy(), "Change password" }
                 }
             }
+            TotpSection { username: user.username.clone() }
+        }
+    }
+}
+
+// ── Two-factor authentication section for ProfilePanel ────────────────────
+
+/// The three states the 2FA section can be in.
+#[derive(Clone, PartialEq)]
+enum TotpState {
+    /// Checking whether TOTP is enrolled.
+    Loading,
+    /// TOTP is not enrolled — show "Set up" button.
+    Off,
+    /// Enrolment started — show the secret/URI + a code field.
+    Enrolling {
+        secret: String,
+        uri: String,
+    },
+    /// TOTP is enrolled — show "Disable" button.
+    On,
+}
+
+#[component]
+fn TotpSection(username: String) -> Element {
+    let mut state = use_signal(|| TotpState::Loading);
+    let mut totp_code = use_signal(String::new);
+    let mut disable_pw = use_signal(String::new);
+    let mut totp_busy = use_signal(|| false);
+    let mut totp_ok = use_signal(|| Option::<String>::None);
+    let mut totp_err = use_signal(|| Option::<String>::None);
+
+    // On mount, check if TOTP is already enrolled.
+    use_resource(move || async move {
+        match staff_totp_status().await {
+            Ok(true) => state.set(TotpState::On),
+            Ok(false) => state.set(TotpState::Off),
+            Err(_) => state.set(TotpState::Off),
+        }
+    });
+
+    // "Set up two-factor authentication"
+    let begin = move |_| {
+        spawn(async move {
+            totp_busy.set(true);
+            totp_err.set(None);
+            totp_ok.set(None);
+            match staff_totp_begin().await {
+                Ok((secret, uri)) => state.set(TotpState::Enrolling { secret, uri }),
+                Err(e) => totp_err.set(Some(e.to_string())),
+            }
+            totp_busy.set(false);
+        });
+    };
+
+    // "Confirm" — verifies the code and persists the pending secret.
+    let confirm_enrol = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            totp_busy.set(true);
+            totp_err.set(None);
+            totp_ok.set(None);
+            match staff_totp_enable(totp_code()).await {
+                Ok(()) => {
+                    state.set(TotpState::On);
+                    totp_code.set(String::new());
+                    totp_ok.set(Some("Two-factor authentication is now active.".to_string()));
+                }
+                Err(e) => totp_err.set(Some(e.to_string())),
+            }
+            totp_busy.set(false);
+        });
+    };
+
+    // "Disable two-factor authentication"
+    let disable = move |evt: FormEvent| {
+        evt.prevent_default();
+        spawn(async move {
+            totp_busy.set(true);
+            totp_err.set(None);
+            totp_ok.set(None);
+            match staff_totp_disable(disable_pw()).await {
+                Ok(()) => {
+                    state.set(TotpState::Off);
+                    disable_pw.set(String::new());
+                    totp_ok.set(Some("Two-factor authentication has been disabled.".to_string()));
+                }
+                Err(e) => totp_err.set(Some(e.to_string())),
+            }
+            totp_busy.set(false);
+        });
+    };
+
+    let cur_state = state.read().clone();
+    rsx! {
+        div { class: "desk-new", style: "margin-top:24px;",
+            p { class: "desk-muted", style: "margin:0 0 14px;", "Two-factor authentication (2FA)" }
+            match cur_state {
+                TotpState::Loading => rsx! {
+                    p { class: "desk-muted", "Checking…" }
+                },
+                TotpState::Off => rsx! {
+                    p { style: "margin:0 0 10px; font-size:.9rem;",
+                        "2FA is not enabled. Add an extra layer of security by requiring \
+                         an authenticator code at login."
+                    }
+                    if let Some(m) = totp_ok() {
+                        p { class: "desk-ok", "{m}" }
+                    }
+                    if let Some(e) = totp_err() {
+                        p { class: "desk-error", "{e}" }
+                    }
+                    button {
+                        class: "desk-btn sm",
+                        r#type: "button",
+                        disabled: totp_busy(),
+                        onclick: begin,
+                        "Set up two-factor authentication"
+                    }
+                },
+                TotpState::Enrolling { secret, uri } => rsx! {
+                    p { style: "margin:0 0 8px; font-size:.9rem;",
+                        "Scan the URI below with your authenticator app (Google Authenticator, \
+                         Authy, 1Password, etc.), then enter the 6-digit code it shows to confirm."
+                    }
+                    p { class: "desk-muted", style: "margin:0 0 4px; font-size:.75rem;", "Secret key (manual entry)" }
+                    p {
+                        class: "desk-code",
+                        style: "font-family:monospace; word-break:break-all; margin:0 0 8px; padding:6px 8px; \
+                                background:var(--surface2,#f4f4f5); border-radius:4px; font-size:.85rem;",
+                        "{secret}"
+                    }
+                    p { class: "desk-muted", style: "margin:0 0 4px; font-size:.75rem;", "otpauth URI" }
+                    p {
+                        style: "font-family:monospace; word-break:break-all; margin:0 0 12px; padding:6px 8px; \
+                                background:var(--surface2,#f4f4f5); border-radius:4px; font-size:.75rem;",
+                        "{uri}"
+                    }
+                    form { onsubmit: confirm_enrol,
+                        input {
+                            class: "desk-in",
+                            r#type: "text",
+                            autocomplete: "one-time-code",
+                            inputmode: "numeric",
+                            pattern: "[0-9]*",
+                            maxlength: 6,
+                            placeholder: "6-digit code from app",
+                            value: "{totp_code}",
+                            oninput: move |e| totp_code.set(e.value()),
+                        }
+                        if let Some(e) = totp_err() {
+                            p { class: "desk-error", "{e}" }
+                        }
+                        button {
+                            class: "desk-btn sm",
+                            r#type: "submit",
+                            disabled: totp_busy(),
+                            "Confirm and enable 2FA"
+                        }
+                    }
+                },
+                TotpState::On => rsx! {
+                    p { style: "margin:0 0 10px; font-size:.9rem;",
+                        "Two-factor authentication is enabled. \
+                         You will be asked for your authenticator code each time you sign in."
+                    }
+                    form { onsubmit: disable,
+                        input {
+                            class: "desk-in full",
+                            r#type: "password",
+                            autocomplete: "current-password",
+                            placeholder: "Current password to confirm",
+                            value: "{disable_pw}",
+                            oninput: move |e| disable_pw.set(e.value()),
+                        }
+                        if let Some(m) = totp_ok() {
+                            p { class: "desk-ok", "{m}" }
+                        }
+                        if let Some(e) = totp_err() {
+                            p { class: "desk-error", "{e}" }
+                        }
+                        button {
+                            class: "desk-btn sm danger",
+                            r#type: "submit",
+                            disabled: totp_busy(),
+                            "Disable two-factor authentication"
+                        }
+                    }
+                },
+            }
         }
     }
 }
@@ -1321,10 +1802,17 @@ fn complaint_next_statuses(status: &str) -> Vec<(&'static str, &'static str)> {
     }
 }
 
-#[component]
 /// IMPRESS pre-publish checklist. Shown when an editor moves a story to Published
 /// or Scheduled; the confirmations are recorded in the review log + audit trail as
-/// the sign-off note. Publishing is blocked until all are ticked.
+/// the sign-off note. Publishing is blocked until all four checkboxes are ticked AND:
+///   a public-interest justification has been typed, AND
+///   if the story names a person before charge, a separate documented
+///   justification for that naming has been provided.
+///
+/// A fourth mandatory checkbox enforces victim-anonymity / reporting-restriction
+/// confirmation (IMPRESS children+justice; IPSO Clauses 7 & 11). If the source
+/// lead flagged `identification_risk` or `restrictions_review` a prominent warning
+/// banner is also shown.
 #[component]
 fn PublishGate(
     mut pending: Signal<Option<(i64, String, String)>>,
@@ -1335,29 +1823,72 @@ fn PublishGate(
     let mut c1 = use_signal(|| false);
     let mut c2 = use_signal(|| false);
     let mut c3 = use_signal(|| false);
+    let mut c4 = use_signal(|| false);
+    // Public-interest justification (free text, required).
+    let mut pi_just: Signal<String> = use_signal(|| String::new());
+    // Editor attests the story names a person before charge.
+    let mut pre_charge = use_signal(|| false);
+    // Documented justification for naming before charge (required when pre_charge).
+    let mut pc_just: Signal<String> = use_signal(|| String::new());
 
     let p = pending.read().clone();
     let Some((id, to, label)) = p else {
         return rsx! {};
     };
-    let ready = c1() && c2() && c3();
+
+    // Look up the pending article's risk flags from the already-loaded article list.
+    let (id_risk, restrictions_review) = articles
+        .read()
+        .as_ref()
+        .and_then(|list| list.iter().find(|a| a.id == id))
+        .map(|a| (a.id_risk, a.restrictions_review))
+        .unwrap_or((false, false));
+
+    let show_banner = id_risk || restrictions_review;
+
+    // All gates must be satisfied before "Confirm + publish" is enabled.
+    let pi_ok = !pi_just.read().trim().is_empty();
+    let pc_ok = !pre_charge() || !pc_just.read().trim().is_empty();
+    let ready = c1() && c2() && c3() && c4() && pi_ok && pc_ok;
 
     let confirm = move |_| {
-        if !(c1() && c2() && c3()) {
+        let pi_text = pi_just.read().trim().to_string();
+        let pc_text = pc_just.read().trim().to_string();
+        if !(c1() && c2() && c3() && c4()) || pi_text.is_empty() || (pre_charge() && pc_text.is_empty()) {
             return;
         }
         let to = to.clone();
+        // Build the note dynamically so the audit trail records what was confirmed.
+        let anon_clause = if id_risk {
+            "; victim-anonymity + jigsaw-ID risk confirmed (IPSO Cl.7/11 — id_risk flag)"
+        } else if restrictions_review {
+            "; victim-anonymity confirmed (IPSO Cl.7/11 — sexual/child category)"
+        } else {
+            "; victim-anonymity / reporting-restriction confirmed (IPSO Cl.7/11)"
+        };
+        let pc_section = if pre_charge() {
+            format!(" | PRE-CHARGE NAMING justification: {}", pc_text)
+        } else {
+            String::new()
+        };
+        let note = format!(
+            "IMPRESS sign-off: case concluded (no active proceedings); public interest + accuracy checked; AI-assistance + pre-charge naming reviewed{anon_clause} | Public-interest justification: {}{}",
+            pi_text, pc_section
+        );
         spawn(async move {
             busy.set(true);
             err.set(None);
-            let note = "IMPRESS sign-off: case concluded (no active proceedings); public interest + accuracy checked; AI-assistance + pre-charge naming reviewed";
-            match desk_transition(id, to, note.to_string()).await {
+            match desk_transition(id, to, note).await {
                 Ok(list) => {
                     articles.set(Some(list));
                     pending.set(None);
                     c1.set(false);
                     c2.set(false);
                     c3.set(false);
+                    c4.set(false);
+                    pi_just.set(String::new());
+                    pre_charge.set(false);
+                    pc_just.set(String::new());
                 }
                 Err(e) => err.set(Some(e.to_string())),
             }
@@ -1365,11 +1896,35 @@ fn PublishGate(
         });
     };
 
+    // Precompute the pre_charge flag for use in RSX.
+    let names_before_charge = pre_charge();
+
     rsx! {
         div { class: "modal-scrim", onclick: move |_| pending.set(None),
             div { class: "modal", onclick: move |e| e.stop_propagation(),
                 p { class: "desk-eyebrow", "Pre-publish checks" }
                 h3 { class: "modal-title", "Going public: {label}" }
+                if show_banner {
+                    div { class: "modal-warn-banner",
+                        if id_risk {
+                            span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                            strong { "Identification risk flagged" }
+                            p {
+                                "The source lead indicates a victim or child may be identifiable. "
+                                "Jigsaw identification is prohibited even when no single detail alone "
+                                "names the person (IPSO Clause 7 — children; Clause 11 — sexual-assault victims; IMPRESS Standards)."
+                            }
+                        } else {
+                            span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                            strong { "Reporting restrictions apply" }
+                            p {
+                                "This article covers a sexual-offence or child case. "
+                                "Automatic anonymity duties apply to victims and children under the Sexual Offences (Amendment) Act 1992 "
+                                "and the Children and Young Persons Act 1933. Verify before publishing (IPSO Clauses 7 & 11; IMPRESS Standards)."
+                            }
+                        }
+                    }
+                }
                 p { class: "desk-muted", style: "margin:0 0 14px;", "Confirm our published standards before this story goes live:" }
                 label { class: "modal-check",
                     input { r#type: "checkbox", checked: c1(), onchange: move |e| c1.set(e.checked()) }
@@ -1383,6 +1938,62 @@ fn PublishGate(
                     input { r#type: "checkbox", checked: c3(), onchange: move |e| c3.set(e.checked()) }
                     span { "Any AI assistance is labelled; no one is named before charge without justification." }
                 }
+                label { class: "modal-check modal-check-anon",
+                    input { r#type: "checkbox", checked: c4(), onchange: move |e| c4.set(e.checked()) }
+                    span {
+                        "I confirm that publishing this does not breach any reporting restriction "
+                        "and that no victim or child is identifiable, directly or by jigsaw "
+                        "(IMPRESS; IPSO Clauses 7 \u{0026} 11)."
+                    }
+                }
+
+                // Public-interest justification — required before publish.
+                p { class: "desk-muted", style: "margin:14px 0 4px; font-weight:600;",
+                    "Public-interest justification (required)"
+                }
+                p { class: "desk-muted", style: "margin:0 0 6px; font-size:0.85em;",
+                    "Briefly state why publishing this story is in the public interest. This is recorded in the audit trail."
+                }
+                textarea {
+                    style: "width:100%; min-height:72px; box-sizing:border-box; padding:6px 8px; font-size:0.9em; border:1px solid #ccc; border-radius:4px; resize:vertical;",
+                    placeholder: "e.g. Informs the public of a convicted predator in the local community\u{2026}",
+                    value: "{pi_just}",
+                    oninput: move |e| pi_just.set(e.value()),
+                }
+
+                // Pre-charge naming — editor self-declares; hard-blocks publish if set without justification.
+                p { class: "desk-muted", style: "margin:14px 0 4px; font-weight:600;",
+                    "Pre-charge naming"
+                }
+                label { class: "modal-check",
+                    input {
+                        r#type: "checkbox",
+                        checked: names_before_charge,
+                        onchange: move |e| pre_charge.set(e.checked()),
+                    }
+                    span { "This story names a person who has not yet been charged." }
+                }
+                if names_before_charge {
+                    div { class: "modal-warn-banner",
+                        span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                        strong { "Warning: naming a person before charge" }
+                        p {
+                            "Publishing a name before charge carries significant legal and ethical risk. "
+                            "A documented public-interest justification for this specific naming decision "
+                            "is required before this story can be published."
+                        }
+                        p { style: "margin:10px 0 4px; font-weight:600; font-size:0.9em;",
+                            "Justification for naming before charge (required)"
+                        }
+                        textarea {
+                            style: "width:100%; min-height:72px; box-sizing:border-box; padding:6px 8px; font-size:0.9em; border:1px solid var(--red); border-radius:4px; resize:vertical;",
+                            placeholder: "State specifically why this naming is justified despite no charge having been made\u{2026}",
+                            value: "{pc_just}",
+                            oninput: move |e| pc_just.set(e.value()),
+                        }
+                    }
+                }
+
                 div { class: "modal-actions",
                     button { class: "desk-btn ghost", onclick: move |_| pending.set(None), "Cancel" }
                     button { class: "desk-btn", disabled: !ready || busy(), onclick: confirm, "Confirm + publish" }
@@ -1825,20 +2436,69 @@ fn EditorForm(
             }
 
             // ---- The markdown source textarea: the editor in Markdown mode; the
-            // hidden bridge to the canonical `body` (read by save) in Visual mode. ----
-            div {
-                class: if mode() == EdMode::Visual { "editor-split is-hidden" } else { "editor-split" },
-                textarea {
-                    id: "ed-body",
-                    class: "editor-body",
-                    rows: "16",
-                    placeholder: "Write the story. Leave a blank line — or a new line — between paragraphs.",
-                    value: "{body}",
-                    oninput: move |e| body.set(e.value()),
-                }
-                div { class: "editor-preview prose",
-                    span { class: "editor-prev-label", "Live preview · dioxus-markdown" }
-                    Markdown { src: body, preserve_html: false }
+            // hidden bridge to the canonical `body` (read by save) in Visual mode.
+            // In Markdown mode the right pane is a live preview using the SAME
+            // md.rs renderer as the public article page so authors see the real
+            // published look as they type. ----
+            {
+                // Precompute preview HTML outside rsx! to satisfy the Dioxus rule
+                // that function calls must live in pure "{expr}" text nodes only.
+                let preview_title = title();
+                let preview_summary = summary();
+                let preview_html: String = body()
+                    .lines()
+                    .map(|line| crate::md::block_html(line))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let preview_empty = preview_html.trim().is_empty();
+                let compose_class = if mode() == EdMode::Visual {
+                    "editor-panes is-hidden"
+                } else {
+                    "editor-panes"
+                };
+                rsx! {
+                    div { class: "{compose_class}",
+                        // ---- Left: compose column ----
+                        div { class: "editor-compose",
+                            textarea {
+                                id: "ed-body",
+                                class: "editor-body",
+                                rows: "16",
+                                placeholder: "Write the story. Leave a blank line or a new line between paragraphs.\n\n## Subheading\n- Bullet point\n^ Drop cap paragraph\n> Blockquote\n>> Pull quote",
+                                value: "{body}",
+                                oninput: move |e| body.set(e.value()),
+                            }
+                            // Formatting hints strip
+                            div { class: "editor-fmt-hints",
+                                span { class: "fmt-hint", code { "##" } " subhead" }
+                                span { class: "fmt-hint", code { "-" } " bullet" }
+                                span { class: "fmt-hint", code { "^" } " drop cap" }
+                                span { class: "fmt-hint", code { ">" } " quote" }
+                                span { class: "fmt-hint", code { ">>" } " pull quote" }
+                                span { class: "fmt-hint", code { "![alt](url)" } " image" }
+                            }
+                        }
+                        // ---- Right: live preview pane (real published look) ----
+                        div { class: "editor-preview-pane",
+                            span { class: "editor-prev-label", "Live preview \u{2014} published look" }
+                            if !preview_title.is_empty() || !preview_summary.is_empty() || !preview_empty {
+                                div { class: "art-page art-page--desk-preview",
+                                    if !preview_title.is_empty() {
+                                        h1 { class: "art-headline", "{preview_title}" }
+                                    }
+                                    if !preview_summary.is_empty() {
+                                        p { class: "art-standfirst", "{preview_summary}" }
+                                    }
+                                    div {
+                                        class: "art-prose",
+                                        dangerous_inner_html: "{preview_html}",
+                                    }
+                                }
+                            } else {
+                                p { class: "editor-prev-empty", "Start writing to see the published preview\u{2026}" }
+                            }
+                        }
+                    }
                 }
             }
             div { class: "editor-meters",

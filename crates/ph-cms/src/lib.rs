@@ -195,6 +195,175 @@ pub mod auth {
     }
 }
 
+// ===================== totp =====================
+pub mod totp {
+    //! RFC 6238 TOTP (HMAC-SHA1, 30-second steps, 6 digits).
+    //! Base-32 encoding/decoding is done inline so we keep deps minimal.
+
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+
+    // ── base-32 (RFC 4648, uppercase, no padding required) ─────────────────
+
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+    /// Encode raw bytes to uppercase base-32 (no `=` padding).
+    pub fn base32_encode(data: &[u8]) -> String {
+        let mut out = String::new();
+        let mut buf: u64 = 0;
+        let mut bits: u32 = 0;
+        for &b in data {
+            buf = (buf << 8) | b as u64;
+            bits += 8;
+            while bits >= 5 {
+                bits -= 5;
+                let idx = ((buf >> bits) & 0x1f) as usize;
+                out.push(ALPHA[idx] as char);
+            }
+        }
+        if bits > 0 {
+            let idx = ((buf << (5 - bits)) & 0x1f) as usize;
+            out.push(ALPHA[idx] as char);
+        }
+        out
+    }
+
+    /// Decode uppercase (or lowercase) base-32 string to bytes.
+    /// Padding characters `=` are ignored.  Returns `None` on invalid input.
+    pub fn base32_decode(s: &str) -> Option<Vec<u8>> {
+        let mut buf: u64 = 0;
+        let mut bits: u32 = 0;
+        let mut out = Vec::new();
+        for c in s.chars() {
+            if c == '=' {
+                continue;
+            }
+            let upper = c.to_ascii_uppercase();
+            let val = ALPHA.iter().position(|&a| a == upper as u8)? as u64;
+            buf = (buf << 5) | val;
+            bits += 5;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((buf >> bits) as u8);
+            }
+        }
+        Some(out)
+    }
+
+    // ── HOTP / TOTP core ────────────────────────────────────────────────────
+
+    /// Compute HOTP(key, counter) → 6-digit code string (zero-padded).
+    pub fn hotp(key: &[u8], counter: u64) -> String {
+        let msg = counter.to_be_bytes();
+        let mut mac = Hmac::<Sha1>::new_from_slice(key)
+            .expect("HMAC accepts any key length");
+        mac.update(&msg);
+        let result = mac.finalize().into_bytes();
+
+        // Dynamic truncation (RFC 4226 §5.3)
+        let offset = (result[19] & 0x0f) as usize;
+        let code = u32::from_be_bytes([
+            result[offset] & 0x7f,
+            result[offset + 1],
+            result[offset + 2],
+            result[offset + 3],
+        ]) % 1_000_000;
+        format!("{:06}", code)
+    }
+
+    // ── public API ──────────────────────────────────────────────────────────
+
+    /// Verify a 6-digit code against a base-32 secret at an arbitrary Unix
+    /// timestamp.  Accepts the current and previous 30-second windows to
+    /// tolerate clock skew.  Useful for unit-testing against known vectors.
+    pub fn verify_totp_at(secret_base32: &str, code: &str, unix_secs: u64) -> bool {
+        let key = match base32_decode(secret_base32) {
+            Some(k) => k,
+            None => return false,
+        };
+        if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        let step = unix_secs / 30;
+        // Check current window and one previous window for clock skew
+        for &t in &[step, step.saturating_sub(1)] {
+            if hotp(&key, t) == code {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Verify a 6-digit TOTP code against a base-32 secret using the current
+    /// system time.
+    pub fn verify_totp(secret_base32: &str, code: &str) -> bool {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        verify_totp_at(secret_base32, code, secs)
+    }
+
+    /// Generate a fresh TOTP secret: 20 random bytes encoded as base-32.
+    pub fn generate_totp_secret() -> String {
+        use argon2::password_hash::rand_core::{OsRng, RngCore};
+        let mut raw = [0u8; 20];
+        OsRng.fill_bytes(&mut raw);
+        base32_encode(&raw)
+    }
+
+    /// Build an `otpauth://totp/` URI for use in authenticator apps / QR codes.
+    pub fn totp_uri(secret: &str, account: &str, issuer: &str) -> String {
+        let account_enc = percent_encode(account);
+        let issuer_enc = percent_encode(issuer);
+        format!(
+            "otpauth://totp/{issuer_enc}:{account_enc}?secret={secret}&issuer={issuer_enc}&algorithm=SHA1&digits=6&period=30",
+            issuer_enc = issuer_enc,
+            account_enc = account_enc,
+            secret = secret,
+        )
+    }
+
+    fn percent_encode(s: &str) -> String {
+        let mut out = String::new();
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+                | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+                _ => {
+                    out.push('%');
+                    out.push(char::from_digit((b >> 4) as u32, 16).unwrap().to_ascii_uppercase());
+                    out.push(char::from_digit((b & 0xf) as u32, 16).unwrap().to_ascii_uppercase());
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Set (or clear) the TOTP secret for a staff user.
+/// Pass `Some(secret)` to enable; `None` to disable.
+pub async fn set_totp_secret(
+    pool: &SqlitePool,
+    username: &str,
+    secret: Option<&str>,
+) -> Result<()> {
+    sqlx::query("UPDATE staff_user SET totp_secret = ? WHERE username = ?")
+        .bind(secret)
+        .bind(username)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Returns true if the given user has a TOTP secret enrolled.
+pub async fn user_has_totp(pool: &SqlitePool, username: &str) -> bool {
+    matches!(
+        find_user(pool, username).await,
+        Ok(Some(u)) if u.totp_secret.is_some()
+    )
+}
+
 // ===================== models =====================
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct StaffUser {
@@ -1209,8 +1378,9 @@ pub const COMPLAINT_STATUSES: [&str; 8] = [
     "escalated",
 ];
 
-/// A terminal (resolved) outcome — stamps `resolved_at`.
-fn is_resolved_status(status: &str) -> bool {
+/// A terminal (resolved) outcome — stamps `resolved_at`. Public so the
+/// aggregation layer can reuse the same definition without duplicating it.
+pub fn is_resolved_status(status: &str) -> bool {
     matches!(status, "upheld" | "partly_upheld" | "not_upheld" | "closed")
 }
 
@@ -1251,6 +1421,172 @@ pub async fn set_complaint_status(
         append_audit(pool, actor, "complaint.status", &id.to_string(), status).await?;
     }
     Ok(changed)
+}
+
+// ==================== removal requests (right-to-erasure review) ====================
+
+/// A request from a member of the public to remove a conviction-database entry.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RemovalRequest {
+    pub id: i64,
+    pub target_ref: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub reason: String,
+    pub status: String,
+    pub created_at: i64,
+    pub decided_at: Option<i64>,
+    pub decision_note: String,
+    pub decided_by: String,
+}
+
+/// Valid statuses for a removal request workflow.
+pub const REMOVAL_STATUSES: [&str; 4] = [
+    "received",
+    "under_review",
+    "upheld_removed",
+    "rejected",
+];
+
+/// Is this a terminal (decided) status?
+fn is_decided_status(status: &str) -> bool {
+    matches!(status, "upheld_removed" | "rejected")
+}
+
+/// Log a public removal request. Returns the new id.
+pub async fn create_removal_request(
+    pool: &SqlitePool,
+    target_ref: &str,
+    requester_name: &str,
+    requester_email: &str,
+    reason: &str,
+) -> Result<i64> {
+    let res = sqlx::query(
+        "INSERT INTO removal_request \
+         (target_ref, requester_name, requester_email, reason, status, created_at) \
+         VALUES (?,?,?,?,'received',?)",
+    )
+    .bind(target_ref.trim())
+    .bind(requester_name.trim())
+    .bind(requester_email.trim().to_lowercase())
+    .bind(reason.trim())
+    .bind(now())
+    .execute(pool)
+    .await?;
+    append_audit(pool, "system", "removal.received", target_ref, "").await?;
+    Ok(res.last_insert_rowid())
+}
+
+/// Every removal request, newest first (the staff inbox).
+pub async fn list_removal_requests(pool: &SqlitePool) -> Result<Vec<RemovalRequest>> {
+    Ok(
+        sqlx::query_as::<_, RemovalRequest>(
+            "SELECT * FROM removal_request ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await?,
+    )
+}
+
+/// A single removal request by id.
+pub async fn get_removal_request(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<Option<RemovalRequest>> {
+    Ok(
+        sqlx::query_as::<_, RemovalRequest>(
+            "SELECT * FROM removal_request WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?,
+    )
+}
+
+/// Advance a removal request's status, audited under `actor`. On `upheld_removed`
+/// also hides the conviction (see `hide_conviction`). Stamps decided_at / decided_by
+/// / decision_note on a terminal decision. Returns true if a row changed.
+pub async fn set_removal_status(
+    pool: &SqlitePool,
+    id: i64,
+    status: &str,
+    actor: &str,
+    decision_note: &str,
+) -> Result<bool> {
+    if !REMOVAL_STATUSES.contains(&status) {
+        return Err(CmsError::Bad(format!("removal request status: {status}")));
+    }
+    let t = now();
+    if is_decided_status(status) {
+        sqlx::query(
+            "UPDATE removal_request SET decided_at = ?, decided_by = ?, decision_note = ? \
+             WHERE id = ? AND decided_at IS NULL",
+        )
+        .bind(t)
+        .bind(actor)
+        .bind(decision_note.trim())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+    let res = sqlx::query("UPDATE removal_request SET status = ? WHERE id = ?")
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    let changed = res.rows_affected() > 0;
+    if changed {
+        append_audit(pool, actor, "removal.status", &id.to_string(), status).await?;
+        if status == "upheld_removed" {
+            // Fetch the target_ref and hide it.
+            if let Some(req) = get_removal_request(pool, id).await? {
+                hide_conviction(pool, &req.target_ref, id, actor).await?;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Hide a conviction entry (both compile-time and DB-backed) from the public
+/// database. Safe to call multiple times — INSERT OR IGNORE.
+pub async fn hide_conviction(
+    pool: &SqlitePool,
+    target_ref: &str,
+    removal_request_id: i64,
+    actor: &str,
+) -> Result<()> {
+    let t = now();
+    sqlx::query(
+        "INSERT OR IGNORE INTO hidden_conviction \
+         (target_ref, removal_request_id, hidden_at, hidden_by) VALUES (?,?,?,?)",
+    )
+    .bind(target_ref)
+    .bind(removal_request_id)
+    .bind(t)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    append_audit(pool, actor, "conviction.hidden", target_ref, "").await?;
+    Ok(())
+}
+
+/// Unhide a conviction entry (removes from the hidden set; the row is untouched).
+pub async fn unhide_conviction(pool: &SqlitePool, target_ref: &str, actor: &str) -> Result<()> {
+    sqlx::query("DELETE FROM hidden_conviction WHERE target_ref = ?")
+        .bind(target_ref)
+        .execute(pool)
+        .await?;
+    append_audit(pool, actor, "conviction.unhidden", target_ref, "").await?;
+    Ok(())
+}
+
+/// Every currently hidden conviction target_ref.
+pub async fn list_hidden_refs(pool: &SqlitePool) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT target_ref FROM hidden_conviction")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().map(|(r,)| r).collect())
 }
 
 /// First-run setup. If there are no staff users yet, create the first admin
@@ -1356,6 +1692,77 @@ pub async fn open_and_setup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── TOTP tests ─────────────────────────────────────────────────────────
+
+    /// RFC 4226 Appendix D / RFC 6238 Appendix B test vector using SHA-1.
+    /// ASCII secret "12345678901234567890" (20 bytes), counter 0 → HOTP = 755224.
+    #[test]
+    fn totp_rfc4226_vector_counter_0() {
+        // The well-known 20-byte ASCII test key from RFC 4226 Appendix D
+        let ascii_key = b"12345678901234567890";
+        let code = totp::hotp(ascii_key, 0);
+        assert_eq!(code, "755224", "RFC 4226 App.D counter=0 failed");
+    }
+
+    #[test]
+    fn totp_rfc4226_vector_counter_1() {
+        let ascii_key = b"12345678901234567890";
+        assert_eq!(totp::hotp(ascii_key, 1), "287082");
+    }
+
+    #[test]
+    fn totp_base32_roundtrip() {
+        let ascii_key = b"12345678901234567890";
+        // Known base-32 encoding of the RFC test key
+        let b32 = totp::base32_encode(ascii_key);
+        assert_eq!(b32, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+        let decoded = totp::base32_decode(&b32).unwrap();
+        assert_eq!(decoded, ascii_key);
+    }
+
+    #[test]
+    fn totp_verify_at_known_counter() {
+        // counter 0 → step 0 → unix_secs anywhere in [0, 30)
+        let ascii_key = b"12345678901234567890";
+        let b32 = totp::base32_encode(ascii_key);
+        // At unix_secs=0, step=0 → expect "755224"
+        assert!(totp::verify_totp_at(&b32, "755224", 0));
+        // Wrong code
+        assert!(!totp::verify_totp_at(&b32, "000000", 0));
+    }
+
+    #[test]
+    fn totp_verify_clock_skew_previous_window() {
+        // counter 1 (unix_secs 30-59); code from counter 0 should be accepted
+        // as "previous window" when unix_secs = 30 (step=1, prev=0).
+        let ascii_key = b"12345678901234567890";
+        let b32 = totp::base32_encode(ascii_key);
+        // unix_secs=30 → step=1; prev=0 → code "755224" should pass
+        assert!(totp::verify_totp_at(&b32, "755224", 30));
+    }
+
+    #[test]
+    fn totp_generate_secret_is_valid_base32() {
+        let secret = totp::generate_totp_secret();
+        assert!(!secret.is_empty());
+        let decoded = totp::base32_decode(&secret);
+        assert!(decoded.is_some(), "generated secret is not valid base-32");
+        assert_eq!(decoded.unwrap().len(), 20, "secret should be 20 bytes");
+    }
+
+    #[test]
+    fn totp_uri_format() {
+        let uri = totp::totp_uri("TESTSECRET", "alice", "Acme News");
+        assert!(uri.starts_with("otpauth://totp/"));
+        assert!(uri.contains("secret=TESTSECRET"));
+        assert!(uri.contains("issuer="));
+        assert!(uri.contains("algorithm=SHA1"));
+        assert!(uri.contains("digits=6"));
+        assert!(uri.contains("period=30"));
+    }
+
+    // ── Lifecycle tests ─────────────────────────────────────────────────────
 
     #[test]
     fn lifecycle_gates_publish_behind_legal() {
@@ -1880,5 +2287,81 @@ mod tests {
         let a = get_article(&pool, id).await.unwrap().unwrap();
         assert_eq!(a.slug, original);
         assert_eq!(a.meta_description, "Edited meta");
+    }
+
+    #[tokio::test]
+    async fn removal_request_lifecycle() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+
+        // Create a request.
+        let id = create_removal_request(
+            &pool,
+            "kieron-willans-guilty",
+            "Test Requester",
+            "test@example.com",
+            "Spent conviction under ROA",
+        )
+        .await
+        .unwrap();
+        assert!(id > 0);
+
+        // Fetch it back.
+        let req = get_removal_request(&pool, id).await.unwrap().unwrap();
+        assert_eq!(req.status, "received");
+        assert_eq!(req.target_ref, "kieron-willans-guilty");
+        assert!(req.decided_at.is_none());
+
+        // Advance to under_review.
+        assert!(set_removal_status(&pool, id, "under_review", "admin", "").await.unwrap());
+        let req2 = get_removal_request(&pool, id).await.unwrap().unwrap();
+        assert_eq!(req2.status, "under_review");
+        assert!(req2.decided_at.is_none());
+
+        // Uphold — this should also hide the conviction.
+        assert!(
+            set_removal_status(&pool, id, "upheld_removed", "admin", "ROA applies")
+                .await
+                .unwrap()
+        );
+        let req3 = get_removal_request(&pool, id).await.unwrap().unwrap();
+        assert_eq!(req3.status, "upheld_removed");
+        assert!(req3.decided_at.is_some());
+        assert_eq!(req3.decided_by, "admin");
+        assert_eq!(req3.decision_note, "ROA applies");
+
+        // The conviction is now in the hidden set.
+        let hidden = list_hidden_refs(&pool).await.unwrap();
+        assert!(hidden.contains(&"kieron-willans-guilty".to_string()));
+
+        // Unhide it.
+        unhide_conviction(&pool, "kieron-willans-guilty", "admin")
+            .await
+            .unwrap();
+        let hidden2 = list_hidden_refs(&pool).await.unwrap();
+        assert!(!hidden2.contains(&"kieron-willans-guilty".to_string()));
+
+        // The removal_request row is NOT deleted.
+        assert!(get_removal_request(&pool, id).await.unwrap().is_some());
+
+        // Reject a different request (no hide).
+        let id2 = create_removal_request(
+            &pool,
+            "jamie-wallace-guilty",
+            "Another",
+            "b@example.com",
+            "No basis",
+        )
+        .await
+        .unwrap();
+        set_removal_status(&pool, id2, "rejected", "admin", "Not spent")
+            .await
+            .unwrap();
+        let hidden3 = list_hidden_refs(&pool).await.unwrap();
+        assert!(!hidden3.contains(&"jamie-wallace-guilty".to_string()));
+
+        // list_removal_requests returns both.
+        let all = list_removal_requests(&pool).await.unwrap();
+        assert_eq!(all.len(), 2);
     }
 }

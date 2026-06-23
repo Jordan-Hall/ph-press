@@ -50,6 +50,12 @@ pub struct DeskArticle {
     pub updated_at: i64,
     pub is_ai_assisted: bool,
     pub actions: Vec<DeskAction>,
+    /// True when the source lead carried an `identification_risk` flag — victim
+    /// may be identifiable (IPSO Clauses 7 & 11 / IMPRESS children+justice).
+    pub id_risk: bool,
+    /// True when the source lead is in a sexual-offence or child category —
+    /// automatic anonymity duties apply (IMPRESS; IPSO Clauses 7 & 11).
+    pub restrictions_review: bool,
 }
 
 /// One allowed lifecycle transition: the target state + a human button label.
@@ -86,6 +92,21 @@ pub struct DeskComplaintMessage {
     pub ts: i64,
 }
 
+/// A removal-request entry as the desk sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskRemovalRequest {
+    pub id: i64,
+    pub target_ref: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub reason: String,
+    pub status: String,
+    pub created_at: i64,
+    pub decided_at: Option<i64>,
+    pub decision_note: String,
+    pub decided_by: String,
+}
+
 /// A published correction (both versions kept, IMPRESS equal-prominence).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeskCorrection {
@@ -95,6 +116,20 @@ pub struct DeskCorrection {
     pub corrected: String,
     pub reason: String,
     pub ts: i64,
+}
+
+/// A published correction as the PUBLIC `/corrections` page sees it — article
+/// metadata resolved server-side so the wasm client gets ready-to-render strings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicCorrection {
+    pub id: i64,
+    pub article_slug: String,
+    pub article_title: String,
+    pub original: String,
+    pub corrected: String,
+    pub reason: String,
+    /// "YYYY-MM-DD" formatted server-side (wasm has no `ymd`).
+    pub iso_date: String,
 }
 
 /// A public news-list card from the live CMS feed (a story published via /desk).
@@ -157,6 +192,37 @@ pub struct AuditRow {
 pub struct AuditLog {
     pub verified: bool,
     pub rows: Vec<AuditRow>,
+}
+
+/// Aggregate complaints-handling statistics for the PUBLIC transparency report.
+/// Contains ONLY counts and percentages — zero complainant-identifying data
+/// (no names, emails, message text, or article slugs).
+///
+/// Denominator: every percentage is over `total` (all complaints received).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComplaintsReportStats {
+    /// Total complaints received in all time.
+    pub total: i64,
+    /// Count per IMPRESS status label (all 8 statuses included, zeros shown).
+    pub by_status: Vec<(String, i64)>,
+    /// Complaints with outcome `upheld` or `partly_upheld`.
+    pub upheld: i64,
+    /// Complaints with outcome `not_upheld`.
+    pub not_upheld: i64,
+    /// Complaints with any terminal status (upheld | partly_upheld | not_upheld | closed).
+    pub resolved: i64,
+    /// upheld / resolved × 100 (0.0 when no complaints are resolved).
+    pub upheld_pct: f64,
+    /// Complaints acknowledged within 7 days (IMPRESS target).
+    pub acked_in_time: i64,
+    /// acked_in_time / total × 100 (0.0 when total is 0).
+    pub acked_pct: f64,
+    /// Complaints given a final response within 21 days (IMPRESS target).
+    pub resolved_in_time: i64,
+    /// resolved_in_time / total × 100 (0.0 when total is 0).
+    pub resolved_pct: f64,
+    /// Count per complaint category (empty category shown as "Unspecified").
+    pub by_category: Vec<(String, i64)>,
 }
 
 /// An article in ANY state, for an authenticated staff draft preview (carries the
@@ -247,6 +313,27 @@ async fn build_desk(role_str: &str) -> Result<Vec<DeskArticle>, ServerFnError> {
     let arts = crate::cms::all_articles()
         .await
         .map_err(ServerFnError::new)?;
+    // Build a lookup: promoted_article_id -> (id_risk, restrictions_review).
+    // Fetching all leads in one query is cheaper than N+1 per article.
+    let all_leads = crate::cms::leads(None).await.map_err(ServerFnError::new)?;
+    let lead_flags: std::collections::HashMap<i64, (bool, bool)> = all_leads
+        .into_iter()
+        .filter_map(|l| {
+            l.promoted_article_id.map(|art_id| {
+                let v: serde_json::Value =
+                    serde_json::from_str(&l.extracted_json).unwrap_or_default();
+                let id_risk = v
+                    .get("identification_risk")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false);
+                let restrictions_review = v
+                    .get("restrictions_review")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false);
+                (art_id, (id_risk, restrictions_review))
+            })
+        })
+        .collect();
     Ok(arts
         .into_iter()
         .map(|a| {
@@ -262,6 +349,8 @@ async fn build_desk(role_str: &str) -> Result<Vec<DeskArticle>, ServerFnError> {
                         .collect()
                 })
                 .unwrap_or_default();
+            let (id_risk, restrictions_review) =
+                lead_flags.get(&a.id).copied().unwrap_or((false, false));
             DeskArticle {
                 id: a.id,
                 slug: a.slug,
@@ -272,6 +361,8 @@ async fn build_desk(role_str: &str) -> Result<Vec<DeskArticle>, ServerFnError> {
                 updated_at: a.updated_at,
                 is_ai_assisted: a.is_ai_assisted,
                 actions,
+                id_risk,
+                restrictions_review,
             }
         })
         .collect())
@@ -346,13 +437,21 @@ pub async fn cms_status() -> Result<i64, ServerFnError> {
     }
 }
 
-/// Log a staff member in: verify credentials, mint a session, set the cookie, and
-/// return the session view for the UI.
+/// Log a staff member in: verify credentials, enforce TOTP when enrolled, mint a
+/// session, set the cookie, and return the session view for the UI.
+///
+/// `code` is the authenticator code — pass an empty string if the user has no 2FA.
+/// When the server returns an error starting with "two-factor", the UI should
+/// reveal the TOTP code field and let the user try again.
 #[server(endpoint = "staff_login")]
-pub async fn staff_login(username: String, password: String) -> Result<DeskSession, ServerFnError> {
+pub async fn staff_login(
+    username: String,
+    password: String,
+    code: String,
+) -> Result<DeskSession, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        let token = crate::cms::login(&username, &password)
+        let token = crate::cms::login(&username, &password, &code)
             .await
             .map_err(ServerFnError::new)?;
         let session = crate::cms::session_for(&token)
@@ -368,7 +467,7 @@ pub async fn staff_login(username: String, password: String) -> Result<DeskSessi
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (username, password);
+        let _ = (username, password, code);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -693,6 +792,24 @@ fn to_corrections(v: Vec<ph_cms::Correction>) -> Vec<DeskCorrection> {
         .collect()
 }
 
+#[cfg(feature = "server")]
+fn to_removal_requests(v: Vec<ph_cms::RemovalRequest>) -> Vec<DeskRemovalRequest> {
+    v.into_iter()
+        .map(|r| DeskRemovalRequest {
+            id: r.id,
+            target_ref: r.target_ref,
+            requester_name: r.requester_name,
+            requester_email: r.requester_email,
+            reason: r.reason,
+            status: r.status,
+            created_at: r.created_at,
+            decided_at: r.decided_at,
+            decision_note: r.decision_note,
+            decided_by: r.decided_by,
+        })
+        .collect()
+}
+
 /// The complaints inbox.
 #[server(endpoint = "desk_complaints")]
 pub async fn desk_complaints() -> Result<Vec<DeskComplaint>, ServerFnError> {
@@ -838,6 +955,52 @@ pub async fn desk_complaint_reply(
     #[cfg(not(feature = "server"))]
     {
         let _ = (id, body);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+// ---- removal requests (right-to-erasure review) ----------------------------
+
+/// The removal-requests inbox. Session required.
+#[server(endpoint = "desk_removal_requests")]
+pub async fn desk_removal_requests() -> Result<Vec<DeskRemovalRequest>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(to_removal_requests(
+            crate::cms::removal_requests()
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Advance a removal request's status (with a decision note). Session required.
+#[server(endpoint = "desk_removal_decide")]
+pub async fn desk_removal_decide(
+    id: i64,
+    status: String,
+    decision_note: String,
+) -> Result<Vec<DeskRemovalRequest>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::set_removal_status(&session.username, id, &status, &decision_note)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_removal_requests(
+            crate::cms::removal_requests()
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, status, decision_note);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -1025,6 +1188,43 @@ pub async fn submit_complaint(
     }
 }
 
+/// Public removal-request submission — no auth required. Returns the reference.
+#[server(endpoint = "submit_removal_request")]
+pub async fn submit_removal_request(
+    target_ref: String,
+    requester_name: String,
+    email: String,
+    reason: String,
+) -> Result<String, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::log_removal_request(&target_ref, &requester_name, &email, &reason)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (target_ref, requester_name, email, reason);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Public list of hidden conviction target_refs — used by /database to filter
+/// both compile-time and DB entries.
+#[server(endpoint = "hidden_refs")]
+pub async fn hidden_refs() -> Result<Vec<String>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::hidden_refs()
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
 /// The public editorial team — display name + role only, excluding the system
 /// bootstrap admin account. Public (no session).
 #[server(endpoint = "public_team")]
@@ -1160,6 +1360,35 @@ pub async fn public_article(slug: String) -> Result<Option<PublicArticle>, Serve
     {
         let _ = slug;
         Ok(None)
+    }
+}
+
+/// Published corrections — the PUBLIC `/corrections` log. No session required.
+/// Returns every correction newest-first with article slug + title resolved so
+/// the wasm client gets ready-to-render strings.
+#[server(endpoint = "public_corrections")]
+pub async fn public_corrections() -> Result<Vec<PublicCorrection>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let rows = crate::cms::public_corrections()
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(rows
+            .into_iter()
+            .map(|c| PublicCorrection {
+                id: c.id,
+                article_slug: c.article_slug,
+                article_title: c.article_title,
+                original: c.original,
+                corrected: c.corrected,
+                reason: c.reason,
+                iso_date: ymd(c.ts),
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Ok(Vec::new())
     }
 }
 
@@ -1740,6 +1969,98 @@ pub async fn desk_poll_now() -> Result<(), ServerFnError> {
     }
     #[cfg(not(feature = "server"))]
     {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Aggregate complaints-handling statistics for the public transparency report.
+/// Returns ONLY counts and percentages — no complainant names, emails, message
+/// text, or any other identifying data. Public — no session required.
+///
+/// IMPRESS members are required to publish this data. The report covers all
+/// complaints received since the publication launched.
+#[server(endpoint = "public_complaints_report")]
+pub async fn public_complaints_report() -> Result<ComplaintsReportStats, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::complaints_report_stats()
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+// ── TOTP / two-factor authentication ─────────────────────────────────────
+
+/// Whether the currently logged-in user has TOTP enrolled.
+#[server(endpoint = "staff_totp_status")]
+pub async fn staff_totp_status() -> Result<bool, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::user_totp_enabled(&session.username)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Begin TOTP enrolment for the currently logged-in user.
+/// Returns `(secret_base32, otpauth_uri)`.  The secret is a PENDING secret —
+/// it is NOT yet active for login; call `staff_totp_enable` with a valid code
+/// to confirm and activate it.
+#[server(endpoint = "staff_totp_begin")]
+pub async fn staff_totp_begin() -> Result<(String, String), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::totp_begin(&session.username)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Confirm TOTP enrolment: verify `code` against the pending secret and
+/// persist it.  After this succeeds the next login will require a TOTP code.
+#[server(endpoint = "staff_totp_enable")]
+pub async fn staff_totp_enable(code: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::totp_enable(&session.username, &code)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = code;
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Disable TOTP after verifying the user's current password.
+#[server(endpoint = "staff_totp_disable")]
+pub async fn staff_totp_disable(password: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::totp_disable(&session.username, &password)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = password;
         Err(ServerFnError::new("server only"))
     }
 }

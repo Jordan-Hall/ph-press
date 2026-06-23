@@ -130,16 +130,93 @@ pub async fn published_count() -> Result<i64, String> {
 
 /// Authenticate a staff member + mint a session. Returns the RAW token, which the
 /// API layer puts in an HttpOnly cookie. A login is recorded in the audit chain.
-pub async fn login(username: &str, password: &str) -> Result<String, String> {
+///
+/// `code` is the TOTP code (pass an empty string if the user has no 2FA).
+/// If the user has 2FA enrolled and the code is missing or wrong, an error
+/// starting with "two-factor" is returned — the UI tests for that prefix to
+/// show the code input field.
+pub async fn login(username: &str, password: &str, code: &str) -> Result<String, String> {
     let pool = db().await.map_err(|e| e.to_string())?;
+    // Verify password first to avoid leaking which accounts exist / have 2FA.
     let user = ph_cms::authenticate(pool, username, password)
         .await
         .map_err(|_| "invalid username or password".to_string())?;
+    // If TOTP is enrolled, enforce it.
+    if let Some(ref secret) = user.totp_secret {
+        if code.is_empty() {
+            return Err("two-factor code required".to_string());
+        }
+        if !ph_cms::totp::verify_totp(secret, code) {
+            return Err("two-factor code invalid".to_string());
+        }
+    }
     let token = ph_cms::create_session(pool, &user, ph_cms::SESSION_TTL_SECS)
         .await
         .map_err(|e| e.to_string())?;
     let _ = ph_cms::append_audit(pool, &user.username, "staff.login", &user.username, "").await;
     Ok(token)
+}
+
+// ── TOTP enrolment helpers ────────────────────────────────────────────────
+
+/// In-memory store for pending (unconfirmed) TOTP secrets during enrolment.
+/// Keyed by username.  Lost on restart — that's fine; enrolment is interactive.
+static PENDING_TOTP: std::sync::OnceLock<tokio::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+fn pending_totp() -> &'static tokio::sync::Mutex<std::collections::HashMap<String, String>> {
+    PENDING_TOTP.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Begin TOTP enrolment for the calling user: generate a fresh secret and store
+/// it pending confirmation. Returns `(secret_base32, otpauth_uri)`. Requires a
+/// valid session (enforced by the API caller).
+pub async fn totp_begin(username: &str) -> Result<(String, String), String> {
+    let secret = ph_cms::totp::generate_totp_secret();
+    let uri = ph_cms::totp::totp_uri(&secret, username, "PH Press");
+    pending_totp().lock().await.insert(username.to_string(), secret.clone());
+    Ok((secret, uri))
+}
+
+/// Confirm TOTP enrolment: verifies `code` against the pending secret and, if
+/// correct, persists it to the database.
+pub async fn totp_enable(username: &str, code: &str) -> Result<(), String> {
+    let secret = {
+        let guard = pending_totp().lock().await;
+        guard.get(username).cloned()
+    };
+    let secret = secret.ok_or_else(|| "no pending two-factor enrolment — please start again".to_string())?;
+    if !ph_cms::totp::verify_totp(&secret, code) {
+        return Err("two-factor code invalid — please try again".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::set_totp_secret(pool, username, Some(&secret))
+        .await
+        .map_err(|e| e.to_string())?;
+    // Remove from pending store
+    pending_totp().lock().await.remove(username);
+    let _ = ph_cms::append_audit(pool, username, "staff.totp.enable", username, "").await;
+    Ok(())
+}
+
+/// Disable TOTP after password confirmation.
+pub async fn totp_disable(username: &str, password: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    // Verify the password before allowing 2FA removal.
+    ph_cms::authenticate(pool, username, password)
+        .await
+        .map_err(|_| "invalid password".to_string())?;
+    ph_cms::set_totp_secret(pool, username, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = ph_cms::append_audit(pool, username, "staff.totp.disable", username, "").await;
+    Ok(())
+}
+
+/// Whether the given user has TOTP enrolled (for the Profile panel).
+pub async fn user_totp_enabled(username: &str) -> Result<bool, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    Ok(ph_cms::user_has_totp(pool, username).await)
 }
 
 /// Resolve a raw session token to a validated session (None if absent/expired).
@@ -506,6 +583,47 @@ pub async fn corrections() -> Result<Vec<ph_cms::Correction>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// A correction enriched with article metadata for public display.
+pub struct PublicCorrectionRow {
+    pub id: i64,
+    pub article_id: i64,
+    pub article_slug: String,
+    pub article_title: String,
+    pub original: String,
+    pub corrected: String,
+    pub reason: String,
+    pub ts: i64,
+}
+
+/// Published corrections with article slug + title resolved — the public
+/// `/corrections` read. No auth required. Corrections with no resolvable
+/// article still appear (article_slug/title left empty) so nothing is silently
+/// dropped.
+pub async fn public_corrections() -> Result<Vec<PublicCorrectionRow>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let rows = ph_cms::list_corrections(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(rows.len());
+    for c in rows {
+        let (slug, title) = match ph_cms::get_article(pool, c.article_id).await {
+            Ok(Some(a)) => (a.slug, a.title),
+            _ => (String::new(), String::new()),
+        };
+        out.push(PublicCorrectionRow {
+            id: c.id,
+            article_id: c.article_id,
+            article_slug: slug,
+            article_title: title,
+            original: c.original,
+            corrected: c.corrected,
+            reason: c.reason,
+            ts: c.ts,
+        });
+    }
+    Ok(out)
+}
+
 /// Record a correction against an article (both versions kept), audited as `actor`.
 /// The engine gates this to Editor/Admin and review-logs the Published→Corrected flip.
 pub async fn add_correction(
@@ -657,6 +775,105 @@ pub async fn log_complaint(
     .map_err(|e| e.to_string())
 }
 
+/// Aggregate complaints-handling statistics for the public transparency report.
+/// Returns ONLY counts/percentages — no complainant names, emails, or message text.
+///
+/// # Denominators
+/// Every percentage is calculated over *all complaints received* (total) so the
+/// figures are always conservative and consistent. A complaint received two days
+/// ago that has not yet been acknowledged counts as "not yet acknowledged within
+/// 7 days" rather than being silently excluded.
+///
+/// # Outcome definitions (IMPRESS Standards Code)
+/// - **Upheld** = status `upheld` or `partly_upheld`
+/// - **Not upheld** = status `not_upheld`
+/// - **Resolved** = any terminal status: `upheld | partly_upheld | not_upheld | closed`
+///   (`escalated` is not yet terminal; `closed` is terminal-without-finding)
+/// - **Acknowledged in time** = `acknowledged_at` is set AND `acknowledged_at − ts ≤ 7 days`
+/// - **Resolved in time** = `resolved_at` is set AND `resolved_at − ts ≤ 21 days`
+pub async fn complaints_report_stats() -> Result<crate::api::ComplaintsReportStats, String> {
+    let complaints = complaints().await?;
+    const DAY: i64 = 86_400;
+    let total = complaints.len() as i64;
+    // Count per status (all 8 IMPRESS statuses, zero-padded so every status shows).
+    let mut by_status: Vec<(String, i64)> = ph_cms::COMPLAINT_STATUSES
+        .iter()
+        .map(|&s| {
+            let n = complaints.iter().filter(|c| c.status == s).count() as i64;
+            (s.to_string(), n)
+        })
+        .collect();
+    // Sort by count descending, then label ascending for stable display.
+    by_status.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    let upheld = complaints
+        .iter()
+        .filter(|c| c.status == "upheld" || c.status == "partly_upheld")
+        .count() as i64;
+    let not_upheld = complaints.iter().filter(|c| c.status == "not_upheld").count() as i64;
+    let resolved = complaints
+        .iter()
+        .filter(|c| ph_cms::is_resolved_status(&c.status))
+        .count() as i64;
+    let upheld_pct = if resolved > 0 {
+        upheld as f64 / resolved as f64 * 100.0
+    } else {
+        0.0
+    };
+    let acked_in_time = complaints
+        .iter()
+        .filter(|c| {
+            c.acknowledged_at
+                .map(|ack| ack - c.ts <= 7 * DAY)
+                .unwrap_or(false)
+        })
+        .count() as i64;
+    let acked_pct = if total > 0 {
+        acked_in_time as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let resolved_in_time = complaints
+        .iter()
+        .filter(|c| {
+            c.resolved_at
+                .map(|res| res - c.ts <= 21 * DAY)
+                .unwrap_or(false)
+        })
+        .count() as i64;
+    let resolved_pct = if total > 0 {
+        resolved_in_time as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    // Category breakdown. Empty/whitespace-only category → "Unspecified".
+    let mut cat_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for c in &complaints {
+        let key = if c.category.trim().is_empty() {
+            "Unspecified".to_string()
+        } else {
+            c.category.trim().to_string()
+        };
+        *cat_map.entry(key).or_insert(0) += 1;
+    }
+    let mut by_category: Vec<(String, i64)> = cat_map.into_iter().collect();
+    by_category.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    Ok(crate::api::ComplaintsReportStats {
+        total,
+        by_status,
+        upheld,
+        not_upheld,
+        resolved,
+        upheld_pct,
+        acked_in_time,
+        acked_pct,
+        resolved_in_time,
+        resolved_pct,
+        by_category,
+    })
+}
+
 /// A complaint + its handling thread (for the desk detail view).
 pub async fn complaint_detail(
     id: i64,
@@ -714,6 +931,80 @@ pub async fn set_complaint_status(actor: &str, id: i64, status: &str) -> Result<
     ph_cms::set_complaint_status(pool, id, status, actor)
         .await
         .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+// ==================== removal requests ====================
+
+/// Format a removal-request reference string.
+pub fn removal_reference(id: i64) -> String {
+    format!("PH-R{id}")
+}
+
+/// Log a public removal request. Returns the reference string.
+pub async fn log_removal_request(
+    target_ref: &str,
+    requester_name: &str,
+    requester_email: &str,
+    reason: &str,
+) -> Result<String, String> {
+    if reason.trim().is_empty() {
+        return Err("reason is required".to_string());
+    }
+    if target_ref.trim().is_empty() {
+        return Err("target entry is required".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let id = ph_cms::create_removal_request(
+        pool,
+        target_ref.trim(),
+        requester_name.trim(),
+        requester_email,
+        reason.trim(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(removal_reference(id))
+}
+
+/// All removal requests, newest first.
+pub async fn removal_requests() -> Result<Vec<ph_cms::RemovalRequest>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::list_removal_requests(pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// A single removal request by id.
+pub async fn removal_request_detail(
+    id: i64,
+) -> Result<ph_cms::RemovalRequest, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::get_removal_request(pool, id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no removal request {id}"))
+}
+
+/// Advance a removal request's status.
+pub async fn set_removal_status(
+    actor: &str,
+    id: i64,
+    status: &str,
+    decision_note: &str,
+) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::set_removal_status(pool, id, status, actor, decision_note)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// All hidden conviction target_refs (for public filtering).
+pub async fn hidden_refs() -> Result<Vec<String>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::list_hidden_refs(pool)
+        .await
         .map_err(|e| e.to_string())
 }
 
