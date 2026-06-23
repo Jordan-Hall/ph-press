@@ -12,11 +12,13 @@ use crate::api::{
     desk_complaints, desk_convictions, desk_corrections, desk_courtwatch,
     desk_courtwatch_update, desk_create, desk_create_conviction, desk_dismiss_lead, desk_leads,
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
-    desk_promote_lead_conviction, desk_regenerate_draft, desk_set_conviction_status, desk_sources,
+    desk_promote_lead_conviction, desk_regenerate_draft, desk_removal_decide,
+    desk_removal_requests, desk_set_conviction_status, desk_sources,
     desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
     staff_install, staff_login, staff_logout, staff_me, staff_needs_install, staff_profile,
     staff_reset_password, DeskArticle, DeskComplaint, DeskComplaintMessage, DeskConviction,
-    DeskCorrection, DeskLead, DeskSession, DeskSource, DeskWatch, PreviewArticle, StaffMember,
+    DeskCorrection, DeskLead, DeskRemovalRequest, DeskSession, DeskSource, DeskWatch,
+    PreviewArticle, StaffMember,
 };
 use crate::app::Route;
 // Native-Rust WYSIWYG editor (the "Visual" mode in the article editor). The
@@ -383,6 +385,7 @@ enum Tab {
     Intake,
     Database,
     Complaints,
+    RemovalRequests,
     Corrections,
     Staff,
     Audit,
@@ -426,6 +429,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 button { class: tab_class(Tab::Intake), onclick: move |_| tab.set(Tab::Intake), "Intake" }
                 button { class: tab_class(Tab::Database), onclick: move |_| tab.set(Tab::Database), "Database" }
                 button { class: tab_class(Tab::Complaints), onclick: move |_| tab.set(Tab::Complaints), "Complaints" }
+                button { class: tab_class(Tab::RemovalRequests), onclick: move |_| tab.set(Tab::RemovalRequests), "Removal reqs" }
                 button { class: tab_class(Tab::Corrections), onclick: move |_| tab.set(Tab::Corrections), "Corrections" }
                 if user.role == "admin" {
                     button { class: tab_class(Tab::Staff), onclick: move |_| tab.set(Tab::Staff), "Staff" }
@@ -441,6 +445,7 @@ fn DeskDashboard(user: DeskSession, auth: Signal<Auth>) -> Element {
                 Tab::Intake => rsx! { IntakePanel {} },
                 Tab::Database => rsx! { DatabasePanel {} },
                 Tab::Complaints => rsx! { ComplaintsPanel {} },
+                Tab::RemovalRequests => rsx! { RemovalRequestsPanel {} },
                 Tab::Corrections => rsx! { CorrectionsPanel {} },
                 Tab::Staff => rsx! { StaffPanel {} },
                 Tab::Audit => rsx! { AuditPanel {} },
@@ -882,6 +887,209 @@ fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// ---------- Removal requests panel ----------
+
+fn removal_label(status: &str) -> &'static str {
+    match status {
+        "received" => "Received",
+        "under_review" => "Under review",
+        "upheld_removed" => "Upheld — removed",
+        "rejected" => "Rejected",
+        _ => "Unknown",
+    }
+}
+
+fn removal_next_statuses(status: &str) -> &'static [&'static str] {
+    match status {
+        "received" => &["under_review", "upheld_removed", "rejected"],
+        "under_review" => &["upheld_removed", "rejected"],
+        _ => &[],
+    }
+}
+
+#[component]
+fn RemovalRequestsPanel() -> Element {
+    let mut items = use_signal(|| Option::<Vec<DeskRemovalRequest>>::None);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+    let selected = use_signal(|| Option::<i64>::None);
+
+    use_effect(move || {
+        spawn(async move {
+            busy.set(true);
+            match desk_removal_requests().await {
+                Ok(v) => {
+                    items.set(Some(v));
+                    err.set(None);
+                }
+                Err(e) => err.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    });
+
+    if let Some(id) = selected() {
+        if let Some(ref list) = *items.read() {
+            if let Some(req) = list.iter().find(|r| r.id == id) {
+                return rsx! { RemovalDetail {
+                    req: req.clone(),
+                    items: items,
+                    selected: selected,
+                    busy: busy,
+                    err: err,
+                } };
+            }
+        }
+    }
+
+    rsx! {
+        div { class: "panel-head",
+            h2 { "Removal requests" }
+            if busy() { span { class: "badge badge-muted", "Loading\u{2026}" } }
+        }
+        if let Some(e) = err() {
+            p { class: "desk-err", "{e}" }
+        }
+        match &*items.read() {
+            None => rsx! { p { class: "desk-empty", "Loading\u{2026}" } },
+            Some(list) if list.is_empty() => rsx! { p { class: "desk-empty", "No removal requests yet." } },
+            Some(list) => rsx! {
+                div { class: "complaint-list",
+                    for req in list.iter() {
+                        RemovalRow { req: req.clone(), selected: selected }
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn RemovalRow(req: DeskRemovalRequest, mut selected: Signal<Option<i64>>) -> Element {
+    let id = req.id;
+    let label = removal_label(&req.status);
+    let badge_class = match req.status.as_str() {
+        "upheld_removed" => "badge badge-ok",
+        "rejected" => "badge badge-warn",
+        "under_review" => "badge badge-info",
+        _ => "badge badge-muted",
+    };
+    let date = ymd(req.created_at);
+    rsx! {
+        button { class: "complaint-row", onclick: move |_| selected.set(Some(id)),
+            div { class: "cr-meta",
+                span { class: badge_class, "{label}" }
+                span { class: "cr-ref", "PH-R{id}" }
+                span { class: "cr-date", "{date}" }
+            }
+            div { class: "cr-subject", "{req.target_ref}" }
+            div { class: "cr-from", "{req.requester_name}" }
+        }
+    }
+}
+
+#[component]
+fn RemovalDetail(
+    req: DeskRemovalRequest,
+    mut items: Signal<Option<Vec<DeskRemovalRequest>>>,
+    mut selected: Signal<Option<i64>>,
+    mut busy: Signal<bool>,
+    mut err: Signal<Option<String>>,
+) -> Element {
+    let mut note = use_signal(String::new);
+    let id = req.id;
+    let next = removal_next_statuses(&req.status);
+    let decided_date = req.decided_at.map(ymd).unwrap_or_default();
+    let created_date = ymd(req.created_at);
+    let label = removal_label(&req.status);
+
+    let badge_class = match req.status.as_str() {
+        "upheld_removed" => "badge badge-ok",
+        "rejected" => "badge badge-warn",
+        "under_review" => "badge badge-info",
+        _ => "badge badge-muted",
+    };
+
+    rsx! {
+        div { class: "panel-head",
+            button { class: "btn btn-ghost btn-sm", onclick: move |_| selected.set(None), "\u{2190} Back" }
+            h2 { "PH-R{id}" }
+        }
+        div { class: "complaint-detail",
+            div { class: "cd-header",
+                span { class: badge_class, "{label}" }
+                span { class: "cd-ref", "PH-R{id}" }
+                span { class: "cd-date", "Received {created_date}" }
+                if !req.decided_by.is_empty() {
+                    span { class: "cd-date", "Decided {decided_date} by {req.decided_by}" }
+                }
+            }
+            div { class: "cd-body",
+                dl { class: "deflist",
+                    div { class: "def", dt { "Entry" } dd { "{req.target_ref}" } }
+                    div { class: "def", dt { "Requester" } dd { "{req.requester_name} ({req.requester_email})" } }
+                    div { class: "def", dt { "Reason" } dd { "{req.reason}" } }
+                    if !req.decision_note.is_empty() {
+                        div { class: "def", dt { "Decision note" } dd { "{req.decision_note}" } }
+                    }
+                }
+            }
+            if !next.is_empty() {
+                div { class: "cd-actions",
+                    h4 { "Decision" }
+                    textarea {
+                        class: "cf-in cf-body",
+                        rows: "3",
+                        placeholder: "Decision note (required for upheld/rejected decisions)",
+                        value: "{note}",
+                        oninput: move |e| note.set(e.value()),
+                    }
+                    div { style: "display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;",
+                        for &s in next.iter() {
+                            {
+                                let note_val = note.clone();
+                                let s_owned = s.to_string();
+                                let btn_label = removal_label(s);
+                                let btn_class = if s == "upheld_removed" {
+                                    "btn btn-primary btn-sm"
+                                } else {
+                                    "btn btn-ghost btn-sm"
+                                };
+                                rsx! {
+                                    button {
+                                        class: btn_class,
+                                        disabled: busy(),
+                                        onclick: move |_| {
+                                            let s2 = s_owned.clone();
+                                            let n2 = note_val();
+                                            spawn(async move {
+                                                busy.set(true);
+                                                match desk_removal_decide(id, s2, n2).await {
+                                                    Ok(v) => {
+                                                        items.set(Some(v));
+                                                        selected.set(None);
+                                                        err.set(None);
+                                                    }
+                                                    Err(e) => err.set(Some(e.to_string())),
+                                                }
+                                                busy.set(false);
+                                            });
+                                        },
+                                        "{btn_label}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(e) = err() {
+                p { class: "desk-err", "{e}" }
             }
         }
     }
