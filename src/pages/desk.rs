@@ -1529,10 +1529,17 @@ fn complaint_next_statuses(status: &str) -> Vec<(&'static str, &'static str)> {
     }
 }
 
-#[component]
 /// IMPRESS pre-publish checklist. Shown when an editor moves a story to Published
 /// or Scheduled; the confirmations are recorded in the review log + audit trail as
-/// the sign-off note. Publishing is blocked until all are ticked.
+/// the sign-off note. Publishing is blocked until all four checkboxes are ticked AND:
+///   a public-interest justification has been typed, AND
+///   if the story names a person before charge, a separate documented
+///   justification for that naming has been provided.
+///
+/// A fourth mandatory checkbox enforces victim-anonymity / reporting-restriction
+/// confirmation (IMPRESS children+justice; IPSO Clauses 7 & 11). If the source
+/// lead flagged `identification_risk` or `restrictions_review` a prominent warning
+/// banner is also shown.
 #[component]
 fn PublishGate(
     mut pending: Signal<Option<(i64, String, String)>>,
@@ -1543,29 +1550,72 @@ fn PublishGate(
     let mut c1 = use_signal(|| false);
     let mut c2 = use_signal(|| false);
     let mut c3 = use_signal(|| false);
+    let mut c4 = use_signal(|| false);
+    // Public-interest justification (free text, required).
+    let mut pi_just: Signal<String> = use_signal(|| String::new());
+    // Editor attests the story names a person before charge.
+    let mut pre_charge = use_signal(|| false);
+    // Documented justification for naming before charge (required when pre_charge).
+    let mut pc_just: Signal<String> = use_signal(|| String::new());
 
     let p = pending.read().clone();
     let Some((id, to, label)) = p else {
         return rsx! {};
     };
-    let ready = c1() && c2() && c3();
+
+    // Look up the pending article's risk flags from the already-loaded article list.
+    let (id_risk, restrictions_review) = articles
+        .read()
+        .as_ref()
+        .and_then(|list| list.iter().find(|a| a.id == id))
+        .map(|a| (a.id_risk, a.restrictions_review))
+        .unwrap_or((false, false));
+
+    let show_banner = id_risk || restrictions_review;
+
+    // All gates must be satisfied before "Confirm + publish" is enabled.
+    let pi_ok = !pi_just.read().trim().is_empty();
+    let pc_ok = !pre_charge() || !pc_just.read().trim().is_empty();
+    let ready = c1() && c2() && c3() && c4() && pi_ok && pc_ok;
 
     let confirm = move |_| {
-        if !(c1() && c2() && c3()) {
+        let pi_text = pi_just.read().trim().to_string();
+        let pc_text = pc_just.read().trim().to_string();
+        if !(c1() && c2() && c3() && c4()) || pi_text.is_empty() || (pre_charge() && pc_text.is_empty()) {
             return;
         }
         let to = to.clone();
+        // Build the note dynamically so the audit trail records what was confirmed.
+        let anon_clause = if id_risk {
+            "; victim-anonymity + jigsaw-ID risk confirmed (IPSO Cl.7/11 — id_risk flag)"
+        } else if restrictions_review {
+            "; victim-anonymity confirmed (IPSO Cl.7/11 — sexual/child category)"
+        } else {
+            "; victim-anonymity / reporting-restriction confirmed (IPSO Cl.7/11)"
+        };
+        let pc_section = if pre_charge() {
+            format!(" | PRE-CHARGE NAMING justification: {}", pc_text)
+        } else {
+            String::new()
+        };
+        let note = format!(
+            "IMPRESS sign-off: case concluded (no active proceedings); public interest + accuracy checked; AI-assistance + pre-charge naming reviewed{anon_clause} | Public-interest justification: {}{}",
+            pi_text, pc_section
+        );
         spawn(async move {
             busy.set(true);
             err.set(None);
-            let note = "IMPRESS sign-off: case concluded (no active proceedings); public interest + accuracy checked; AI-assistance + pre-charge naming reviewed";
-            match desk_transition(id, to, note.to_string()).await {
+            match desk_transition(id, to, note).await {
                 Ok(list) => {
                     articles.set(Some(list));
                     pending.set(None);
                     c1.set(false);
                     c2.set(false);
                     c3.set(false);
+                    c4.set(false);
+                    pi_just.set(String::new());
+                    pre_charge.set(false);
+                    pc_just.set(String::new());
                 }
                 Err(e) => err.set(Some(e.to_string())),
             }
@@ -1573,11 +1623,35 @@ fn PublishGate(
         });
     };
 
+    // Precompute the pre_charge flag for use in RSX.
+    let names_before_charge = pre_charge();
+
     rsx! {
         div { class: "modal-scrim", onclick: move |_| pending.set(None),
             div { class: "modal", onclick: move |e| e.stop_propagation(),
                 p { class: "desk-eyebrow", "Pre-publish checks" }
                 h3 { class: "modal-title", "Going public: {label}" }
+                if show_banner {
+                    div { class: "modal-warn-banner",
+                        if id_risk {
+                            span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                            strong { "Identification risk flagged" }
+                            p {
+                                "The source lead indicates a victim or child may be identifiable. "
+                                "Jigsaw identification is prohibited even when no single detail alone "
+                                "names the person (IPSO Clause 7 — children; Clause 11 — sexual-assault victims; IMPRESS Standards)."
+                            }
+                        } else {
+                            span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                            strong { "Reporting restrictions apply" }
+                            p {
+                                "This article covers a sexual-offence or child case. "
+                                "Automatic anonymity duties apply to victims and children under the Sexual Offences (Amendment) Act 1992 "
+                                "and the Children and Young Persons Act 1933. Verify before publishing (IPSO Clauses 7 & 11; IMPRESS Standards)."
+                            }
+                        }
+                    }
+                }
                 p { class: "desk-muted", style: "margin:0 0 14px;", "Confirm our published standards before this story goes live:" }
                 label { class: "modal-check",
                     input { r#type: "checkbox", checked: c1(), onchange: move |e| c1.set(e.checked()) }
@@ -1591,6 +1665,62 @@ fn PublishGate(
                     input { r#type: "checkbox", checked: c3(), onchange: move |e| c3.set(e.checked()) }
                     span { "Any AI assistance is labelled; no one is named before charge without justification." }
                 }
+                label { class: "modal-check modal-check-anon",
+                    input { r#type: "checkbox", checked: c4(), onchange: move |e| c4.set(e.checked()) }
+                    span {
+                        "I confirm that publishing this does not breach any reporting restriction "
+                        "and that no victim or child is identifiable, directly or by jigsaw "
+                        "(IMPRESS; IPSO Clauses 7 \u{0026} 11)."
+                    }
+                }
+
+                // Public-interest justification — required before publish.
+                p { class: "desk-muted", style: "margin:14px 0 4px; font-weight:600;",
+                    "Public-interest justification (required)"
+                }
+                p { class: "desk-muted", style: "margin:0 0 6px; font-size:0.85em;",
+                    "Briefly state why publishing this story is in the public interest. This is recorded in the audit trail."
+                }
+                textarea {
+                    style: "width:100%; min-height:72px; box-sizing:border-box; padding:6px 8px; font-size:0.9em; border:1px solid #ccc; border-radius:4px; resize:vertical;",
+                    placeholder: "e.g. Informs the public of a convicted predator in the local community\u{2026}",
+                    value: "{pi_just}",
+                    oninput: move |e| pi_just.set(e.value()),
+                }
+
+                // Pre-charge naming — editor self-declares; hard-blocks publish if set without justification.
+                p { class: "desk-muted", style: "margin:14px 0 4px; font-weight:600;",
+                    "Pre-charge naming"
+                }
+                label { class: "modal-check",
+                    input {
+                        r#type: "checkbox",
+                        checked: names_before_charge,
+                        onchange: move |e| pre_charge.set(e.checked()),
+                    }
+                    span { "This story names a person who has not yet been charged." }
+                }
+                if names_before_charge {
+                    div { class: "modal-warn-banner",
+                        span { class: "modal-warn-icon", "\u{26a0}\u{fe0f}" }
+                        strong { "Warning: naming a person before charge" }
+                        p {
+                            "Publishing a name before charge carries significant legal and ethical risk. "
+                            "A documented public-interest justification for this specific naming decision "
+                            "is required before this story can be published."
+                        }
+                        p { style: "margin:10px 0 4px; font-weight:600; font-size:0.9em;",
+                            "Justification for naming before charge (required)"
+                        }
+                        textarea {
+                            style: "width:100%; min-height:72px; box-sizing:border-box; padding:6px 8px; font-size:0.9em; border:1px solid var(--red); border-radius:4px; resize:vertical;",
+                            placeholder: "State specifically why this naming is justified despite no charge having been made\u{2026}",
+                            value: "{pc_just}",
+                            oninput: move |e| pc_just.set(e.value()),
+                        }
+                    }
+                }
+
                 div { class: "modal-actions",
                     button { class: "desk-btn ghost", onclick: move |_| pending.set(None), "Cancel" }
                     button { class: "desk-btn", disabled: !ready || busy(), onclick: confirm, "Confirm + publish" }
