@@ -27,9 +27,8 @@ use taino_edit_dx::{
     markdown_to_doc, newsroom_keymap, newsroom_schema, state_to_markdown, EditorState, KeymapProp,
     TainoEditor,
 };
-// The Source mode's live preview is rendered by the dioxus-markdown crate (not our
-// md.rs). preserve_html=false so staff markdown can't inject raw HTML.
-use dioxus_markdown::Markdown;
+// The Source mode's live preview uses crate::md::block_html — the same renderer
+// as the public article page — so authors see the real published look as they type.
 
 /// Which editor surface the writer is using.
 #[derive(Clone, Copy, PartialEq)]
@@ -1238,15 +1237,35 @@ fn AuditPanel() -> Element {
                         thead { tr { th { "When" } th { "Who" } th { "Action" } th { "Subject" } } }
                         tbody {
                             for (i , r) in d.rows.iter().enumerate() {
-                                tr { key: "{i}",
-                                    td { class: "desk-muted", "{ymd(r.ts)}" }
-                                    td { "{r.actor}" }
-                                    td { span { class: "desk-row-title", "{audit_label(&r.action)}" }
-                                        if !r.detail.is_empty() {
-                                            div { class: "desk-muted", style: "font-size:12px;", "{r.detail}" }
+                                {
+                                    let row_cat = audit_category(&r.action);
+                                    let actor = r.actor.clone();
+                                    let label = audit_label(&r.action);
+                                    let detail = r.detail.clone();
+                                    let subject = r.subject.clone();
+                                    // Truncate long subjects for display; full value in title=
+                                    let subject_short = if subject.chars().count() > 60 {
+                                        let s: String = subject.chars().take(57).collect();
+                                        format!("{s}\u{2026}")
+                                    } else {
+                                        subject.clone()
+                                    };
+                                    let when = ymd(r.ts);
+                                    rsx! {
+                                        tr { key: "{i}", class: "{row_cat}",
+                                            td { class: "desk-muted", "{when}" }
+                                            td { span { class: "pill", "{actor}" } }
+                                            td {
+                                                span { class: "desk-row-title", "{label}" }
+                                                if !detail.is_empty() {
+                                                    div { class: "desk-muted", style: "font-size:12px;", "{detail}" }
+                                                }
+                                            }
+                                            td { class: "desk-muted desk-wrap",
+                                                span { title: "{subject}", "{subject_short}" }
+                                            }
                                         }
                                     }
-                                    td { class: "desk-muted desk-wrap", "{r.subject}" }
                                 }
                             }
                         }
@@ -1277,6 +1296,33 @@ fn audit_label(action: &str) -> &str {
         "user.create" => "Staff added",
         "seed" => "Seeded content",
         other => other,
+    }
+}
+
+/// Map an action string to a CSS category class for audit row color-coding.
+fn audit_category(action: &str) -> &str {
+    if action.starts_with("crawler.") || action.starts_with("lead.") {
+        "a-crawler"
+    } else if action.starts_with("article.create")
+        || action.starts_with("article.edit")
+        || action.starts_with("article.submitted")
+    {
+        "a-draft"
+    } else if action.starts_with("article.published")
+        || action.starts_with("article.corrected")
+        || action.starts_with("article.correction")
+        || action.starts_with("article.retracted")
+        || action.starts_with("article.scheduled")
+    {
+        "a-publish"
+    } else if action.starts_with("article.")
+        || action.starts_with("complaint.")
+    {
+        "a-ingest"
+    } else if action.starts_with("staff.") || action.starts_with("admin.") || action.starts_with("user.") {
+        "a-system"
+    } else {
+        "a-system"
     }
 }
 
@@ -2163,20 +2209,69 @@ fn EditorForm(
             }
 
             // ---- The markdown source textarea: the editor in Markdown mode; the
-            // hidden bridge to the canonical `body` (read by save) in Visual mode. ----
-            div {
-                class: if mode() == EdMode::Visual { "editor-split is-hidden" } else { "editor-split" },
-                textarea {
-                    id: "ed-body",
-                    class: "editor-body",
-                    rows: "16",
-                    placeholder: "Write the story. Leave a blank line — or a new line — between paragraphs.",
-                    value: "{body}",
-                    oninput: move |e| body.set(e.value()),
-                }
-                div { class: "editor-preview prose",
-                    span { class: "editor-prev-label", "Live preview · dioxus-markdown" }
-                    Markdown { src: body, preserve_html: false }
+            // hidden bridge to the canonical `body` (read by save) in Visual mode.
+            // In Markdown mode the right pane is a live preview using the SAME
+            // md.rs renderer as the public article page so authors see the real
+            // published look as they type. ----
+            {
+                // Precompute preview HTML outside rsx! to satisfy the Dioxus rule
+                // that function calls must live in pure "{expr}" text nodes only.
+                let preview_title = title();
+                let preview_summary = summary();
+                let preview_html: String = body()
+                    .lines()
+                    .map(|line| crate::md::block_html(line))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let preview_empty = preview_html.trim().is_empty();
+                let compose_class = if mode() == EdMode::Visual {
+                    "editor-panes is-hidden"
+                } else {
+                    "editor-panes"
+                };
+                rsx! {
+                    div { class: "{compose_class}",
+                        // ---- Left: compose column ----
+                        div { class: "editor-compose",
+                            textarea {
+                                id: "ed-body",
+                                class: "editor-body",
+                                rows: "16",
+                                placeholder: "Write the story. Leave a blank line or a new line between paragraphs.\n\n## Subheading\n- Bullet point\n^ Drop cap paragraph\n> Blockquote\n>> Pull quote",
+                                value: "{body}",
+                                oninput: move |e| body.set(e.value()),
+                            }
+                            // Formatting hints strip
+                            div { class: "editor-fmt-hints",
+                                span { class: "fmt-hint", code { "##" } " subhead" }
+                                span { class: "fmt-hint", code { "-" } " bullet" }
+                                span { class: "fmt-hint", code { "^" } " drop cap" }
+                                span { class: "fmt-hint", code { ">" } " quote" }
+                                span { class: "fmt-hint", code { ">>" } " pull quote" }
+                                span { class: "fmt-hint", code { "![alt](url)" } " image" }
+                            }
+                        }
+                        // ---- Right: live preview pane (real published look) ----
+                        div { class: "editor-preview-pane",
+                            span { class: "editor-prev-label", "Live preview \u{2014} published look" }
+                            if !preview_title.is_empty() || !preview_summary.is_empty() || !preview_empty {
+                                div { class: "art-page art-page--desk-preview",
+                                    if !preview_title.is_empty() {
+                                        h1 { class: "art-headline", "{preview_title}" }
+                                    }
+                                    if !preview_summary.is_empty() {
+                                        p { class: "art-standfirst", "{preview_summary}" }
+                                    }
+                                    div {
+                                        class: "art-prose",
+                                        dangerous_inner_html: "{preview_html}",
+                                    }
+                                }
+                            } else {
+                                p { class: "editor-prev-empty", "Start writing to see the published preview\u{2026}" }
+                            }
+                        }
+                    }
                 }
             }
             div { class: "editor-meters",
