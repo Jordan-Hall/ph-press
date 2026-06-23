@@ -3,6 +3,7 @@
 mod about;
 mod article;
 mod complaints_policy;
+mod complaints_report;
 mod contact;
 mod corrections_log;
 mod database;
@@ -20,6 +21,7 @@ mod watch;
 pub use about::About;
 pub use article::Article;
 pub use complaints_policy::ComplaintsPolicy;
+pub use complaints_report::ComplaintsReport;
 pub use contact::Contact;
 pub use corrections_log::CorrectionsLog;
 pub use database::Database;
