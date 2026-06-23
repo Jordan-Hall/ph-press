@@ -97,6 +97,20 @@ pub struct DeskCorrection {
     pub ts: i64,
 }
 
+/// A published correction as the PUBLIC `/corrections` page sees it — article
+/// metadata resolved server-side so the wasm client gets ready-to-render strings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicCorrection {
+    pub id: i64,
+    pub article_slug: String,
+    pub article_title: String,
+    pub original: String,
+    pub corrected: String,
+    pub reason: String,
+    /// "YYYY-MM-DD" formatted server-side (wasm has no `ymd`).
+    pub iso_date: String,
+}
+
 /// A public news-list card from the live CMS feed (a story published via /desk).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FeedItem {
@@ -1168,6 +1182,35 @@ pub async fn public_article(slug: String) -> Result<Option<PublicArticle>, Serve
     {
         let _ = slug;
         Ok(None)
+    }
+}
+
+/// Published corrections — the PUBLIC `/corrections` log. No session required.
+/// Returns every correction newest-first with article slug + title resolved so
+/// the wasm client gets ready-to-render strings.
+#[server(endpoint = "public_corrections")]
+pub async fn public_corrections() -> Result<Vec<PublicCorrection>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let rows = crate::cms::public_corrections()
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(rows
+            .into_iter()
+            .map(|c| PublicCorrection {
+                id: c.id,
+                article_slug: c.article_slug,
+                article_title: c.article_title,
+                original: c.original,
+                corrected: c.corrected,
+                reason: c.reason,
+                iso_date: ymd(c.ts),
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Ok(Vec::new())
     }
 }
 

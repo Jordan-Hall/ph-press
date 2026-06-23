@@ -119,6 +119,18 @@ pub fn SiteFooter() -> Element {
                         }
                     }
                 }
+                div { class: "footer-regulated",
+                    p {
+                        "Predator Hunters is regulated by "
+                        a { href: "https://impress.press/", target: "_blank", rel: "noopener",
+                            "IMPRESS"
+                        }
+                        ", the independent monitor for the press. "
+                        a { href: "/complaints", "Make a complaint" }
+                        " · "
+                        a { href: "/corrections", "Corrections & clarifications" }
+                    }
+                }
                 div { class: "footer-bottom",
                     p { "© 2026 {site_name}. All rights reserved." }
                     p { class: "legal",
