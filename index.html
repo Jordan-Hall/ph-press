@@ -869,6 +869,31 @@ html[data-theme="light"] .desk-card{box-shadow:0 12px 40px rgba(20,22,28,.13),0 
   text-underline-offset:3px;padding:8px 0;transition:color .15s;}
 .art-complaint-link:hover{color:var(--red);}
 
+/* ── Support signpost (IMPRESS Cl.5 / IPSO Cl.9 — suicide/self-harm) ── */
+/* Calm, muted card: NOT the red warning style. Left accent in --muted.     */
+.art-support-box{margin:clamp(24px,4vh,40px) 0 0;max-width:65ch;}
+.art-support-inner{display:flex;gap:14px;align-items:flex-start;
+  background:var(--paper-2);border:1px solid var(--rule-2);
+  border-left:3px solid var(--muted);border-radius:var(--r-lg);
+  padding:18px 20px;}
+.art-support-icon{font-size:1.4rem;line-height:1;color:var(--muted);flex-shrink:0;
+  padding-top:1px;}
+.art-support-text{flex:1;min-width:0;}
+.art-support-heading{font-family:var(--sans);font-size:.78rem;font-weight:700;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin:0 0 6px;}
+.art-support-body{font-family:var(--sans);font-size:.95rem;line-height:1.55;
+  color:var(--ink-2);margin:0 0 10px;}
+.art-support-body strong{color:var(--ink);font-weight:600;}
+.art-support-links{list-style:none;margin:0;padding:0;
+  display:flex;flex-wrap:wrap;gap:4px 18px;}
+.art-support-links li{font-family:var(--mono);font-size:.75rem;
+  letter-spacing:.04em;color:var(--muted);}
+.art-support-link{color:var(--ink-2);text-decoration:underline;
+  text-underline-offset:3px;text-decoration-color:var(--muted);
+  text-decoration-thickness:1px;transition:color .15s;}
+.art-support-link:hover{color:var(--ink);}
+
 /* ── Responsive ── */
 @media(max-width:680px){
   .art-headline{font-size:clamp(1.7rem,7vw,2.4rem);}
@@ -878,6 +903,7 @@ html[data-theme="light"] .desk-card{box-shadow:0 12px 40px rgba(20,22,28,.13),0 
   .art-prose p,.art-prose li{font-size:1rem;}
   .art-prose .pull-quote p{font-size:1.25rem;}
   .art-footer-links{flex-direction:column;align-items:flex-start;}
+  .art-support-inner{padding:14px 16px;}
 }
     </style>
     <script>(function(){try{var t=localStorage.getItem('ph-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>

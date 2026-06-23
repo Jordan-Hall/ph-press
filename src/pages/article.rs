@@ -77,6 +77,8 @@ pub fn Article(slug: String) -> Element {
     let mins = read_mins(a.body.iter().map(|p| p.split_whitespace().count()).sum());
     // Kicker label: precomputed so rsx never does mixed interpolation.
     let kicker_text = format!("{} · {}", a.section, a.kind);
+    // Support signpost: opt-in via `@support` anywhere in the body.
+    let has_support = a.body.iter().any(|b| crate::md::is_support_block(b));
 
     rsx! {
         // ---- head: per-article SEO + social-share (incl. video) ----
@@ -175,6 +177,12 @@ pub fn Article(slug: String) -> Element {
                         p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
 
+                    // ── Support signpost (IMPRESS Cl.5 / IPSO Cl.9) ──
+                    // Shown only when the author has added `@support` in the body.
+                    if has_support {
+                        SupportBox {}
+                    }
+
                     // ── Article footer: published date + complaint link + nav ──
                     footer { class: "art-footer",
                         div { class: "art-footer-meta",
@@ -268,6 +276,8 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
     // Kicker label: precomputed so rsx never does mixed interpolation.
     let kicker_text = format!("{} · {}", a.section, a.kind);
     let slug_for_complaint = a.slug.clone();
+    // Support signpost: opt-in via `@support` anywhere in the body.
+    let has_support = a.body.iter().any(|b| crate::md::is_support_block(b));
     rsx! {
         dioxus::document::Title { "{a.title} | Predator Hunters" }
         dioxus::document::Meta { name: "description", content: "{desc}" }
@@ -321,6 +331,12 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
                         p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
 
+                    // ── Support signpost (IMPRESS Cl.5 / IPSO Cl.9) ──
+                    // Shown only when the author has added `@support` in the body.
+                    if has_support {
+                        SupportBox {}
+                    }
+
                     // ── Article footer: published date + complaint link + nav ──
                     footer { class: "art-footer",
                         div { class: "art-footer-meta",
@@ -347,6 +363,56 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
             }
         }
         RelatedStories { section: a.section.clone(), exclude: a.slug.clone() }
+    }
+}
+
+/// Samaritans support signpost — shown on articles that report suicide or
+/// self-harm (opted in via an `@support` line in the body). Calm, neutral card:
+/// never alarming red, uses muted paper tones so it reads as care not warning.
+#[component]
+fn SupportBox() -> Element {
+    rsx! {
+        aside { class: "art-support-box",
+            div { class: "art-support-inner",
+                span { class: "art-support-icon", aria_hidden: "true", "♡" }
+                div { class: "art-support-text",
+                    p { class: "art-support-heading", "If you need support" }
+                    p { class: "art-support-body",
+                        "If you or someone you know is struggling, you can talk to "
+                        strong { "Samaritans" }
+                        " any time, free, 24 hours a day."
+                    }
+                    ul { class: "art-support-links",
+                        li {
+                            "Call free: "
+                            a {
+                                href: "tel:116123",
+                                class: "art-support-link",
+                                "116 123"
+                            }
+                        }
+                        li {
+                            "Email: "
+                            a {
+                                href: "mailto:jo@samaritans.org",
+                                class: "art-support-link",
+                                "jo@samaritans.org"
+                            }
+                        }
+                        li {
+                            "Web: "
+                            a {
+                                href: "https://www.samaritans.org",
+                                class: "art-support-link",
+                                rel: "noopener",
+                                target: "_blank",
+                                "samaritans.org"
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
