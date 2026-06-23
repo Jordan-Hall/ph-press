@@ -75,6 +75,8 @@ pub fn Article(slug: String) -> Element {
     let hero = a.image.unwrap_or("");
     let has_hero = a.image.is_some() && !has_youtube && !has_video;
     let mins = read_mins(a.body.iter().map(|p| p.split_whitespace().count()).sum());
+    // Kicker label: precomputed so rsx never does mixed interpolation.
+    let kicker_text = format!("{} · {}", a.section, a.kind);
 
     rsx! {
         // ---- head: per-article SEO + social-share (incl. video) ----
@@ -111,67 +113,88 @@ pub fn Article(slug: String) -> Element {
         script { r#type: "application/ld+json", dangerous_inner_html: breadcrumb_ld(a.title) }
 
         // ---- editorial layout ----
-        article {
-            header { class: "page-head",
-                div { class: "wrap", style: "max-width:760px;",
-                    p { class: "eyebrow rise d1", "{a.section} · {a.kind}" }
-                    h1 { class: "rise d2", "{a.title}" }
-                    p { class: "lede rise d3", "{a.summary}" }
-                    div { class: "rise d4", style: "margin-top:18px; display:flex; gap:14px; align-items:center; font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);",
-                        span { "By {a.byline}" }
-                        span { "·" }
-                        time { datetime: "{a.iso_date}", "{a.date}" }
-                        span { "·" }
-                        span { "{mins} min read" }
+        article { class: "art-page",
+            // ── Article header: kicker → headline → standfirst → byline + red rule ──
+            header { class: "art-header",
+                div { class: "wrap art-header-inner",
+                    p { class: "art-kicker rise d1", "{kicker_text}" }
+                    h1 { class: "art-headline rise d2", "{a.title}" }
+                    p { class: "art-standfirst rise d3", "{a.summary}" }
+                    div { class: "art-byline-row rise d4",
+                        span { class: "art-by", "By " b { "{a.byline}" } }
+                        span { class: "art-sep", "·" }
+                        time { class: "art-date", datetime: "{a.iso_date}", "{a.date}" }
+                        span { class: "art-sep", "·" }
+                        span { class: "art-reading", "{mins} min read" }
                     }
                 }
             }
-            section { class: "section", style: "padding-top:clamp(16px,3vh,32px);",
-                div { class: "wrap", style: "max-width:760px;",
+
+            // ── Lead media: video / YouTube / hero image in a framed figure ──
+            section { class: "section art-body-section",
+                div { class: "wrap art-body-wrap",
                     if has_youtube {
-                        div { class: "lead-media reveal",
-                            iframe {
-                                src: "https://www.youtube-nocookie.com/embed/{yt_id}",
-                                title: "{a.title}",
-                                style: "width:100%; aspect-ratio:16/9; height:auto; border:0; border-radius:4px; display:block; background:#000;",
-                                "loading": "lazy",
-                                "referrerpolicy": "strict-origin-when-cross-origin",
-                                "allow": "accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
-                                "allowfullscreen": "true",
+                        figure { class: "art-lead-figure reveal",
+                            div { class: "art-lead-embed",
+                                iframe {
+                                    src: "https://www.youtube-nocookie.com/embed/{yt_id}",
+                                    title: "{a.title}",
+                                    style: "width:100%;height:100%;border:0;",
+                                    "loading": "lazy",
+                                    "referrerpolicy": "strict-origin-when-cross-origin",
+                                    "allow": "accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+                                    "allowfullscreen": "true",
+                                }
                             }
                         }
                     } else if has_video {
-                        div { class: "reveal", style: "margin-bottom:28px; border:1px solid var(--hair-strong); border-radius:var(--r-lg); overflow:hidden; background:#000;",
+                        figure { class: "art-lead-figure reveal",
                             video {
                                 controls: true,
                                 preload: "none",
                                 poster: "{poster}",
                                 width: "{vw}",
                                 height: "{vh}",
-                                style: "width:100%; height:auto; display:block;",
+                                style: "width:100%;height:auto;display:block;",
                                 source { src: "{mp4_path}", r#type: "video/mp4" }
                                 "Your browser does not support the video tag."
                             }
                         }
                     } else if has_hero {
-                        img { class: "media lead-media reveal", src: "{hero}", alt: "{a.title}", loading: "lazy" }
+                        figure { class: "art-lead-figure reveal",
+                            img { class: "art-lead-img", src: "{hero}", alt: "{a.title}", loading: "lazy" }
+                        }
                     }
-                    div { class: "prose reveal",
+
+                    // ── Prose body ──
+                    div { class: "prose art-prose reveal",
                         for para in a.body.iter() {
                             div { dangerous_inner_html: crate::md::block_html(para) }
                         }
+                        // End-mark — ◆ closes every piece with a publisher mark.
+                        p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
-                    div { style: "margin-top:32px; padding-top:20px; border-top:1px solid var(--hair); display:flex; gap:12px; flex-wrap:wrap;",
-                        Link { class: "btn btn-ghost", to: Route::News {},
-                            span { class: "ic", dangerous_inner_html: svg("arrow-right") }
-                            "More from the newsroom"
+
+                    // ── Article footer: published date + complaint link + nav ──
+                    footer { class: "art-footer",
+                        div { class: "art-footer-meta",
+                            span { class: "art-footer-date",
+                                "Published "
+                                time { datetime: "{a.iso_date}", "{a.date}" }
+                            }
                         }
-                        Link { class: "btn btn-ghost", to: Route::Standards {},
-                            span { class: "ic", dangerous_inner_html: svg("scale") }
-                            "Our standards"
-                        }
-                        Link { class: "btn btn-ghost", to: Route::ComplaintPage { slug: a.slug.to_string() },
-                            "Make a complaint about this article"
+                        div { class: "art-footer-links",
+                            Link { class: "btn btn-ghost btn-sm", to: Route::News {},
+                                span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+                                "More from the newsroom"
+                            }
+                            Link { class: "btn btn-ghost btn-sm", to: Route::Standards {},
+                                span { class: "ic", dangerous_inner_html: svg("scale") }
+                                "Our standards"
+                            }
+                            Link { class: "art-complaint-link", to: Route::ComplaintPage { slug: a.slug.to_string() },
+                                "Make a complaint about this article"
+                            }
                         }
                     }
                 }
@@ -196,7 +219,7 @@ fn LiveArticle(slug: String) -> Element {
     match guard.as_ref() {
         None => rsx! {
             header { class: "page-head",
-                div { class: "wrap", p { class: "lede", "Loading…" } }
+                div { class: "wrap", p { class: "lede", "Loading\u{2026}" } }
             }
         },
         Some(Ok(Some(a))) => rsx! { LiveArticleBody { a: a.clone() } },
@@ -242,6 +265,9 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
         json_esc(&a.title), json_esc(&desc), json_esc(&a.section), a.iso_date, json_esc(&a.byline), kw_ld
     );
     let mins = read_mins(a.body.iter().map(|p| p.split_whitespace().count()).sum());
+    // Kicker label: precomputed so rsx never does mixed interpolation.
+    let kicker_text = format!("{} · {}", a.section, a.kind);
+    let slug_for_complaint = a.slug.clone();
     rsx! {
         dioxus::document::Title { "{a.title} | Predator Hunters" }
         dioxus::document::Meta { name: "description", content: "{desc}" }
@@ -267,39 +293,54 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
         script { r#type: "application/ld+json", dangerous_inner_html: jsonld }
         script { r#type: "application/ld+json", dangerous_inner_html: breadcrumb_ld(&a.title) }
 
-        article {
-            header { class: "page-head",
-                div { class: "wrap", style: "max-width:760px;",
-                    p { class: "eyebrow rise d1", "{a.section} · {a.kind}" }
-                    h1 { class: "rise d2", "{a.title}" }
-                    p { class: "lede rise d3", "{a.summary}" }
-                    div { class: "rise d4", style: "margin-top:18px; display:flex; gap:14px; align-items:center; font-family:var(--mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);",
-                        span { "By {a.byline}" }
-                        span { "·" }
-                        time { datetime: "{a.iso_date}", "{a.iso_date}" }
-                        span { "·" }
-                        span { "{mins} min read" }
+        article { class: "art-page",
+            // ── Article header: kicker → headline → standfirst → byline row ──
+            header { class: "art-header",
+                div { class: "wrap art-header-inner",
+                    p { class: "art-kicker rise d1", "{kicker_text}" }
+                    h1 { class: "art-headline rise d2", "{a.title}" }
+                    p { class: "art-standfirst rise d3", "{a.summary}" }
+                    div { class: "art-byline-row rise d4",
+                        span { class: "art-by", "By " b { "{a.byline}" } }
+                        span { class: "art-sep", "·" }
+                        time { class: "art-date", datetime: "{a.iso_date}", "{a.iso_date}" }
+                        span { class: "art-sep", "·" }
+                        span { class: "art-reading", "{mins} min read" }
                     }
                 }
             }
-            section { class: "section", style: "padding-top:clamp(14px,2.5vh,30px);",
-                div { class: "wrap", style: "max-width:760px;",
-                    div { class: "prose reveal",
+
+            // ── Prose body (live articles embed images inline via md-figure) ──
+            section { class: "section art-body-section",
+                div { class: "wrap art-body-wrap",
+                    div { class: "prose art-prose reveal",
                         for para in a.body.iter() {
                             div { dangerous_inner_html: crate::md::block_html(para) }
                         }
+                        // End-mark
+                        p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
-                    div { style: "margin-top:32px; padding-top:20px; border-top:1px solid var(--hair); display:flex; gap:12px; flex-wrap:wrap;",
-                        Link { class: "btn btn-ghost", to: Route::News {},
-                            span { class: "ic", dangerous_inner_html: svg("arrow-right") }
-                            "More from the newsroom"
+
+                    // ── Article footer: published date + complaint link + nav ──
+                    footer { class: "art-footer",
+                        div { class: "art-footer-meta",
+                            span { class: "art-footer-date",
+                                "Published "
+                                time { datetime: "{a.iso_date}", "{a.iso_date}" }
+                            }
                         }
-                        Link { class: "btn btn-ghost", to: Route::Standards {},
-                            span { class: "ic", dangerous_inner_html: svg("scale") }
-                            "Our standards"
-                        }
-                        Link { class: "btn btn-ghost", to: Route::ComplaintPage { slug: a.slug.clone() },
-                            "Make a complaint about this article"
+                        div { class: "art-footer-links",
+                            Link { class: "btn btn-ghost btn-sm", to: Route::News {},
+                                span { class: "ic", dangerous_inner_html: svg("arrow-right") }
+                                "More from the newsroom"
+                            }
+                            Link { class: "btn btn-ghost btn-sm", to: Route::Standards {},
+                                span { class: "ic", dangerous_inner_html: svg("scale") }
+                                "Our standards"
+                            }
+                            Link { class: "art-complaint-link", to: Route::ComplaintPage { slug: slug_for_complaint },
+                                "Make a complaint about this article"
+                            }
                         }
                     }
                 }

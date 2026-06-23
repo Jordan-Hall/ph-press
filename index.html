@@ -586,6 +586,112 @@ textarea.desk-in{width:100%;box-sizing:border-box;resize:vertical;font-family:va
   .desk-new{padding:14px;}
   .pad{padding:12px 14px;}
 }
+
+/* ===== ARTICLE PAGE — editorial magazine treatment ===== */
+/* All rules scoped to .art-page so shared classes (.prose, .lede, .page-head)
+   on /about, /standards and other interior routes are NEVER affected. */
+
+/* ── Article header ── */
+.art-header{padding:clamp(44px,8vh,80px) 0 0;border-bottom:none;}
+.art-header-inner{max-width:760px;}
+.art-kicker{font-family:var(--mono);font-size:.7rem;font-weight:600;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--red);margin:0 0 16px;}
+.art-headline{font-family:var(--serif);font-size:clamp(2rem,5vw,3.6rem);line-height:1.02;
+  letter-spacing:-.025em;color:var(--ink);margin:0 0 20px;max-width:22ch;}
+.art-standfirst{font-family:var(--sans);font-size:clamp(1.08rem,1.6vw,1.32rem);line-height:1.55;
+  color:var(--ink-2);margin:0 0 24px;max-width:58ch;}
+/* Byline row: mono small-caps with a thin red rule below */
+.art-byline-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);padding-bottom:20px;border-bottom:2px solid var(--red);margin-bottom:0;}
+.art-by b{color:var(--ink-2);font-weight:600;}
+.art-sep{color:var(--red);}
+.art-date,.art-reading{color:var(--muted);}
+
+/* ── Body section layout ── */
+.art-body-section{padding-top:clamp(24px,4vh,44px);}
+.art-body-wrap{max-width:760px;}
+
+/* ── Lead figure: framed image / video / YouTube ── */
+.art-lead-figure{margin:0 0 clamp(24px,4vh,40px);padding:0;
+  border:1px solid var(--rule-2);border-radius:var(--r-lg);overflow:hidden;
+  background:var(--sunk);}
+.art-lead-img{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;}
+/* Responsive embed wrapper for iframes */
+.art-lead-embed{position:relative;aspect-ratio:16/9;width:100%;background:#000;}
+.art-lead-embed iframe{position:absolute;inset:0;width:100%;height:100%;border:0;}
+
+/* ── Article prose — scoped under .art-prose ── */
+/* Comfortable measure (~65ch), generous leading, strong vertical rhythm */
+.art-prose{max-width:65ch;font-size:1.1rem;line-height:1.82;}
+.art-prose p{font-size:1.1rem;line-height:1.82;color:var(--ink-2);margin:0 0 1.4em;}
+.art-prose p+p{margin-top:0;} /* gap controlled by margin-bottom above */
+/* Links: red underline with offset, reveal on hover */
+.art-prose a{color:inherit;text-decoration:underline;text-decoration-color:var(--red);
+  text-underline-offset:3px;text-decoration-thickness:2px;transition:background .15s;}
+.art-prose a:hover{background:var(--tag);}
+/* Strong / em */
+.art-prose strong{color:var(--ink);font-weight:600;}
+.art-prose em{font-style:italic;}
+/* Subheads in Fraunces */
+.art-prose h2{font-family:var(--serif);font-size:clamp(1.35rem,2.2vw,1.75rem);line-height:1.18;
+  color:var(--ink);margin:2.2em 0 .7em;letter-spacing:-.015em;}
+.art-prose h3{font-family:var(--serif);font-size:1.25rem;line-height:1.22;
+  color:var(--ink);margin:1.8em 0 .6em;}
+/* Lists */
+.art-prose ul,.art-prose ol{margin:0 0 1.4em;padding-left:1.35em;}
+.art-prose li{font-size:1.1rem;line-height:1.7;color:var(--ink-2);margin:.3em 0;}
+.art-prose li::marker{color:var(--red);}
+/* Drop cap — always-on for first paragraph of seed articles (first child div > p) */
+.art-prose > div:first-child p::first-letter{font-family:var(--serif);float:left;font-size:3.8rem;
+  line-height:.78;padding:8px 12px 0 0;color:var(--red);font-weight:400;}
+/* Drop cap — opt-in via "^ " prefix in body source (live articles, named paragraphs) */
+.art-prose p.dropcap::first-letter{font-family:var(--serif);float:left;font-size:3.8rem;
+  line-height:.78;padding:8px 12px 0 0;color:var(--red);font-weight:400;}
+/* Blockquote — sourced quotation or indented material ("> " marker) */
+.art-prose blockquote{margin:1.8em 0;padding:8px 0 8px 22px;
+  border-left:3px solid var(--red);font-family:var(--serif);font-style:italic;
+  font-size:1.18rem;line-height:1.55;color:var(--ink);}
+/* Pull-quote — large editorial callout (">> " marker), Fraunces italic + red accent */
+.art-prose .pull-quote{margin:2.4em 0;padding:0 0 0 0;position:relative;}
+.art-prose .pull-quote::before{content:"";display:block;width:48px;height:3px;
+  background:var(--red);margin-bottom:14px;}
+.art-prose .pull-quote p{font-family:var(--serif);font-style:italic;
+  font-size:clamp(1.35rem,2.4vw,1.85rem);line-height:1.35;color:var(--ink);
+  margin:0;letter-spacing:-.01em;}
+/* Inline images (md-figure from md.rs) */
+.art-prose .md-figure{margin:1.8em 0;}
+.art-prose .md-figure img{display:block;width:100%;height:auto;border-radius:var(--r-lg);
+  border:1px solid var(--rule-2);background:var(--sunk);}
+
+/* ── End-mark ── */
+.art-endmark{font-family:var(--serif);font-size:1.2rem;color:var(--red);
+  margin:2.4em 0 0!important;text-align:left;letter-spacing:.1em;}
+
+/* ── Article footer ── */
+.art-footer{margin-top:clamp(28px,4vh,48px);padding-top:20px;
+  border-top:1px solid var(--rule);}
+.art-footer-meta{margin-bottom:16px;}
+.art-footer-date{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);}
+.art-footer-date time{color:var(--ink-2);}
+.art-footer-links{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+/* Complaint link: quieter than the nav buttons — a plain mono link */
+.art-complaint-link{font-family:var(--mono);font-size:.68rem;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--muted);text-decoration:underline;
+  text-underline-offset:3px;padding:8px 0;transition:color .15s;}
+.art-complaint-link:hover{color:var(--red);}
+
+/* ── Responsive ── */
+@media(max-width:680px){
+  .art-headline{font-size:clamp(1.7rem,7vw,2.4rem);}
+  .art-standfirst{font-size:1rem;}
+  .art-byline-row{font-size:.66rem;gap:8px;}
+  .art-prose{font-size:1rem;}
+  .art-prose p,.art-prose li{font-size:1rem;}
+  .art-prose .pull-quote p{font-size:1.25rem;}
+  .art-footer-links{flex-direction:column;align-items:flex-start;}
+}
     </style>
     <script>(function(){try{var t=localStorage.getItem('ph-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
   </head>
