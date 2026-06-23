@@ -10,7 +10,7 @@ use crate::icons::svg;
 use crate::pages::{
     About, Article, ComplaintPage, ComplaintsPolicy, ComplaintsReport, Contact, CorrectionsLog,
     Database, Desk, DeskForgot, DeskPreview, DeskReset, Governance, Home, News, NotFound, Podcast,
-    Privacy, Standards, Team, Watch, WriteArticle,
+    Privacy, RemovalRequest, RemovalRequestPage, Standards, Team, Watch, WriteArticle,
 };
 
 #[derive(Routable, Clone, PartialEq)]
@@ -54,6 +54,10 @@ pub enum Route {
     CorrectionsLog {},
     #[route("/governance")]
     Governance {},
+    #[route("/removal-request")]
+    RemovalRequest {},
+    #[route("/removal-request/:slug")]
+    RemovalRequestPage { slug: String },
     #[route("/contact")]
     Contact {},
     #[route("/privacy")]

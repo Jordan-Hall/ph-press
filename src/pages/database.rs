@@ -6,7 +6,7 @@
 
 use dioxus::prelude::*;
 
-use crate::api::{conviction_db, PublicConviction};
+use crate::api::{conviction_db, hidden_refs, PublicConviction};
 use crate::app::Route;
 use crate::content::{by_slug, CONVICTIONS};
 use crate::icons::svg;
@@ -68,9 +68,13 @@ fn snippet(s: &str, max: usize) -> String {
 // Leaflet init: poll until the library + map div exist, then drop a pin for each
 // LOCATED conviction with a rich popup — the linked article's hero image, a short
 // snapshot, and a link through to the full report. Guarded against SPA re-init.
-fn map_js() -> String {
+// `hidden_slugs` filters out any conviction whose entry has been removed.
+fn map_js(hidden_slugs: &[String]) -> String {
     let mut markers = String::new();
-    for c in CONVICTIONS.iter().filter(|c| c.located()) {
+    for c in CONVICTIONS
+        .iter()
+        .filter(|c| c.located() && !hidden_slugs.contains(&c.article.to_string()))
+    {
         let art = by_slug(c.article);
         let img = art.map(|a| a.og_image()).unwrap_or_default();
         let summary = art.map(|a| a.summary).unwrap_or("");
@@ -113,15 +117,31 @@ pub fn Database() -> Element {
     // record below. Compile-time entries render server-side (crawlable); database
     // entries load on the client after hydration.
     let mut db = use_signal(Vec::<PublicConviction>::new);
+    let mut hidden = use_signal(Vec::<String>::new);
     use_resource(move || async move {
         if let Ok(v) = conviction_db().await {
             db.set(v);
         }
     });
+    use_resource(move || async move {
+        if let Ok(v) = hidden_refs().await {
+            hidden.set(v);
+        }
+    });
     let q = query().to_lowercase();
     let q = q.trim();
-    let mut entries: Vec<Entry> = CONVICTIONS.iter().map(Entry::from_static).collect();
-    entries.extend(db.read().iter().map(Entry::from_public));
+    let hidden_set = hidden.read();
+    let mut entries: Vec<Entry> = CONVICTIONS
+        .iter()
+        .filter(|c| !hidden_set.contains(&c.article.to_string()))
+        .map(Entry::from_static)
+        .collect();
+    entries.extend(
+        db.read()
+            .iter()
+            .filter(|c| !hidden_set.contains(&c.article_slug))
+            .map(Entry::from_public),
+    );
     let total = entries.len();
     let matches: Vec<Entry> = entries
         .into_iter()
@@ -191,31 +211,45 @@ pub fn Database() -> Element {
                 div { class: "card", style: "padding:0; overflow:hidden; margin-bottom:24px; position:relative; z-index:0; isolation:isolate;",
                     div { id: "phmap", style: "height:360px; width:100%; background:var(--sunk);" }
                 }
-                script { dangerous_inner_html: map_js() }
+                script { dangerous_inner_html: map_js(&hidden_set) }
 
                 // entries
                 div { class: "research-list",
                     for e in matches.iter() {
-                        Link { key: "{e.name}-{e.article_slug}", class: "r-row reveal", to: Route::Article { slug: e.article_slug.clone() },
-                            div {
-                                span { class: "r-num", "{e.offence}" }
-                                h3 { class: "hl", "{e.name}" }
-                                p { class: "r-desc",
-                                    if e.area.is_empty() { "Area not stated by the court. " } else { "{e.area}. " }
-                                    "{e.outcome}."
+                        div { key: "{e.name}-{e.article_slug}", class: "r-row-wrap reveal",
+                            Link { class: "r-row", to: Route::Article { slug: e.article_slug.clone() },
+                                div {
+                                    span { class: "r-num", "{e.offence}" }
+                                    h3 { class: "hl", "{e.name}" }
+                                    p { class: "r-desc",
+                                        if e.area.is_empty() { "Area not stated by the court. " } else { "{e.area}. " }
+                                        "{e.outcome}."
+                                    }
+                                }
+                                div { class: "r-meta",
+                                    span { class: "byline", "{e.date}" }
+                                    span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
                                 }
                             }
-                            div { class: "r-meta",
-                                span { class: "byline", "{e.date}" }
-                                span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
+                            Link {
+                                class: "r-removal-link",
+                                to: Route::RemovalRequestPage { slug: e.article_slug.clone() },
+                                span { class: "ic", dangerous_inner_html: svg("eye-off") }
+                                "Request removal"
                             }
                         }
                     }
                 }
 
-                a { class: "btn btn-ghost btn-sm", style: "margin-top:22px;", href: "mailto:database@predatorhunters.co.uk?subject=Database%20correction%20or%20removal",
-                    span { class: "ic", dangerous_inner_html: svg("mail") }
-                    "Request a correction or removal"
+                div { style: "margin-top:22px; display:flex; gap:12px; flex-wrap:wrap;",
+                    a { class: "btn btn-ghost btn-sm", href: "mailto:database@predatorhunters.co.uk?subject=Database%20correction",
+                        span { class: "ic", dangerous_inner_html: svg("mail") }
+                        "Request a correction"
+                    }
+                    Link { class: "btn btn-ghost btn-sm", to: Route::RemovalRequest {},
+                        span { class: "ic", dangerous_inner_html: svg("eye-off") }
+                        "About removal requests"
+                    }
                 }
             }
         }

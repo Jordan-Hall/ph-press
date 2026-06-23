@@ -91,9 +91,20 @@ fn image_html(b: &str) -> Option<String> {
     }
 }
 
+/// Returns `true` when a body block is the suicide/self-harm support signpost
+/// marker (`@support`). The article renderer uses this to opt-in to showing a
+/// Samaritans support box; the block itself is NOT passed to `block_html`.
+pub fn is_support_block(block: &str) -> bool {
+    block.trim() == "@support"
+}
+
 /// Render one body block to safe HTML.
 pub fn block_html(block: &str) -> String {
     let b = block.trim();
+    // @support is consumed by the article renderer — never emit HTML for it.
+    if b == "@support" {
+        return String::new();
+    }
     if let Some(img) = image_html(b) {
         return img;
     }
@@ -109,6 +120,15 @@ pub fn block_html(block: &str) -> String {
         // the style appears only where the author asks for it — never on every
         // paragraph. The marker itself is stripped before inline formatting.
         format!("<p class=\"dropcap\">{}</p>", inline(lead))
+    } else if let Some(pq) = b.strip_prefix(">> ") {
+        // Pull-quote: a leading ">> " renders a large editorial pull-quote
+        // (`.pull-quote`) styled with a red accent rule in the article layout.
+        // Only appears where the author places it; not a blockquote.
+        format!("<div class=\"pull-quote\"><p>{}</p></div>", inline(pq))
+    } else if let Some(bq) = b.strip_prefix("> ") {
+        // Blockquote: a leading "> " renders a styled blockquote for
+        // sourced quotations or indented material.
+        format!("<blockquote>{}</blockquote>", inline(bq))
     } else {
         format!("<p>{}</p>", inline(b))
     }
@@ -142,5 +162,10 @@ mod tests {
             block_html("![cat](https://x.com/c.jpg)").contains("<img src=\"https://x.com/c.jpg\"")
         );
         assert!(!block_html("![x](javascript:alert(1))").contains("<img"));
+        // @support marker: recognised by is_support_block, emits nothing from block_html
+        assert!(is_support_block("@support"));
+        assert!(is_support_block("  @support  "));
+        assert!(!is_support_block("@support extra"));
+        assert_eq!(block_html("@support"), "");
     }
 }
