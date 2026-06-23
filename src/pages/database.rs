@@ -6,7 +6,7 @@
 
 use dioxus::prelude::*;
 
-use crate::api::{conviction_db, PublicConviction};
+use crate::api::{conviction_db, hidden_refs, PublicConviction};
 use crate::app::Route;
 use crate::content::{by_slug, CONVICTIONS};
 use crate::icons::svg;
@@ -113,15 +113,31 @@ pub fn Database() -> Element {
     // record below. Compile-time entries render server-side (crawlable); database
     // entries load on the client after hydration.
     let mut db = use_signal(Vec::<PublicConviction>::new);
+    let mut hidden = use_signal(Vec::<String>::new);
     use_resource(move || async move {
         if let Ok(v) = conviction_db().await {
             db.set(v);
         }
     });
+    use_resource(move || async move {
+        if let Ok(v) = hidden_refs().await {
+            hidden.set(v);
+        }
+    });
     let q = query().to_lowercase();
     let q = q.trim();
-    let mut entries: Vec<Entry> = CONVICTIONS.iter().map(Entry::from_static).collect();
-    entries.extend(db.read().iter().map(Entry::from_public));
+    let hidden_set = hidden.read();
+    let mut entries: Vec<Entry> = CONVICTIONS
+        .iter()
+        .filter(|c| !hidden_set.contains(&c.article.to_string()))
+        .map(Entry::from_static)
+        .collect();
+    entries.extend(
+        db.read()
+            .iter()
+            .filter(|c| !hidden_set.contains(&c.article_slug))
+            .map(Entry::from_public),
+    );
     let total = entries.len();
     let matches: Vec<Entry> = entries
         .into_iter()
@@ -213,9 +229,15 @@ pub fn Database() -> Element {
                     }
                 }
 
-                a { class: "btn btn-ghost btn-sm", style: "margin-top:22px;", href: "mailto:database@predatorhunters.co.uk?subject=Database%20correction%20or%20removal",
-                    span { class: "ic", dangerous_inner_html: svg("mail") }
-                    "Request a correction or removal"
+                div { style: "margin-top:22px; display:flex; gap:12px; flex-wrap:wrap;",
+                    Link { class: "btn btn-primary btn-sm", to: Route::RemovalRequest {},
+                        span { class: "ic", dangerous_inner_html: svg("eye-off") }
+                        "Request removal"
+                    }
+                    a { class: "btn btn-ghost btn-sm", href: "mailto:database@predatorhunters.co.uk?subject=Database%20correction",
+                        span { class: "ic", dangerous_inner_html: svg("mail") }
+                        "Request a correction"
+                    }
                 }
             }
         }

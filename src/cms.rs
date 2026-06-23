@@ -717,6 +717,80 @@ pub async fn set_complaint_status(actor: &str, id: i64, status: &str) -> Result<
         .map_err(|e| e.to_string())
 }
 
+// ==================== removal requests ====================
+
+/// Format a removal-request reference string.
+pub fn removal_reference(id: i64) -> String {
+    format!("PH-R{id}")
+}
+
+/// Log a public removal request. Returns the reference string.
+pub async fn log_removal_request(
+    target_ref: &str,
+    requester_name: &str,
+    requester_email: &str,
+    reason: &str,
+) -> Result<String, String> {
+    if reason.trim().is_empty() {
+        return Err("reason is required".to_string());
+    }
+    if target_ref.trim().is_empty() {
+        return Err("target entry is required".to_string());
+    }
+    let pool = db().await.map_err(|e| e.to_string())?;
+    let id = ph_cms::create_removal_request(
+        pool,
+        target_ref.trim(),
+        requester_name.trim(),
+        requester_email,
+        reason.trim(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(removal_reference(id))
+}
+
+/// All removal requests, newest first.
+pub async fn removal_requests() -> Result<Vec<ph_cms::RemovalRequest>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::list_removal_requests(pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// A single removal request by id.
+pub async fn removal_request_detail(
+    id: i64,
+) -> Result<ph_cms::RemovalRequest, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::get_removal_request(pool, id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no removal request {id}"))
+}
+
+/// Advance a removal request's status.
+pub async fn set_removal_status(
+    actor: &str,
+    id: i64,
+    status: &str,
+    decision_note: &str,
+) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::set_removal_status(pool, id, status, actor, decision_note)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// All hidden conviction target_refs (for public filtering).
+pub async fn hidden_refs() -> Result<Vec<String>, String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::list_hidden_refs(pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 struct OwnedSeed {
     slug: &'static str,
     title: &'static str,

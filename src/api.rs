@@ -86,6 +86,21 @@ pub struct DeskComplaintMessage {
     pub ts: i64,
 }
 
+/// A removal-request entry as the desk sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeskRemovalRequest {
+    pub id: i64,
+    pub target_ref: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub reason: String,
+    pub status: String,
+    pub created_at: i64,
+    pub decided_at: Option<i64>,
+    pub decision_note: String,
+    pub decided_by: String,
+}
+
 /// A published correction (both versions kept, IMPRESS equal-prominence).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeskCorrection {
@@ -693,6 +708,24 @@ fn to_corrections(v: Vec<ph_cms::Correction>) -> Vec<DeskCorrection> {
         .collect()
 }
 
+#[cfg(feature = "server")]
+fn to_removal_requests(v: Vec<ph_cms::RemovalRequest>) -> Vec<DeskRemovalRequest> {
+    v.into_iter()
+        .map(|r| DeskRemovalRequest {
+            id: r.id,
+            target_ref: r.target_ref,
+            requester_name: r.requester_name,
+            requester_email: r.requester_email,
+            reason: r.reason,
+            status: r.status,
+            created_at: r.created_at,
+            decided_at: r.decided_at,
+            decision_note: r.decision_note,
+            decided_by: r.decided_by,
+        })
+        .collect()
+}
+
 /// The complaints inbox.
 #[server(endpoint = "desk_complaints")]
 pub async fn desk_complaints() -> Result<Vec<DeskComplaint>, ServerFnError> {
@@ -838,6 +871,52 @@ pub async fn desk_complaint_reply(
     #[cfg(not(feature = "server"))]
     {
         let _ = (id, body);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+// ---- removal requests (right-to-erasure review) ----------------------------
+
+/// The removal-requests inbox. Session required.
+#[server(endpoint = "desk_removal_requests")]
+pub async fn desk_removal_requests() -> Result<Vec<DeskRemovalRequest>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        require_session().await?;
+        Ok(to_removal_requests(
+            crate::cms::removal_requests()
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Advance a removal request's status (with a decision note). Session required.
+#[server(endpoint = "desk_removal_decide")]
+pub async fn desk_removal_decide(
+    id: i64,
+    status: String,
+    decision_note: String,
+) -> Result<Vec<DeskRemovalRequest>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::set_removal_status(&session.username, id, &status, &decision_note)
+            .await
+            .map_err(ServerFnError::new)?;
+        Ok(to_removal_requests(
+            crate::cms::removal_requests()
+                .await
+                .map_err(ServerFnError::new)?,
+        ))
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (id, status, decision_note);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -1021,6 +1100,43 @@ pub async fn submit_complaint(
     #[cfg(not(feature = "server"))]
     {
         let _ = (article_slug, complainant, email, category, body);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Public removal-request submission — no auth required. Returns the reference.
+#[server(endpoint = "submit_removal_request")]
+pub async fn submit_removal_request(
+    target_ref: String,
+    requester_name: String,
+    email: String,
+    reason: String,
+) -> Result<String, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::log_removal_request(&target_ref, &requester_name, &email, &reason)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = (target_ref, requester_name, email, reason);
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Public list of hidden conviction target_refs — used by /database to filter
+/// both compile-time and DB entries.
+#[server(endpoint = "hidden_refs")]
+pub async fn hidden_refs() -> Result<Vec<String>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        crate::cms::hidden_refs()
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
         Err(ServerFnError::new("server only"))
     }
 }
