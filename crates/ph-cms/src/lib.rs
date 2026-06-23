@@ -1253,6 +1253,172 @@ pub async fn set_complaint_status(
     Ok(changed)
 }
 
+// ==================== removal requests (right-to-erasure review) ====================
+
+/// A request from a member of the public to remove a conviction-database entry.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RemovalRequest {
+    pub id: i64,
+    pub target_ref: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub reason: String,
+    pub status: String,
+    pub created_at: i64,
+    pub decided_at: Option<i64>,
+    pub decision_note: String,
+    pub decided_by: String,
+}
+
+/// Valid statuses for a removal request workflow.
+pub const REMOVAL_STATUSES: [&str; 4] = [
+    "received",
+    "under_review",
+    "upheld_removed",
+    "rejected",
+];
+
+/// Is this a terminal (decided) status?
+fn is_decided_status(status: &str) -> bool {
+    matches!(status, "upheld_removed" | "rejected")
+}
+
+/// Log a public removal request. Returns the new id.
+pub async fn create_removal_request(
+    pool: &SqlitePool,
+    target_ref: &str,
+    requester_name: &str,
+    requester_email: &str,
+    reason: &str,
+) -> Result<i64> {
+    let res = sqlx::query(
+        "INSERT INTO removal_request \
+         (target_ref, requester_name, requester_email, reason, status, created_at) \
+         VALUES (?,?,?,?,'received',?)",
+    )
+    .bind(target_ref.trim())
+    .bind(requester_name.trim())
+    .bind(requester_email.trim().to_lowercase())
+    .bind(reason.trim())
+    .bind(now())
+    .execute(pool)
+    .await?;
+    append_audit(pool, "system", "removal.received", target_ref, "").await?;
+    Ok(res.last_insert_rowid())
+}
+
+/// Every removal request, newest first (the staff inbox).
+pub async fn list_removal_requests(pool: &SqlitePool) -> Result<Vec<RemovalRequest>> {
+    Ok(
+        sqlx::query_as::<_, RemovalRequest>(
+            "SELECT * FROM removal_request ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await?,
+    )
+}
+
+/// A single removal request by id.
+pub async fn get_removal_request(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<Option<RemovalRequest>> {
+    Ok(
+        sqlx::query_as::<_, RemovalRequest>(
+            "SELECT * FROM removal_request WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?,
+    )
+}
+
+/// Advance a removal request's status, audited under `actor`. On `upheld_removed`
+/// also hides the conviction (see `hide_conviction`). Stamps decided_at / decided_by
+/// / decision_note on a terminal decision. Returns true if a row changed.
+pub async fn set_removal_status(
+    pool: &SqlitePool,
+    id: i64,
+    status: &str,
+    actor: &str,
+    decision_note: &str,
+) -> Result<bool> {
+    if !REMOVAL_STATUSES.contains(&status) {
+        return Err(CmsError::Bad(format!("removal request status: {status}")));
+    }
+    let t = now();
+    if is_decided_status(status) {
+        sqlx::query(
+            "UPDATE removal_request SET decided_at = ?, decided_by = ?, decision_note = ? \
+             WHERE id = ? AND decided_at IS NULL",
+        )
+        .bind(t)
+        .bind(actor)
+        .bind(decision_note.trim())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+    let res = sqlx::query("UPDATE removal_request SET status = ? WHERE id = ?")
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    let changed = res.rows_affected() > 0;
+    if changed {
+        append_audit(pool, actor, "removal.status", &id.to_string(), status).await?;
+        if status == "upheld_removed" {
+            // Fetch the target_ref and hide it.
+            if let Some(req) = get_removal_request(pool, id).await? {
+                hide_conviction(pool, &req.target_ref, id, actor).await?;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Hide a conviction entry (both compile-time and DB-backed) from the public
+/// database. Safe to call multiple times — INSERT OR IGNORE.
+pub async fn hide_conviction(
+    pool: &SqlitePool,
+    target_ref: &str,
+    removal_request_id: i64,
+    actor: &str,
+) -> Result<()> {
+    let t = now();
+    sqlx::query(
+        "INSERT OR IGNORE INTO hidden_conviction \
+         (target_ref, removal_request_id, hidden_at, hidden_by) VALUES (?,?,?,?)",
+    )
+    .bind(target_ref)
+    .bind(removal_request_id)
+    .bind(t)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    append_audit(pool, actor, "conviction.hidden", target_ref, "").await?;
+    Ok(())
+}
+
+/// Unhide a conviction entry (removes from the hidden set; the row is untouched).
+pub async fn unhide_conviction(pool: &SqlitePool, target_ref: &str, actor: &str) -> Result<()> {
+    sqlx::query("DELETE FROM hidden_conviction WHERE target_ref = ?")
+        .bind(target_ref)
+        .execute(pool)
+        .await?;
+    append_audit(pool, actor, "conviction.unhidden", target_ref, "").await?;
+    Ok(())
+}
+
+/// Every currently hidden conviction target_ref.
+pub async fn list_hidden_refs(pool: &SqlitePool) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT target_ref FROM hidden_conviction")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().map(|(r,)| r).collect())
+}
+
 /// First-run setup. If there are no staff users yet, create the first admin
 /// (the only way a first admin can be made; after this, an existing admin invites
 /// others). Idempotent: returns true only if it created the admin this call.
@@ -1880,5 +2046,81 @@ mod tests {
         let a = get_article(&pool, id).await.unwrap().unwrap();
         assert_eq!(a.slug, original);
         assert_eq!(a.meta_description, "Edited meta");
+    }
+
+    #[tokio::test]
+    async fn removal_request_lifecycle() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init(&pool).await.unwrap();
+
+        // Create a request.
+        let id = create_removal_request(
+            &pool,
+            "kieron-willans-guilty",
+            "Test Requester",
+            "test@example.com",
+            "Spent conviction under ROA",
+        )
+        .await
+        .unwrap();
+        assert!(id > 0);
+
+        // Fetch it back.
+        let req = get_removal_request(&pool, id).await.unwrap().unwrap();
+        assert_eq!(req.status, "received");
+        assert_eq!(req.target_ref, "kieron-willans-guilty");
+        assert!(req.decided_at.is_none());
+
+        // Advance to under_review.
+        assert!(set_removal_status(&pool, id, "under_review", "admin", "").await.unwrap());
+        let req2 = get_removal_request(&pool, id).await.unwrap().unwrap();
+        assert_eq!(req2.status, "under_review");
+        assert!(req2.decided_at.is_none());
+
+        // Uphold — this should also hide the conviction.
+        assert!(
+            set_removal_status(&pool, id, "upheld_removed", "admin", "ROA applies")
+                .await
+                .unwrap()
+        );
+        let req3 = get_removal_request(&pool, id).await.unwrap().unwrap();
+        assert_eq!(req3.status, "upheld_removed");
+        assert!(req3.decided_at.is_some());
+        assert_eq!(req3.decided_by, "admin");
+        assert_eq!(req3.decision_note, "ROA applies");
+
+        // The conviction is now in the hidden set.
+        let hidden = list_hidden_refs(&pool).await.unwrap();
+        assert!(hidden.contains(&"kieron-willans-guilty".to_string()));
+
+        // Unhide it.
+        unhide_conviction(&pool, "kieron-willans-guilty", "admin")
+            .await
+            .unwrap();
+        let hidden2 = list_hidden_refs(&pool).await.unwrap();
+        assert!(!hidden2.contains(&"kieron-willans-guilty".to_string()));
+
+        // The removal_request row is NOT deleted.
+        assert!(get_removal_request(&pool, id).await.unwrap().is_some());
+
+        // Reject a different request (no hide).
+        let id2 = create_removal_request(
+            &pool,
+            "jamie-wallace-guilty",
+            "Another",
+            "b@example.com",
+            "No basis",
+        )
+        .await
+        .unwrap();
+        set_removal_status(&pool, id2, "rejected", "admin", "Not spent")
+            .await
+            .unwrap();
+        let hidden3 = list_hidden_refs(&pool).await.unwrap();
+        assert!(!hidden3.contains(&"jamie-wallace-guilty".to_string()));
+
+        // list_removal_requests returns both.
+        let all = list_removal_requests(&pool).await.unwrap();
+        assert_eq!(all.len(), 2);
     }
 }
