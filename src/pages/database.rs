@@ -68,9 +68,13 @@ fn snippet(s: &str, max: usize) -> String {
 // Leaflet init: poll until the library + map div exist, then drop a pin for each
 // LOCATED conviction with a rich popup — the linked article's hero image, a short
 // snapshot, and a link through to the full report. Guarded against SPA re-init.
-fn map_js() -> String {
+// `hidden_slugs` filters out any conviction whose entry has been removed.
+fn map_js(hidden_slugs: &[String]) -> String {
     let mut markers = String::new();
-    for c in CONVICTIONS.iter().filter(|c| c.located()) {
+    for c in CONVICTIONS
+        .iter()
+        .filter(|c| c.located() && !hidden_slugs.contains(&c.article.to_string()))
+    {
         let art = by_slug(c.article);
         let img = art.map(|a| a.og_image()).unwrap_or_default();
         let summary = art.map(|a| a.summary).unwrap_or("");
@@ -207,36 +211,44 @@ pub fn Database() -> Element {
                 div { class: "card", style: "padding:0; overflow:hidden; margin-bottom:24px; position:relative; z-index:0; isolation:isolate;",
                     div { id: "phmap", style: "height:360px; width:100%; background:var(--sunk);" }
                 }
-                script { dangerous_inner_html: map_js() }
+                script { dangerous_inner_html: map_js(&hidden_set) }
 
                 // entries
                 div { class: "research-list",
                     for e in matches.iter() {
-                        Link { key: "{e.name}-{e.article_slug}", class: "r-row reveal", to: Route::Article { slug: e.article_slug.clone() },
-                            div {
-                                span { class: "r-num", "{e.offence}" }
-                                h3 { class: "hl", "{e.name}" }
-                                p { class: "r-desc",
-                                    if e.area.is_empty() { "Area not stated by the court. " } else { "{e.area}. " }
-                                    "{e.outcome}."
+                        div { key: "{e.name}-{e.article_slug}", class: "r-row-wrap reveal",
+                            Link { class: "r-row", to: Route::Article { slug: e.article_slug.clone() },
+                                div {
+                                    span { class: "r-num", "{e.offence}" }
+                                    h3 { class: "hl", "{e.name}" }
+                                    p { class: "r-desc",
+                                        if e.area.is_empty() { "Area not stated by the court. " } else { "{e.area}. " }
+                                        "{e.outcome}."
+                                    }
+                                }
+                                div { class: "r-meta",
+                                    span { class: "byline", "{e.date}" }
+                                    span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
                                 }
                             }
-                            div { class: "r-meta",
-                                span { class: "byline", "{e.date}" }
-                                span { class: "r-arrow", dangerous_inner_html: svg("arrow-up-right") }
+                            Link {
+                                class: "r-removal-link",
+                                to: Route::RemovalRequestPage { slug: e.article_slug.clone() },
+                                span { class: "ic", dangerous_inner_html: svg("eye-off") }
+                                "Request removal"
                             }
                         }
                     }
                 }
 
                 div { style: "margin-top:22px; display:flex; gap:12px; flex-wrap:wrap;",
-                    Link { class: "btn btn-primary btn-sm", to: Route::RemovalRequest {},
-                        span { class: "ic", dangerous_inner_html: svg("eye-off") }
-                        "Request removal"
-                    }
                     a { class: "btn btn-ghost btn-sm", href: "mailto:database@predatorhunters.co.uk?subject=Database%20correction",
                         span { class: "ic", dangerous_inner_html: svg("mail") }
                         "Request a correction"
+                    }
+                    Link { class: "btn btn-ghost btn-sm", to: Route::RemovalRequest {},
+                        span { class: "ic", dangerous_inner_html: svg("eye-off") }
+                        "About removal requests"
                     }
                 }
             }
