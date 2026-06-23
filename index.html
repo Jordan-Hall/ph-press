@@ -592,6 +592,188 @@ textarea.desk-in{width:100%;box-sizing:border-box;resize:vertical;font-family:va
   .desk-new{padding:14px;}
   .pad{padding:12px 14px;}
 }
+
+/* ===== /desk ELEVATION — refined dark editorial back-office ===== */
+/* Framed panel cards: --paper-2 surface on --sunk canvas, depth + a slim red accent */
+.desk-panel{
+  border-top:3px solid var(--red);
+  border-radius:6px;
+  box-shadow:0 4px 24px rgba(0,0,0,.28),0 1px 4px rgba(0,0,0,.18);
+}
+html[data-theme="light"] .desk-panel{box-shadow:0 2px 12px rgba(20,22,28,.10),0 1px 3px rgba(20,22,28,.07);}
+.desk-panel-head{padding:20px 24px;align-items:center;}
+.desk-panel-head h2{font-size:17px;letter-spacing:-.014em;}
+.desk-main{gap:0;}
+
+/* Top bar: a stronger bottom rule to separate chrome from the sunk canvas */
+.desk-top{border-bottom:2px solid var(--rule-strong);}
+.desk-top-in{padding:18px var(--gut);}
+.desk-h1{font-size:22px;}
+
+/* Nav tabs: more breathing room, subtler muted state, crisper hover */
+.desk-tabs{padding-top:2px;gap:0;border-bottom:1px solid var(--rule);}
+.desk-tab{padding:13px 0;margin-right:24px;font-size:13px;font-weight:600;letter-spacing:.01em;color:var(--faint);}
+.desk-tab:hover{color:var(--muted);}
+.desk-tab.on{color:var(--ink);border-bottom-width:2px;}
+
+/* Role pill: cleaner mono label */
+.desk-role{font-size:10px;letter-spacing:.12em;padding:3px 10px;background:var(--sunk);}
+
+/* Table: a forensic ledger — mono data, tighter but generous, clear row hover */
+.desk-table{font-size:13px;}
+.desk-table th{font-size:10px;letter-spacing:.1em;padding:11px 24px;background:var(--sunk);color:var(--faint);}
+.desk-table td{padding:13px 24px;font-family:var(--mono);font-size:12px;letter-spacing:.02em;}
+/* Row titles stay in serif weight to break the mono cadence */
+.desk-row-title{font-family:var(--sans);font-size:13px;font-weight:500;letter-spacing:0;}
+/* Hover row highlight across ALL tables */
+.desk-table tbody tr:hover td{background:rgba(255,255,255,.035);}
+html[data-theme="light"] .desk-table tbody tr:hover td{background:rgba(20,22,28,.04);}
+/* Muted table data (timestamps, slugs, counts) */
+.desk-table .desk-muted{color:var(--faint);}
+
+/* Status chips: unified pill system. Existing s-* classes retain their colours. */
+/* Add missing complaint statuses the markup emits but CSS didn't cover */
+.desk-state.s-c-acknowledged{background:rgba(230,170,40,.14);border-color:rgba(230,170,40,.4);color:#e6c455;}
+.desk-state.s-c-under_investigation{background:rgba(230,170,40,.18);border-color:rgba(230,170,40,.5);color:#e6c455;}
+.desk-state.s-c-partly_upheld{background:rgba(56,180,108,.14);border-color:rgba(56,180,108,.4);color:#5fce8e;}
+.desk-state.s-c-not_upheld{background:var(--tag);border-color:var(--rule-2);color:var(--red);}
+.desk-state.s-c-closed{background:var(--sunk);border-color:var(--rule-2);color:var(--muted);}
+.desk-state.s-c-escalated{background:var(--tag);border-color:var(--red);color:var(--red);}
+/* Article lifecycle chips that fell back to the plain base */
+.desk-state.s-draft{background:var(--sunk);border-color:var(--rule-2);color:var(--muted);}
+.desk-state.s-scheduled{background:rgba(230,170,40,.10);border-color:rgba(230,170,40,.35);color:#e6c455;}
+/* Watch status chips */
+.desk-state.s-watching{background:var(--sunk);border-color:var(--rule-2);color:var(--muted);}
+.desk-state.s-attending{background:rgba(230,170,40,.14);border-color:rgba(230,170,40,.4);color:#e6c455;}
+.desk-state.s-transcript_requested{background:rgba(56,180,108,.10);border-color:rgba(56,180,108,.3);color:#5fce8e;}
+.desk-state.s-closed{background:var(--sunk);border-color:var(--rule-2);color:var(--faint);}
+/* Conviction statuses */
+.desk-state.s-published{background:rgba(56,180,108,.14);border-color:rgba(56,180,108,.4);color:#5fce8e;}
+
+/* Inputs: recessed fields, unified focus ring, autofill killer */
+.desk-in,.desk-field input{
+  background:var(--sunk);
+  border:1px solid var(--rule-2);
+  border-radius:var(--r-md);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:13px;
+  padding:9px 12px;
+  transition:border-color .15s,box-shadow .15s;
+}
+.desk-in:focus,.desk-field input:focus{
+  outline:none;
+  border-color:var(--red);
+  box-shadow:0 0 0 3px var(--tag);
+}
+/* Kill browser yellow autofill background — match our sunk surface */
+.desk-in:-webkit-autofill,.desk-field input:-webkit-autofill{
+  -webkit-box-shadow:0 0 0 1000px var(--sunk) inset,0 0 0 3px var(--tag);
+  -webkit-text-fill-color:var(--ink);
+  caret-color:var(--ink);
+}
+.desk-in:-webkit-autofill:focus,.desk-field input:-webkit-autofill:focus{
+  -webkit-box-shadow:0 0 0 1000px var(--sunk) inset,0 0 0 3px var(--tag);
+}
+/* Selects: same recessed system */
+select.desk-in{
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238E897D'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 11px center;
+  padding-right:28px;
+  cursor:pointer;
+}
+
+/* Buttons: cleaner sizing & ghost contrast */
+.desk-btn{
+  font-size:14px;
+  padding:11px 18px;
+  border-radius:var(--r-md);
+  letter-spacing:.01em;
+}
+.desk-btn:focus-visible{outline:3px solid var(--red);outline-offset:2px;}
+.desk-btn.ghost{
+  border-color:var(--rule-2);
+  color:var(--ink-2);
+  padding:8px 16px;
+  font-size:13px;
+}
+.desk-btn.ghost:hover{
+  border-color:var(--ink-2);
+  background:var(--paper-2);
+  color:var(--ink);
+}
+.desk-btn.sm{font-size:12px;padding:7px 14px;letter-spacing:.01em;}
+/* Action buttons: a touch more readable */
+.desk-act{font-size:11px;padding:5px 11px;border-radius:var(--r-md);}
+
+/* Filter chips: slightly taller tap target */
+.desk-fchip{padding:7px 14px;font-size:11px;letter-spacing:.01em;}
+
+/* Login / install card: slightly more refined */
+.desk-card{
+  border-radius:8px;
+  box-shadow:0 28px 70px rgba(0,0,0,.42),0 2px 8px rgba(0,0,0,.2);
+  border-color:var(--rule-2);
+}
+html[data-theme="light"] .desk-card{box-shadow:0 12px 40px rgba(20,22,28,.13),0 2px 6px rgba(20,22,28,.07);}
+.desk-title{font-size:26px;margin:8px 0 4px;}
+.desk-sub{color:var(--faint);font-size:13px;}
+.desk-field span{font-size:12px;font-weight:500;letter-spacing:.02em;color:var(--ink-2);}
+
+/* desk-new: "form card" inside the panel — slight elevation over the sunk bg */
+.desk-new{
+  background:var(--paper-2);
+  border-bottom-color:var(--rule);
+  border-top:0;
+}
+/* First .desk-new in a panel sits flush under the header, no double top border */
+.desk-panel-head + .desk-new{border-top:1px solid var(--rule);}
+
+/* Profile account-detail table: wider label column, clearly a definition list */
+.desk-new .desk-table td:first-child{
+  color:var(--faint);
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  width:140px;
+}
+.desk-new .desk-table td{padding:11px 14px;}
+.desk-new .desk-table{border:1px solid var(--rule);border-radius:var(--r-md);overflow:hidden;}
+.desk-new .desk-table tr:last-child td{border-bottom:0;}
+
+/* Complaint thread messages: cleaner note/reply cards */
+.complaint-msg{
+  border-left:3px solid var(--rule-2);
+  background:var(--sunk);
+  border-radius:0 var(--r-md) var(--r-md) 0;
+  padding:10px 14px;
+  margin:8px 0;
+}
+.complaint-msg.c-reply{
+  border-left-color:var(--red);
+  background:var(--paper-2);
+}
+
+/* Overdue / warning flag pill */
+.desk-flag{font-size:10px;letter-spacing:.06em;padding:2px 8px;}
+
+/* Audit panel: emphasise the panel-head verification chip */
+.desk-panel-head .desk-state{margin-left:8px;font-size:10px;}
+
+/* pad helper: align with new 24px cell padding */
+.pad{padding:16px 24px;}
+
+/* Responsive overrides for the new elevation rules */
+@media(max-width:640px){
+  .desk-table th,.desk-table td{padding-left:14px;padding-right:14px;}
+  .desk-panel-head{padding-left:16px;padding-right:16px;}
+  .pad{padding:12px 16px;}
+  .desk-new{padding:14px 16px;}
+  .desk-new .desk-table td{padding:9px 10px;}
+}
     </style>
     <script>(function(){try{var t=localStorage.getItem('ph-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
   </head>
