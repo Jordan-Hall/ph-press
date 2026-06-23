@@ -91,9 +91,20 @@ fn image_html(b: &str) -> Option<String> {
     }
 }
 
+/// Returns `true` when a body block is the suicide/self-harm support signpost
+/// marker (`@support`). The article renderer uses this to opt-in to showing a
+/// Samaritans support box; the block itself is NOT passed to `block_html`.
+pub fn is_support_block(block: &str) -> bool {
+    block.trim() == "@support"
+}
+
 /// Render one body block to safe HTML.
 pub fn block_html(block: &str) -> String {
     let b = block.trim();
+    // @support is consumed by the article renderer — never emit HTML for it.
+    if b == "@support" {
+        return String::new();
+    }
     if let Some(img) = image_html(b) {
         return img;
     }
@@ -151,5 +162,10 @@ mod tests {
             block_html("![cat](https://x.com/c.jpg)").contains("<img src=\"https://x.com/c.jpg\"")
         );
         assert!(!block_html("![x](javascript:alert(1))").contains("<img"));
+        // @support marker: recognised by is_support_block, emits nothing from block_html
+        assert!(is_support_block("@support"));
+        assert!(is_support_block("  @support  "));
+        assert!(!is_support_block("@support extra"));
+        assert_eq!(block_html("@support"), "");
     }
 }
