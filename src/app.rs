@@ -9,8 +9,8 @@ use crate::components::{ClosingCta, SiteFooter};
 use crate::icons::svg;
 use crate::pages::{
     About, Article, ComplaintPage, ComplaintsPolicy, Contact, CorrectionsLog, Database, Desk,
-    DeskForgot, DeskPreview, DeskReset, Home, News, NotFound, Podcast, Privacy, Standards, Team,
-    Watch, WriteArticle,
+    DeskForgot, DeskPreview, DeskReset, Governance, Home, News, NotFound, Podcast, Privacy,
+    Standards, Team, Watch, WriteArticle,
 };
 
 #[derive(Routable, Clone, PartialEq)]
@@ -52,6 +52,8 @@ pub enum Route {
     ComplaintPage { slug: String },
     #[route("/corrections")]
     CorrectionsLog {},
+    #[route("/governance")]
+    Governance {},
     #[route("/contact")]
     Contact {},
     #[route("/privacy")]
