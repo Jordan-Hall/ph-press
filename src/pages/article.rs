@@ -172,7 +172,7 @@ pub fn Article(slug: String) -> Element {
                             div { dangerous_inner_html: crate::md::block_html(para) }
                         }
                         // End-mark — ◆ closes every piece with a publisher mark.
-                        p { class: "art-endmark", "◆" }
+                        p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
 
                     // ── Article footer: published date + complaint link + nav ──
@@ -318,7 +318,7 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
                             div { dangerous_inner_html: crate::md::block_html(para) }
                         }
                         // End-mark
-                        p { class: "art-endmark", "◆" }
+                        p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
 
                     // ── Article footer: published date + complaint link + nav ──

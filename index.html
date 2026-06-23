@@ -613,7 +613,7 @@ textarea.desk-in{width:100%;box-sizing:border-box;resize:vertical;font-family:va
 .art-body-wrap{max-width:760px;}
 
 /* ── Lead figure: framed image / video / YouTube ── */
-.art-lead-figure{margin:0 0 clamp(24px,4vh,40px);padding:0;border:0;
+.art-lead-figure{margin:0 0 clamp(24px,4vh,40px);padding:0;
   border:1px solid var(--rule-2);border-radius:var(--r-lg);overflow:hidden;
   background:var(--sunk);}
 .art-lead-img{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;}
@@ -642,7 +642,10 @@ textarea.desk-in{width:100%;box-sizing:border-box;resize:vertical;font-family:va
 .art-prose ul,.art-prose ol{margin:0 0 1.4em;padding-left:1.35em;}
 .art-prose li{font-size:1.1rem;line-height:1.7;color:var(--ink-2);margin:.3em 0;}
 .art-prose li::marker{color:var(--red);}
-/* Drop cap — opt-in via "^ " prefix in body source */
+/* Drop cap — always-on for first paragraph of seed articles (first child div > p) */
+.art-prose > div:first-child p::first-letter{font-family:var(--serif);float:left;font-size:3.8rem;
+  line-height:.78;padding:8px 12px 0 0;color:var(--red);font-weight:400;}
+/* Drop cap — opt-in via "^ " prefix in body source (live articles, named paragraphs) */
 .art-prose p.dropcap::first-letter{font-family:var(--serif);float:left;font-size:3.8rem;
   line-height:.78;padding:8px 12px 0 0;color:var(--red);font-weight:400;}
 /* Blockquote — sourced quotation or indented material ("> " marker) */
