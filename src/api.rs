@@ -346,13 +346,21 @@ pub async fn cms_status() -> Result<i64, ServerFnError> {
     }
 }
 
-/// Log a staff member in: verify credentials, mint a session, set the cookie, and
-/// return the session view for the UI.
+/// Log a staff member in: verify credentials, enforce TOTP when enrolled, mint a
+/// session, set the cookie, and return the session view for the UI.
+///
+/// `code` is the authenticator code — pass an empty string if the user has no 2FA.
+/// When the server returns an error starting with "two-factor", the UI should
+/// reveal the TOTP code field and let the user try again.
 #[server(endpoint = "staff_login")]
-pub async fn staff_login(username: String, password: String) -> Result<DeskSession, ServerFnError> {
+pub async fn staff_login(
+    username: String,
+    password: String,
+    code: String,
+) -> Result<DeskSession, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        let token = crate::cms::login(&username, &password)
+        let token = crate::cms::login(&username, &password, &code)
             .await
             .map_err(ServerFnError::new)?;
         let session = crate::cms::session_for(&token)
@@ -368,7 +376,7 @@ pub async fn staff_login(username: String, password: String) -> Result<DeskSessi
     }
     #[cfg(not(feature = "server"))]
     {
-        let _ = (username, password);
+        let _ = (username, password, code);
         Err(ServerFnError::new("server only"))
     }
 }
@@ -1740,6 +1748,78 @@ pub async fn desk_poll_now() -> Result<(), ServerFnError> {
     }
     #[cfg(not(feature = "server"))]
     {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+// ── TOTP / two-factor authentication ─────────────────────────────────────
+
+/// Whether the currently logged-in user has TOTP enrolled.
+#[server(endpoint = "staff_totp_status")]
+pub async fn staff_totp_status() -> Result<bool, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::user_totp_enabled(&session.username)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Begin TOTP enrolment for the currently logged-in user.
+/// Returns `(secret_base32, otpauth_uri)`.  The secret is a PENDING secret —
+/// it is NOT yet active for login; call `staff_totp_enable` with a valid code
+/// to confirm and activate it.
+#[server(endpoint = "staff_totp_begin")]
+pub async fn staff_totp_begin() -> Result<(String, String), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::totp_begin(&session.username)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Confirm TOTP enrolment: verify `code` against the pending secret and
+/// persist it.  After this succeeds the next login will require a TOTP code.
+#[server(endpoint = "staff_totp_enable")]
+pub async fn staff_totp_enable(code: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::totp_enable(&session.username, &code)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = code;
+        Err(ServerFnError::new("server only"))
+    }
+}
+
+/// Disable TOTP after verifying the user's current password.
+#[server(endpoint = "staff_totp_disable")]
+pub async fn staff_totp_disable(password: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_session().await?;
+        crate::cms::totp_disable(&session.username, &password)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = password;
         Err(ServerFnError::new("server only"))
     }
 }
