@@ -109,6 +109,15 @@ pub fn block_html(block: &str) -> String {
         // the style appears only where the author asks for it — never on every
         // paragraph. The marker itself is stripped before inline formatting.
         format!("<p class=\"dropcap\">{}</p>", inline(lead))
+    } else if let Some(pq) = b.strip_prefix(">> ") {
+        // Pull-quote: a leading ">> " renders a large editorial pull-quote
+        // (`.pull-quote`) styled with a red accent rule in the article layout.
+        // Only appears where the author places it; not a blockquote.
+        format!("<div class=\"pull-quote\"><p>{}</p></div>", inline(pq))
+    } else if let Some(bq) = b.strip_prefix("> ") {
+        // Blockquote: a leading "> " renders a styled blockquote for
+        // sourced quotations or indented material.
+        format!("<blockquote>{}</blockquote>", inline(bq))
     } else {
         format!("<p>{}</p>", inline(b))
     }
