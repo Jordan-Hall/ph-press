@@ -10,6 +10,23 @@ use crate::icons::svg;
 
 use crate::config;
 
+/// Live "are we a registered member of our press regulator?" status, provided by
+/// the public `Shell` and fetched once on the client. It seeds from the cautious
+/// build-time fallback (`config::REGULATOR_REGISTERED`, false) so the pre-rendered
+/// SSG HTML never over-claims; the client updates it from the runtime setting.
+#[derive(Clone, Copy)]
+pub struct RegulatorStatus(pub Signal<bool>);
+
+/// Read the live regulator-registered status (reactive — re-renders when the
+/// client fetch resolves). Falls back to the build-time const when no provider is
+/// in scope (e.g. a component rendered outside the public `Shell`).
+pub fn regulator_registered() -> bool {
+    match try_consume_context::<RegulatorStatus>() {
+        Some(RegulatorStatus(sig)) => *sig.read(),
+        None => config::REGULATOR_REGISTERED,
+    }
+}
+
 /// Per-route SEO head: title, description, canonical, Open Graph + Twitter.
 #[component]
 pub fn Seo(title: String, description: String, path: String, image: String) -> Element {
@@ -119,16 +136,22 @@ pub fn SiteFooter() -> Element {
                         }
                     }
                 }
-                div { class: "footer-regulated",
-                    p {
-                        "Predator Hunters is regulated by "
-                        a { href: "https://impress.press/", target: "_blank", rel: "noopener",
-                            "IMPRESS"
+                // Regulatory statement — only shown once we are a registered member of
+                // our press regulator (live runtime status; see RegulatorStatus). Until
+                // then we make no "regulated by" claim; the honest "intend to seek
+                // registration" language lives on the Standards page.
+                if regulator_registered() {
+                    div { class: "footer-regulated",
+                        p {
+                            "{site_name} is regulated by "
+                            a { href: config::REGULATOR_URL, target: "_blank", rel: "noopener",
+                                "{config::REGULATOR_NAME}"
+                            }
+                            ", the independent monitor for the press. "
+                            a { href: "/complaints", "Make a complaint" }
+                            " · "
+                            a { href: "/corrections", "Corrections & clarifications" }
                         }
-                        ", the independent monitor for the press. "
-                        a { href: "/complaints", "Make a complaint" }
-                        " · "
-                        a { href: "/corrections", "Corrections & clarifications" }
                     }
                 }
                 div { class: "footer-bottom",

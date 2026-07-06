@@ -17,6 +17,6 @@ From here we will report on the cases we have worked, once they have been throug
 
 Two lines have never moved, and they never will. We do not name anyone before they are charged. We hold footage back until there is a conviction, we censor it where it is needed, and we only run it when it genuinely helps people keep children safe.
 
-We are an independent, self-funded team. We work with the police, not in their place, and we are working towards registration with IMPRESS, the UK's approved press regulator, so that you can hold us to a published standard. Our standards, our complaints process and our corrections all live on this site.
+We are an independent, self-funded team. We work with the police, not in their place, and we hold ourselves to the IMPRESS Standards Code and intend to seek registration with IMPRESS, the UK's approved press regulator, so that you can hold us to a published standard. Our standards, our complaints process and our corrections all live on this site.
 
 If you have information, want to support the work, or are a journalist or safeguarding partner, get in touch. If a child is in immediate danger, call 999.

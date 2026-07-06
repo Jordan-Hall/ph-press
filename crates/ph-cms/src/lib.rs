@@ -1077,6 +1077,76 @@ pub async fn audit_chain(pool: &SqlitePool) -> Result<ph_audit::AuditChain> {
         .map_err(|e| CmsError::Bad(format!("audit chain invalid: {e}")))
 }
 
+// ===================== settings (operator key/value) =====================
+
+/// Key for the "we are a registered member of our press regulator" flag.
+pub const SETTING_REGULATOR_REGISTERED: &str = "regulator_registered";
+
+/// Read a raw setting value (None if unset).
+pub async fn get_setting(pool: &SqlitePool, key: &str) -> Result<Option<String>> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM setting WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(v,)| v))
+}
+
+/// Upsert a setting value (stamps `updated_at`).
+pub async fn set_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO setting (key, value, updated_at) VALUES (?, ?, ?) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+    .bind(key)
+    .bind(value)
+    .bind(now())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Whether we are a registered member of our press regulator. Defaults to `false`
+/// (the cautious, never-over-claim state) when unset or unrecognised.
+pub async fn regulator_registered(pool: &SqlitePool) -> Result<bool> {
+    Ok(get_setting(pool, SETTING_REGULATOR_REGISTERED)
+        .await?
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false))
+}
+
+/// Set the regulator-registered flag, writing an audit record — a change to a
+/// public legal claim belongs on the tamper-evident chain.
+///
+/// The value write and the audit append are two statements (the same
+/// mutate-then-audit shape used across this crate — transitions, complaints,
+/// removals — none wrap the pair in one transaction). A transient failure of the
+/// audit append after the value commits would change the flag without an audit
+/// row. That gap is benign in the only direction that matters: `registered=true`
+/// only ever commits on a deliberate admin flip (so the public claim still matches
+/// intent), and `registered=false` reverts to the cautious wording (an under-claim,
+/// which is safe). It never produces a false over-claim.
+pub async fn set_regulator_registered(
+    pool: &SqlitePool,
+    registered: bool,
+    actor: &str,
+) -> Result<()> {
+    set_setting(
+        pool,
+        SETTING_REGULATOR_REGISTERED,
+        if registered { "1" } else { "0" },
+    )
+    .await?;
+    append_audit(
+        pool,
+        actor,
+        "setting.regulator_registered",
+        SETTING_REGULATOR_REGISTERED,
+        if registered { "registered" } else { "not registered" },
+    )
+    .await?;
+    Ok(())
+}
+
 /// Move an article to a new state, enforcing the lifecycle gate for the actor's
 /// role, logging the review, and writing to the audit chain.
 pub async fn transition(

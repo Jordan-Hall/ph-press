@@ -98,7 +98,13 @@ pub fn RemovalRequest() -> Element {
                     div { class: "def", dt { "Review" } dd { "A member of staff checks your request against the criteria above and the public court record." } }
                     div { class: "def", dt { "Decision" } dd { "We aim to give you a decision within 21 days. If we uphold your request, the entry is hidden from the public database \u{2014} the underlying record is kept for our audit trail but not shown publicly." } }
                     div { class: "def", dt { "Nothing is auto-deleted" } dd { "Every request goes through a human review. We do not auto-delete anything, and all decisions are logged." } }
-                    div { class: "def", dt { "If you disagree" } dd { "If you are not satisfied with our decision, you can contact our independent press regulator." } }
+                    div { class: "def", dt { "If you disagree" } dd {
+                        if crate::components::regulator_registered() {
+                            "If you are not satisfied with our decision, tell us why and we will review it again. If you believe our reporting breached the IMPRESS Standards Code, you can escalate an unresolved complaint to IMPRESS, our independent press regulator."
+                        } else {
+                            "If you are not satisfied with our decision, tell us why and we will review it again."
+                        }
+                    } }
                 }
             }
         }

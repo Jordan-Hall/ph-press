@@ -14,7 +14,8 @@ use crate::api::{
     desk_log_complaint, desk_poll_now, desk_preview, desk_promote_lead,
     desk_promote_lead_conviction, desk_regenerate_draft, desk_removal_decide,
     desk_removal_requests, desk_set_conviction_status, desk_sources,
-    desk_staff, desk_transition, desk_update, staff_change_password, staff_forgot_password,
+    desk_staff, desk_transition, desk_update, regulator_registered, set_regulator_registered,
+    staff_change_password, staff_forgot_password,
     staff_install, staff_login, staff_logout, staff_me, staff_needs_install, staff_profile,
     staff_reset_password, staff_totp_begin, staff_totp_disable, staff_totp_enable,
     staff_totp_status, DeskArticle, DeskComplaint, DeskComplaintMessage, DeskConviction,
@@ -631,6 +632,8 @@ fn ComplaintsPanel() -> Element {
     let mut selected = use_signal(|| Option::<i64>::None);
     let mut reload = use_signal(|| 0u32);
     let mut show_new = use_signal(|| false);
+    // Live regulator status gates the IMPRESS-named "Escalated" label in the rows.
+    let mut registered = use_signal(|| false);
     let mut slug = use_signal(String::new);
     let mut who = use_signal(String::new);
     let mut email = use_signal(String::new);
@@ -642,6 +645,11 @@ fn ComplaintsPanel() -> Element {
         match desk_complaints().await {
             Ok(v) => items.set(Some(v)),
             Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+    use_resource(move || async move {
+        if let Ok(v) = regulator_registered().await {
+            registered.set(v);
         }
     });
 
@@ -680,6 +688,7 @@ fn ComplaintsPanel() -> Element {
     };
 
     let rows = items.read().clone();
+    let reg = registered();
     rsx! {
         section { class: "desk-panel",
             div { class: "desk-panel-head",
@@ -722,7 +731,7 @@ fn ComplaintsPanel() -> Element {
                         thead { tr { th { "Complaint" } th { "Re" } th { "From" } th { "Status" } th { "Logged" } } }
                         tbody {
                             for c in v {
-                                ComplaintRow { key: "{c.id}", c, selected }
+                                ComplaintRow { key: "{c.id}", c, selected, registered: reg }
                             }
                         }
                     }
@@ -733,7 +742,7 @@ fn ComplaintsPanel() -> Element {
 }
 
 #[component]
-fn ComplaintRow(c: DeskComplaint, mut selected: Signal<Option<i64>>) -> Element {
+fn ComplaintRow(c: DeskComplaint, mut selected: Signal<Option<i64>>, registered: bool) -> Element {
     let id = c.id;
     let re = if c.article_slug.is_empty() {
         "—".to_string()
@@ -757,7 +766,7 @@ fn ComplaintRow(c: DeskComplaint, mut selected: Signal<Option<i64>>) -> Element 
             }
             td { class: "desk-muted", "{re}" }
             td { class: "desk-muted", "{from}" }
-            td { span { class: "desk-state s-c-{c.status}", "{complaint_label(&c.status)}" } }
+            td { span { class: "desk-state s-c-{c.status}", "{complaint_label(&c.status, registered)}" } }
             td { class: "desk-muted", "{ymd(c.ts)}" }
         }
     }
@@ -773,6 +782,8 @@ fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
     let mut busy = use_signal(|| false);
     let mut note = use_signal(String::new);
     let mut reply = use_signal(String::new);
+    // Live regulator status gates the IMPRESS-named escalation labels below.
+    let mut registered = use_signal(|| false);
 
     use_resource(move || async move {
         match desk_complaint_thread(id).await {
@@ -780,7 +791,13 @@ fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
             Err(e) => err.set(Some(e.to_string())),
         }
     });
+    use_resource(move || async move {
+        if let Ok(v) = regulator_registered().await {
+            registered.set(v);
+        }
+    });
 
+    let reg = registered();
     let d = data.read().clone();
     rsx! {
         section { class: "desk-panel",
@@ -797,7 +814,7 @@ fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
                     div { class: "desk-new",
                         p { class: "desk-muted", style: "margin:0 0 6px;",
                             "PH-C{c.id} · "
-                            {complaint_label(&c.status)}
+                            {complaint_label(&c.status, reg)}
                         }
                         if c.decision_overdue {
                             p { class: "desk-error", "Decision overdue — IMPRESS expects a final response within 21 days." }
@@ -835,7 +852,7 @@ fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
                     div { class: "desk-new", style: "margin-top:16px;",
                         p { class: "desk-muted", style: "margin:0 0 8px;", "Move status" }
                         div { class: "desk-actions",
-                            for (to , label) in complaint_next_statuses(&c.status) {
+                            for (to , label) in complaint_next_statuses(&c.status, reg) {
                                 button {
                                     key: "{to}",
                                     class: "desk-act",
@@ -1577,6 +1594,9 @@ fn ProfilePanel(user: DeskSession) -> Element {
                 }
             }
             TotpSection { username: user.username.clone() }
+            if user.role == "admin" {
+                RegulatoryStatusCard {}
+            }
         }
     }
 }
@@ -1770,7 +1790,86 @@ fn TotpSection(username: String) -> Element {
     }
 }
 
-fn complaint_label(status: &str) -> &str {
+/// Admin-only: flip whether we publicly claim to be registered with our press
+/// regulator (IMPRESS). Off by default; turning it on publishes the "regulated by"
+/// footer statement and enables complaint escalation to IMPRESS. Every change is
+/// audited server-side. Live visitors see it immediately; crawlers / no-JS update
+/// at the next deploy (an under-claim in the interim — never an over-claim).
+#[component]
+fn RegulatoryStatusCard() -> Element {
+    // None = still loading the current value.
+    let mut registered = use_signal(|| Option::<bool>::None);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(|| Option::<String>::None);
+
+    use_resource(move || async move {
+        match regulator_registered().await {
+            Ok(v) => registered.set(Some(v)),
+            Err(e) => err.set(Some(e.to_string())),
+        }
+    });
+
+    let cur = *registered.read();
+    rsx! {
+        div { class: "desk-new", style: "margin-top:24px;",
+            p { class: "desk-muted", style: "margin:0 0 6px;", "Press regulation" }
+            match cur {
+                None => rsx! { p { class: "desk-muted", "Loading…" } },
+                Some(is_reg) => rsx! {
+                    p { style: "margin:0 0 10px;",
+                        "Current status: "
+                        strong {
+                            if is_reg { "Registered with IMPRESS" } else { "Not registered — intend to seek registration" }
+                        }
+                    }
+                    p { class: "desk-muted", style: "margin:0 0 14px; font-size:.82rem; line-height:1.5;",
+                        "Only switch this on once IMPRESS registration is confirmed. It publishes the “regulated by IMPRESS” statement in the site footer and turns on complaint escalation to IMPRESS. Live visitors see the change at once; search engines and no-JS visitors catch up at the next site deploy. Every change is recorded in the audit log."
+                    }
+                    if let Some(e) = err() {
+                        p { class: "desk-error", "{e}" }
+                    }
+                    if is_reg {
+                        button {
+                            class: "desk-btn ghost",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match set_regulator_registered(false).await {
+                                        Ok(()) => registered.set(Some(false)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            if busy() { "Saving…" } else { "Mark as NOT registered" }
+                        }
+                    } else {
+                        button {
+                            class: "desk-btn",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    err.set(None);
+                                    match set_regulator_registered(true).await {
+                                        Ok(()) => registered.set(Some(true)),
+                                        Err(e) => err.set(Some(e.to_string())),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            if busy() { "Saving…" } else { "Mark as registered with IMPRESS" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn complaint_label(status: &str, registered: bool) -> &str {
     match status {
         "received" => "Received",
         "acknowledged" => "Acknowledged",
@@ -1779,13 +1878,22 @@ fn complaint_label(status: &str) -> &str {
         "partly_upheld" => "Partly upheld",
         "not_upheld" => "Not upheld",
         "closed" => "Closed",
-        "escalated" => "Escalated to IMPRESS",
+        "escalated" => {
+            if registered { "Escalated to IMPRESS" } else { "Escalated" }
+        }
         _ => status,
     }
 }
 
 /// The next statuses an editor can move a complaint to (the IMPRESS workflow).
-fn complaint_next_statuses(status: &str) -> Vec<(&'static str, &'static str)> {
+/// `registered` gates the IMPRESS-named escalation label (see RegulatorStatus).
+fn complaint_next_statuses(status: &str, registered: bool) -> Vec<(&'static str, &'static str)> {
+    // Only claim an IMPRESS escalation route once we are actually registered.
+    let escalate_label = if registered {
+        "Escalate to IMPRESS"
+    } else {
+        "Escalate"
+    };
     match status {
         "received" => vec![("acknowledged", "Acknowledge")],
         "acknowledged" => vec![("under_investigation", "Start investigation")],
@@ -1795,9 +1903,9 @@ fn complaint_next_statuses(status: &str) -> Vec<(&'static str, &'static str)> {
             ("not_upheld", "Not upheld"),
         ],
         "upheld" | "partly_upheld" | "not_upheld" => {
-            vec![("closed", "Close"), ("escalated", "Escalated to IMPRESS")]
+            vec![("closed", "Close"), ("escalated", escalate_label)]
         }
-        "closed" => vec![("escalated", "Escalated to IMPRESS")],
+        "closed" => vec![("escalated", escalate_label)],
         _ => vec![],
     }
 }

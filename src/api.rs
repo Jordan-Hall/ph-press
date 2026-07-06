@@ -563,6 +563,39 @@ pub async fn staff_profile() -> Result<String, ServerFnError> {
     }
 }
 
+/// Public: are we a registered member of our press regulator (IMPRESS)? Drives
+/// the "regulated by" statement in the footer / Standards page. No auth — the
+/// public site reads it. Defaults to `false` (never over-claim) if unset/on error.
+#[server(endpoint = "regulator_registered")]
+pub async fn regulator_registered() -> Result<bool, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(crate::cms::regulator_registered().await)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        Ok(false)
+    }
+}
+
+/// Admin-only: set the regulator-registered flag (audited). Restricted to admins
+/// because it changes a public legal claim about how the newsroom is regulated.
+#[server(endpoint = "set_regulator_registered")]
+pub async fn set_regulator_registered(registered: bool) -> Result<(), ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let session = require_admin().await?;
+        crate::cms::set_regulator_registered(registered, &session.username)
+            .await
+            .map_err(ServerFnError::new)
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        let _ = registered;
+        Err(ServerFnError::new("server only"))
+    }
+}
+
 /// Log out: destroy the server-side session and expire the cookie.
 #[server(endpoint = "staff_logout")]
 pub async fn staff_logout() -> Result<(), ServerFnError> {

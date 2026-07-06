@@ -95,6 +95,20 @@ pub fn App() -> Element {
 
 #[component]
 fn Shell() -> Element {
+    // Live regulator-registration status, provided to the footer + Standards page.
+    // Seeded from the cautious build-time fallback so the pre-rendered SSG HTML
+    // never over-claims (effects don't run during SSG), then refreshed from the
+    // runtime setting once on the client.
+    let status = use_signal(|| crate::config::REGULATOR_REGISTERED);
+    use_context_provider(|| crate::components::RegulatorStatus(status));
+    use_effect(move || {
+        let mut status = status;
+        spawn(async move {
+            if let Ok(v) = crate::api::regulator_registered().await {
+                status.set(v);
+            }
+        });
+    });
     rsx! {
         Masthead {}
         main { id: "main", tabindex: "-1", Outlet::<Route> {} }
