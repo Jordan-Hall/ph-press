@@ -42,7 +42,11 @@ pub fn ComplaintsReport() -> Element {
                     span { class: "grad-text", "transparency report." }
                 }
                 p { class: "lede rise d3",
-                    "As an IMPRESS-regulated publisher we are required to publish data on how we handle reader complaints. This report covers all complaints received since the publication launched. It contains aggregate statistics only \u{2014} no complainant names, contact details, or message content are ever shown here."
+                    if crate::components::regulator_registered() {
+                        "As an IMPRESS-regulated publisher we are required to publish data on how we handle reader complaints. This report covers all complaints received since the publication launched. It contains aggregate statistics only \u{2014} no complainant names, contact details, or message content are ever shown here."
+                    } else {
+                        "We publish data on how we handle reader complaints as a matter of transparency, in line with the IMPRESS Standards Code. This report covers all complaints received since the publication launched. It contains aggregate statistics only \u{2014} no complainant names, contact details, or message content are ever shown here."
+                    }
                 }
             }
         }

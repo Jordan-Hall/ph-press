@@ -136,22 +136,24 @@ pub fn SiteFooter() -> Element {
                         }
                     }
                 }
-                // Regulatory statement — only shown once we are a registered member of
-                // our press regulator (live runtime status; see RegulatorStatus). Until
-                // then we make no "regulated by" claim; the honest "intend to seek
-                // registration" language lives on the Standards page.
-                if regulator_registered() {
-                    div { class: "footer-regulated",
-                        p {
+                // Complaints + corrections footer line. The "Make a complaint" and
+                // "Corrections & clarifications" links are navigation and ALWAYS render
+                // (they are the only site-wide links to those public pages). The
+                // "regulated by" statement is a regulatory claim and is shown ONLY once
+                // we are a registered member (live runtime status; see RegulatorStatus);
+                // until then we make no such claim and the baked SSG HTML stays cautious.
+                div { class: "footer-regulated",
+                    p {
+                        if regulator_registered() {
                             "{site_name} is regulated by "
                             a { href: config::REGULATOR_URL, target: "_blank", rel: "noopener",
                                 "{config::REGULATOR_NAME}"
                             }
                             ", the independent monitor for the press. "
-                            a { href: "/complaints", "Make a complaint" }
-                            " · "
-                            a { href: "/corrections", "Corrections & clarifications" }
                         }
+                        a { href: "/complaints", "Make a complaint" }
+                        " · "
+                        a { href: "/corrections", "Corrections & clarifications" }
                     }
                 }
                 div { class: "footer-bottom",

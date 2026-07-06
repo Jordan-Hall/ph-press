@@ -2,7 +2,7 @@
 
 **Publication:** Predator Hunters Press (predatorhunters.co.uk)  
 **Category:** UK court-reporting / predator-exposure newsroom  
-**Primary regulator:** IMPRESS (Leveson-compliant; "Regulated by IMPRESS" shown in footer)  
+**Primary regulator:** IMPRESS — *intended* (we hold ourselves to the IMPRESS Standards Code and intend to seek registration; not yet a member). The "Regulated by IMPRESS" footer statement is runtime-gated on the `regulator_registered` setting and defaults **off** — the site makes no regulated-by claim until registration is confirmed and an admin flips the flag.  
 **Long-term consideration:** IPSO (Editors' Code) — for visibility to mainstream advertisers and as a switching baseline  
 **Document purpose:** Demonstrate readiness for IMPRESS registration; quantify the work required to switch to (or dual-map against) IPSO; feed the compliance backlog.  
 **Last reviewed:** 2026-06-23
@@ -17,7 +17,7 @@ The platform features referenced throughout this document are:
 
 | Reference | What it is |
 |---|---|
-| **Footer statement** | "Regulated by IMPRESS" + link to IMPRESS + links to /complaints and /corrections |
+| **Footer statement** | "Regulated by IMPRESS" + link to IMPRESS — runtime-gated on `regulator_registered` (default **off**; shown only once registered). The /complaints and /corrections links always render. |
 | **`/complaints`** | Public complaints policy: 7-day acknowledge / 21-day final response; escalation to IMPRESS |
 | **Complaints workflow** | Per-article "Make a complaint" form; 8 IMPRESS statuses; emailed acknowledgement + reference number; internal notes; emailed replies; overdue flags |
 | **`/corrections`** | Public corrections & clarifications log; equal prominence; both versions retained on record |
@@ -54,7 +54,7 @@ Standards Code issued February 2023. Ten standards; Public Interest is a cross-c
 | 7 | **Privacy** | `/privacy` policy published. Publish checklist includes a privacy-intrusion consideration step. Self-hosted images prevent identity leakage through third-party CDN. Covert information gathering would require a documented public-interest case. Cl.7.3 (anonymisation requests) — `/corrections` provides the correction mechanism; no formal anonymisation-request intake form yet. | Hybrid | No formal anonymisation / right-to-erasure request intake process beyond general corrections. TODO: add an anonymisation-request route to `/complaints` or a dedicated form, and document handling in editorial policy. |
 | 8 | **Sources** | `/governance` publishes a whistleblowers' charter and source-protection policy. Fabricated sources are prohibited (editorial). Payments to public officials are not made (sole trader, no budget for paid tipsters). | Hybrid | Source-protection policy exists on `/governance` but is not cross-referenced from `/standards`. TODO: link source-protection policy from the editorial standards page. The policy should explicitly reference Cl.8.1 confidentiality and the "manifestly dishonest" exception. |
 | 9 | **Self-Harm & Suicide** | Editorial practice avoids excessive method details. | Editorial | **Gap:** The IMPRESS Code requires publishers to "signpost and link to relevant support services and resources" (e.g. Samaritans, PAPYRUS) in suicide/self-harm stories. No platform template, no editorial checklist item, and no written policy covers this requirement. TODO: (a) add a Samaritans/support-link signpost requirement to the pre-publish checklist; (b) create a reusable "support resources" content block that editors can insert; (c) document in `/standards`. |
-| 10 | **Transparency** | `/governance` discloses ownership (sole trader), funding (self-funded, no external funding), and conflicts-of-interest policy. `/complaints-report` is a public, aggregate-only transparency report. Footer "Regulated by IMPRESS" statement is present. AI-assisted content is labelled (Cl.10.5 — AI oversight and labelling). Paid editorial content: not applicable (no sponsored content accepted). Financial-product coverage: not applicable. | Hybrid | Cl.10.3 (financial product interest disclosure) is N/A currently; if financial/advertorial content is ever accepted, this policy must be documented first. AI labelling relies on editorial discipline — no platform-level AI content-type flag yet. TODO: add an AI-content flag to the publish workflow. |
+| 10 | **Transparency** | `/governance` discloses ownership (sole trader), funding (self-funded, no external funding), and conflicts-of-interest policy. `/complaints-report` is a public, aggregate-only transparency report. Footer "Regulated by IMPRESS" statement is runtime-gated on `regulator_registered` (default off; shown only once registered). AI-assisted content is labelled (Cl.10.5 — AI oversight and labelling). Paid editorial content: not applicable (no sponsored content accepted). Financial-product coverage: not applicable. | Hybrid | Cl.10.3 (financial product interest disclosure) is N/A currently; if financial/advertorial content is ever accepted, this policy must be documented first. AI labelling relies on editorial discipline — no platform-level AI content-type flag yet. TODO: add an AI-content flag to the publish workflow. |
 
 ### IMPRESS Public Interest Framework
 

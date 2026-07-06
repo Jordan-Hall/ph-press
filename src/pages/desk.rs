@@ -1814,7 +1814,13 @@ fn RegulatoryStatusCard() -> Element {
         div { class: "desk-new", style: "margin-top:24px;",
             p { class: "desk-muted", style: "margin:0 0 6px;", "Press regulation" }
             match cur {
-                None => rsx! { p { class: "desk-muted", "Loading…" } },
+                None => rsx! {
+                    if let Some(e) = err() {
+                        p { class: "desk-error", "{e}" }
+                    } else {
+                        p { class: "desk-muted", "Loading…" }
+                    }
+                },
                 Some(is_reg) => rsx! {
                     p { style: "margin:0 0 10px;",
                         "Current status: "

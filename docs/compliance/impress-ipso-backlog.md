@@ -26,6 +26,11 @@ contact pages; source-trust banner; self-hosted images.
   mark + a link to IMPRESS and to our complaints process. Build: a footer block
   (src/components.rs / src/app.rs) + the statement text (user approves the exact
   wording + whether membership is live).
+  **NOTE (not yet registered):** the footer "Regulated by IMPRESS" statement is now
+  **runtime-gated** on the `regulator_registered` setting and defaults **OFF** — it is
+  NOT shown until registration is confirmed and an admin flips the flag (desk → Profile
+  → Press regulation). Do **not** un-gate it: while unregistered, showing it is a false
+  over-claim. The `/complaints` and `/corrections` footer links always render.
 - [x] **2. Public Complaints policy page** (`/complaints`) [code+content, M] — a clear,
   standalone complaints procedure: how to complain (the per-article form already
   exists), our process + the IMPRESS 7-day acknowledge / 21-day decide timescales,
