@@ -21,4 +21,4 @@ We report from the public court record, after a case has concluded, and we check
 
 We do not interfere with live investigations, we keep complainants in sexual-offence cases anonymous, and we never publish a child's private data.
 
-We are working towards registration with IMPRESS so these are not just our promises but a standard you can hold us to, with a complaints process that goes beyond us if you are not satisfied. Until then we hold ourselves to exactly the same lines.
+We hold ourselves to the IMPRESS Standards Code and intend to seek registration, so these are not just our promises but a published standard you can hold us to. We hold ourselves to exactly the same lines regardless.

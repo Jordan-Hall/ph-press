@@ -31,7 +31,7 @@ pub fn Standards() -> Element {
     rsx! {
             crate::components::Seo {
                 title: "Standards, complaints & corrections | Predator Hunters",
-                description: "Our editorial standards, complaints process, corrections policy and transparency. Independent court-reporting journalism, working towards IMPRESS registration.",
+                description: "Our editorial standards, complaints process, corrections policy and transparency. Independent court-reporting journalism that holds itself to the IMPRESS Standards Code and intends to seek registration.",
                 path: "/standards",
                 image: "/og.png",
             }
@@ -43,7 +43,11 @@ pub fn Standards() -> Element {
                         span { class: "grad-text", "how to hold us to it." }
                     }
                     p { class: "lede rise d3",
-                        "We are an independent publisher working towards registration with IMPRESS, the UK's approved press regulator. These are the standards we hold ourselves to and the ways you can raise a concern."
+                        if crate::components::regulator_registered() {
+                            "We are an independent publisher regulated by IMPRESS, the UK's approved press regulator. Below are the standards we hold ourselves to and the ways you can raise a concern."
+                        } else {
+                            "We are an independent publisher that holds itself to the IMPRESS Standards Code and intends to seek registration with IMPRESS, the UK's approved press regulator. Below are those standards and the ways you can raise a concern."
+                        }
                     }
                 }
             }
@@ -71,7 +75,13 @@ pub fn Standards() -> Element {
                         div { class: "def", dt { "Who handles it" } dd { "One of our editors-in-chief, Jordan Upton or Scott Taylor, and where possible not the person responsible for the item." } }
                         div { class: "def", dt { "How long it takes" } dd { "We acknowledge your complaint within 7 days and aim to give you a decision within 21 days. If it needs longer, we will tell you why." } }
                         div { class: "def", dt { "If we got it wrong" } dd { "We correct or clarify it quickly, with prominence equal to the original, and we keep both versions on the record." } }
-                        div { class: "def", dt { "If you are not satisfied" } dd { "You can take your complaint to our independent press regulator. We keep a record of every complaint we receive." } }
+                        div { class: "def", dt { "If you are not satisfied" } dd {
+                            if crate::components::regulator_registered() {
+                                "If you are still not satisfied with our final response, you can escalate your complaint to IMPRESS, our independent press regulator. We keep a record of every complaint we receive."
+                            } else {
+                                "We keep a record of every complaint we receive. We intend to seek registration with IMPRESS, the UK's approved press regulator; if we are registered you will be able to escalate an unresolved complaint to them."
+                            }
+                        } }
                     }
                     ComplaintForm { slug: String::new() }
                 }
@@ -116,7 +126,11 @@ pub fn Standards() -> Element {
                     div { class: "sec-head", span { class: "sec-index", "Who we are" } h2 { "Transparency." } }
                     div { class: "prose reveal",
                         p { "Predator Hunters is a small, independent local newsroom, reporting since 2022. It has two editors-in-chief, Jordan Upton and Scott Taylor, and is self-funded, mainly by Jordan Upton, with Scott Taylor contributing when needed. We cover local news and investigations, report from the courts, and offer rewards for information on serious crimes. We are not owned by, and do not act for, any police force or political party." }
-                        p { "We are working towards registration with IMPRESS. Until that is complete we hold ourselves to the standards above and operate the same complaints and corrections process. We will publish our regulator details and trustmark here once registration is in place." }
+                        if crate::components::regulator_registered() {
+                            p { "We hold ourselves to the IMPRESS Standards Code and are regulated by IMPRESS, the UK's approved press regulator. We operate the complaints and corrections process set out above, and if you are not satisfied with our final response you can refer an unresolved complaint to IMPRESS. Our regulator details and trustmark are published here." }
+                        } else {
+                            p { "We hold ourselves to the IMPRESS Standards Code and intend to seek registration with IMPRESS, the UK's approved press regulator. Until we are registered we operate the same complaints and corrections process set out above, but we are not yet regulated by IMPRESS and cannot refer complaints to them. We will publish our regulator details and trustmark here once registration is in place." }
+                        }
                         p { "We monitor public sources \u{2014} court judgments and news reports \u{2014} to find concluded cases that fall within what we cover. Anything found this way is treated only as an unverified lead: an editor checks it against the public court record, clears any reporting restrictions, and writes our own report, which still goes through legal sign-off before publication. We do not republish another outlet's text or photographs, and every database entry links to our own report and cites the record it was drawn from." }
     }
                 }
@@ -159,9 +173,13 @@ pub fn ComplaintForm(slug: String) -> Element {
                 div { class: "card-ic", dangerous_inner_html: svg("check") }
                 h3 { "Thank you — your complaint is logged" }
                 p { {format!("Your reference is {r}. We've emailed an acknowledgement to the address you gave. In line with the IMPRESS Standards Code we aim to give a final response within 21 days.")} }
-                p { "If you're unhappy with our final response you can refer the matter to "
-                    a { href: "https://impress.press/complaints/", "IMPRESS" }
-                    ", our independent regulator."
+                if crate::components::regulator_registered() {
+                    p { "If you're unhappy with our final response you can refer the matter to "
+                        a { href: crate::config::REGULATOR_URL, "{crate::config::REGULATOR_NAME}" }
+                        ", our independent regulator."
+                    }
+                } else {
+                    p { "If you're unhappy with our final response, tell us why and we'll look at it again. We intend to seek registration with IMPRESS; if we are registered you'll be able to escalate an unresolved complaint to them." }
                 }
             }
         };
@@ -218,7 +236,12 @@ pub fn ComplaintPage(slug: String) -> Element {
             p { class: "lead",
                 "Tell us what's wrong — an inaccuracy, a privacy concern, or another breach of the "
                 Link { to: crate::app::Route::Standards {}, "IMPRESS Standards Code" }
-                ". We acknowledge complaints promptly and aim to give a final response within 21 days. If you're unhappy with that response you can refer the matter to IMPRESS, our independent regulator."
+                ". We acknowledge complaints promptly and aim to give a final response within 21 days. "
+                if crate::components::regulator_registered() {
+                    "If you're unhappy with that response you can refer the matter to IMPRESS, our independent regulator."
+                } else {
+                    "If you're unhappy with that response, tell us why and we'll look at it again. We intend to seek IMPRESS registration; if we are registered you'll be able to escalate an unresolved complaint to them."
+                }
             }
             ComplaintForm { slug }
         }

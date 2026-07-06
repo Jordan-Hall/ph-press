@@ -10,6 +10,23 @@ use crate::icons::svg;
 
 use crate::config;
 
+/// Live "are we a registered member of our press regulator?" status, provided by
+/// the public `Shell` and fetched once on the client. It seeds from the cautious
+/// build-time fallback (`config::REGULATOR_REGISTERED`, false) so the pre-rendered
+/// SSG HTML never over-claims; the client updates it from the runtime setting.
+#[derive(Clone, Copy)]
+pub struct RegulatorStatus(pub Signal<bool>);
+
+/// Read the live regulator-registered status (reactive — re-renders when the
+/// client fetch resolves). Falls back to the build-time const when no provider is
+/// in scope (e.g. a component rendered outside the public `Shell`).
+pub fn regulator_registered() -> bool {
+    match try_consume_context::<RegulatorStatus>() {
+        Some(RegulatorStatus(sig)) => *sig.read(),
+        None => config::REGULATOR_REGISTERED,
+    }
+}
+
 /// Per-route SEO head: title, description, canonical, Open Graph + Twitter.
 #[component]
 pub fn Seo(title: String, description: String, path: String, image: String) -> Element {
@@ -123,6 +140,20 @@ pub fn SiteFooter() -> Element {
                     p { "© 2026 {site_name}. All rights reserved." }
                     p { class: "legal",
                         "Independent journalism. We keep our sources anonymous and act only on what we can cross-reference and verify. We offer rewards for information on serious crimes. We report from the public record, and on concluded court cases we name only after conviction. We work independently of any police force. Complaints: see our Standards page."
+                    }
+                    // Regulatory statement — only shown once we are a registered member
+                    // of our press regulator (live runtime status; see RegulatorStatus).
+                    // Until then we make no "regulated by" claim; the honest "intend to
+                    // seek registration" language lives on the Standards page.
+                    if regulator_registered() {
+                        p { class: "legal regulatory",
+                            "{site_name} is regulated by "
+                            a { href: config::REGULATOR_URL, target: "_blank", rel: "noopener", "{config::REGULATOR_NAME} ↗" }
+                            ", the independent monitor for the press. "
+                            Link { to: Route::Standards {}, "Make a complaint" }
+                            " · "
+                            Link { to: Route::Standards {}, "Corrections & clarifications" }
+                        }
                     }
                 }
             }

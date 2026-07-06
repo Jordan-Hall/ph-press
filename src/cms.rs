@@ -158,6 +158,24 @@ pub async fn logout(token: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Whether we are a registered member of our press regulator (IMPRESS). Reads the
+/// runtime `setting` row; defaults to `false` (the cautious, never-over-claim
+/// state) if unset or on any error.
+pub async fn regulator_registered() -> bool {
+    let Ok(pool) = db().await else {
+        return false;
+    };
+    ph_cms::regulator_registered(pool).await.unwrap_or(false)
+}
+
+/// Set the regulator-registered flag (audited). `actor` is the staff username.
+pub async fn set_regulator_registered(registered: bool, actor: &str) -> Result<(), String> {
+    let pool = db().await.map_err(|e| e.to_string())?;
+    ph_cms::set_regulator_registered(pool, registered, actor)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Build the absolute reset link for a raw token. The base URL comes from
 /// PH_PUBLIC_BASE_URL (default the production apex) so the link works in an email.
 fn reset_link(token: &str) -> String {
@@ -237,13 +255,36 @@ async fn send_complaint_ack(to: &str, reference: &str, article_slug: &str) {
         return;
     }
     let subject = format!("We've received your complaint ({reference})");
+    // Escalation route only exists once we are a registered member of our
+    // regulator; until then IMPRESS won't accept a complaint about us, so we must
+    // not point the complainant there. Read the live runtime setting at send time.
+    let (escalation_text, escalation_html) = if regulator_registered().await {
+        (
+            format!(
+                "If you are unhappy with our final response you can refer your complaint to {name}, our independent regulator: {url}",
+                name = crate::config::REGULATOR_NAME,
+                url = crate::config::REGULATOR_URL,
+            ),
+            format!(
+                "<p>If you are unhappy with our final response you can refer your complaint to <a href=\"{url}\">{name}</a>, our independent regulator.</p>",
+                name = crate::config::REGULATOR_NAME,
+                url = crate::config::REGULATOR_URL,
+            ),
+        )
+    } else {
+        (
+            "If you are unhappy with our final response, please tell us why and we will look at it again."
+                .to_string(),
+            "<p>If you are unhappy with our final response, please tell us why and we will look at it again.</p>"
+                .to_string(),
+        )
+    };
     let text = format!(
         "Thank you for your complaint about our article \"{article_slug}\".\n\n\
          Your reference is {reference}. In line with the IMPRESS Standards Code we acknowledge \
          complaints promptly and aim to give a final response within 21 days. We may contact you \
          for more detail, and will let you know the outcome.\n\n\
-         If you are unhappy with our final response you can refer your complaint to IMPRESS, our \
-         independent regulator: https://impress.press/complaints/\n\n\
+         {escalation_text}\n\n\
          \u{2014} Predator Hunters"
     );
     let html = format!(
@@ -251,8 +292,7 @@ async fn send_complaint_ack(to: &str, reference: &str, article_slug: &str) {
          <p>Your reference is <strong>{reference}</strong>. In line with the IMPRESS Standards Code \
          we acknowledge complaints promptly and aim to give a final response within 21 days. We may \
          contact you for more detail, and will let you know the outcome.</p>\
-         <p>If you are unhappy with our final response you can refer your complaint to \
-         <a href=\"https://impress.press/complaints/\">IMPRESS</a>, our independent regulator.</p>\
+         {escalation_html}\
          <p>\u{2014} Predator Hunters</p>",
         html_escape(article_slug)
     );
