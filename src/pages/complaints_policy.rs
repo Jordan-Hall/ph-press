@@ -46,7 +46,7 @@ pub fn ComplaintsPolicy() -> Element {
     rsx! {
         crate::components::Seo {
             title: "Complaints policy | Predator Hunters",
-            description: "How to make a complaint about Predator Hunters: our IMPRESS-aligned process, timelines, and how to escalate to our independent regulator.",
+            description: "How to make a complaint about Predator Hunters: our IMPRESS Standards Code-aligned complaints process, timelines, and corrections policy.",
             path: "/complaints",
             image: "/og.png",
         }
@@ -71,10 +71,11 @@ pub fn ComplaintsPolicy() -> Element {
                 }
                 div { class: "prose reveal",
                     p {
-                        "We are an independent publisher working towards registration with \
-                         IMPRESS, the UK's approved press regulator. We follow the IMPRESS \
-                         Standards Code on complaints and corrections, and we operate the \
-                         process described below for every complaint we receive."
+                        "We are an independent publisher that holds itself to the IMPRESS \
+                         Standards Code and intends to seek registration with IMPRESS, the UK's \
+                         approved press regulator. We follow the IMPRESS Standards Code on \
+                         complaints and corrections, and we operate the process described below \
+                         for every complaint we receive."
                     }
                 }
                 dl { class: "deflist reveal", style: "margin-top:18px;",
@@ -94,21 +95,34 @@ pub fn ComplaintsPolicy() -> Element {
                     span { class: "sec-index", "Escalation" }
                     h2 { "Not satisfied? Take it further." }
                 }
-                div { class: "card reveal", style: "max-width:680px;",
-                    div { class: "card-ic", dangerous_inner_html: svg("scale") }
-                    h3 { "IMPRESS — our independent regulator" }
-                    p {
-                        "If you are unhappy with our final response, or if we have not \
-                         responded within the timescales above, you can refer your complaint \
-                         to IMPRESS, our independent regulator, free of charge."
+                if crate::components::regulator_registered() {
+                    div { class: "card reveal", style: "max-width:680px;",
+                        div { class: "card-ic", dangerous_inner_html: svg("scale") }
+                        h3 { "IMPRESS — our independent regulator" }
+                        p {
+                            "If you are unhappy with our final response, or if we have not \
+                             responded within the timescales above, you can refer your complaint \
+                             to IMPRESS, our independent regulator, free of charge."
+                        }
+                        a {
+                            class: "btn btn-primary",
+                            href: "https://impress.press/complaints/",
+                            rel: "noopener noreferrer",
+                            target: "_blank",
+                            span { class: "ic", dangerous_inner_html: svg("arrow-up-right") }
+                            "Refer to IMPRESS"
+                        }
                     }
-                    a {
-                        class: "btn btn-primary",
-                        href: "https://impress.press/complaints/",
-                        rel: "noopener noreferrer",
-                        target: "_blank",
-                        span { class: "ic", dangerous_inner_html: svg("arrow-up-right") }
-                        "Refer to IMPRESS"
+                } else {
+                    div { class: "card reveal", style: "max-width:680px;",
+                        div { class: "card-ic", dangerous_inner_html: svg("scale") }
+                        h3 { "Working towards IMPRESS registration" }
+                        p {
+                            "If you are unhappy with our final response, tell us why and we will \
+                             review it again. We intend to seek registration with IMPRESS, the \
+                             UK's approved press regulator; once we are registered you will be \
+                             able to refer an unresolved complaint to them, free of charge."
+                        }
                     }
                 }
             }

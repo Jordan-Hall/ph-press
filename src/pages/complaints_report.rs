@@ -173,14 +173,16 @@ pub fn ComplaintsReport() -> Element {
                                     }
                                 }
 
-                                // ---- IMPRESS escalation note ----
-                                div { class: "card reveal", style: "margin-top:2.5rem;",
-                                    p { class: "prose",
-                                        "If you are unhappy with our response to your complaint you can refer it to "
-                                        a { href: "https://impress.press/complaints/", style: "color:var(--green-2);text-decoration:underline;text-underline-offset:3px;", rel: "noopener noreferrer", target: "_blank",
-                                            "IMPRESS"
+                                // ---- IMPRESS escalation note (only once registered) ----
+                                if crate::components::regulator_registered() {
+                                    div { class: "card reveal", style: "margin-top:2.5rem;",
+                                        p { class: "prose",
+                                            "If you are unhappy with our response to your complaint you can refer it to "
+                                            a { href: "https://impress.press/complaints/", style: "color:var(--green-2);text-decoration:underline;text-underline-offset:3px;", rel: "noopener noreferrer", target: "_blank",
+                                                "IMPRESS"
+                                            }
+                                            ", our independent regulator, free of charge."
                                         }
-                                        ", our independent regulator, free of charge."
                                     }
                                 }
                             }
