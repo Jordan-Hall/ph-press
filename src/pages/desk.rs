@@ -918,6 +918,11 @@ fn ComplaintDetail(id: i64, on_back: EventHandler<()>) -> Element {
                     }
                     div { class: "desk-new", style: "margin-top:12px;",
                         p { class: "desk-muted", style: "margin:0 0 6px;", "Reply to the complainant (emailed + recorded)" }
+                        if reg {
+                            p { class: "editor-hint", style: "margin:0 0 8px;",
+                                "Final response? It must tell the complainant they can refer an unresolved complaint to IMPRESS, the time limit for doing so, and how to contact them (IMPRESS Regulatory Scheme cl. 3.2)."
+                            }
+                        }
                         textarea { class: "desk-in full", rows: "3", value: "{reply}", oninput: move |e| reply.set(e.value()) }
                         button {
                             class: "desk-btn sm",
