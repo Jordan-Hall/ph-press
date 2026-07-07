@@ -146,7 +146,7 @@ pub fn SiteFooter() -> Element {
                     p {
                         if regulator_registered() {
                             "{site_name} is regulated by "
-                            a { href: config::REGULATOR_URL, target: "_blank", rel: "noopener",
+                            a { href: config::REGULATOR_HOME_URL, target: "_blank", rel: "noopener",
                                 "{config::REGULATOR_NAME}"
                             }
                             ", the independent monitor for the press. "

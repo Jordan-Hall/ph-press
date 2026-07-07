@@ -31,7 +31,15 @@ pub fn Standards() -> Element {
     rsx! {
             crate::components::Seo {
                 title: "Standards, complaints & corrections | Predator Hunters",
-                description: "Our editorial standards, complaints process, corrections policy and transparency. Independent court-reporting journalism that holds itself to the IMPRESS Standards Code and intends to seek registration.",
+                // Build-time const (not the runtime helper): the baked <meta>/OG
+                // description can only change on a rebuild, so it flips together with
+                // the SSG-baked body when REGULATOR_REGISTERED is set true and redeployed
+                // (see config.rs). Cautious by default.
+                description: if crate::config::REGULATOR_REGISTERED {
+                    "Our editorial standards, complaints process, corrections policy and transparency. Independent court-reporting journalism regulated by IMPRESS, the UK's approved press regulator.".to_string()
+                } else {
+                    "Our editorial standards, complaints process, corrections policy and transparency. Independent court-reporting journalism that holds itself to the IMPRESS Standards Code and intends to seek registration.".to_string()
+                },
                 path: "/standards",
                 image: "/og.png",
             }

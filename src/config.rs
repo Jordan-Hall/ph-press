@@ -81,6 +81,8 @@ pub const COMPLAINTS_EMAIL: &str =
 pub const REGULATOR_REGISTERED: bool = cfg_bool!("PH_REGULATOR_REGISTERED", false);
 /// Our independent press regulator (the one we are registered with / intend to seek).
 pub const REGULATOR_NAME: &str = cfg_str!("PH_REGULATOR_NAME", "IMPRESS");
+/// The regulator's homepage — used for the "regulated by {name}" identity link.
+pub const REGULATOR_HOME_URL: &str = cfg_str!("PH_REGULATOR_HOME_URL", "https://impress.press/");
 /// Where a reader escalates an unresolved complaint once we are registered.
 pub const REGULATOR_URL: &str =
     cfg_str!("PH_REGULATOR_URL", "https://impress.press/complaints/");
