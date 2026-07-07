@@ -86,3 +86,8 @@ pub const REGULATOR_HOME_URL: &str = cfg_str!("PH_REGULATOR_HOME_URL", "https://
 /// Where a reader escalates an unresolved complaint once we are registered.
 pub const REGULATOR_URL: &str =
     cfg_str!("PH_REGULATOR_URL", "https://impress.press/complaints/");
+/// Regulator contact details — the required "regulated by" statement must be shown
+/// TOGETHER WITH how to contact IMPRESS. Confirm these against IMPRESS's current
+/// details when you register (verified July 2026: phone/email below).
+pub const REGULATOR_PHONE: &str = cfg_str!("PH_REGULATOR_PHONE", "020 3325 4288");
+pub const REGULATOR_EMAIL: &str = cfg_str!("PH_REGULATOR_EMAIL", "complaints@impressreg.org.uk");

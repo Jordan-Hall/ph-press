@@ -5,7 +5,7 @@ status: draft            # draft → needs founder + editor approval before publ
 byline: Jordan Upton
 kind: announcement
 date: TBC
-ai_assisted: true        # IMPRESS Clause 2: drafted with AI assistance, human-reviewed
+ai_assisted: true        # IMPRESS Cl.10 (Transparency) + Cl.1 (Accuracy): AI-assisted, human-reviewed
 source: org              # not a court report; factual about the organisation
 ---
 

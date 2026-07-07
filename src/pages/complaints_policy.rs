@@ -104,9 +104,23 @@ pub fn ComplaintsPolicy() -> Element {
                              responded within the timescales above, you can refer your complaint \
                              to IMPRESS, our independent regulator, free of charge."
                         }
+                        p { class: "cf-about", style: "margin-top:4px;",
+                            "Contact IMPRESS: "
+                            a { href: crate::config::REGULATOR_URL, rel: "noopener noreferrer", target: "_blank", "{crate::config::REGULATOR_URL}" }
+                            " · "
+                            a { href: "tel:{crate::config::REGULATOR_PHONE}", "{crate::config::REGULATOR_PHONE}" }
+                            " · "
+                            a { href: "mailto:{crate::config::REGULATOR_EMAIL}", "{crate::config::REGULATOR_EMAIL}" }
+                        }
+                        p {
+                            "For certain legal claims — such as defamation, breach of confidence, \
+                             misuse of private information or harassment — you may instead be able \
+                             to use IMPRESS's low-cost arbitration scheme, an affordable alternative \
+                             to going to court."
+                        }
                         a {
                             class: "btn btn-primary",
-                            href: "https://impress.press/complaints/",
+                            href: crate::config::REGULATOR_URL,
                             rel: "noopener noreferrer",
                             target: "_blank",
                             span { class: "ic", dangerous_inner_html: svg("arrow-up-right") }

@@ -177,7 +177,7 @@ pub fn Article(slug: String) -> Element {
                         p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
 
-                    // ── Support signpost (IMPRESS Cl.5 / IPSO Cl.9) ──
+                    // ── Support signpost (IMPRESS Cl.9 / IPSO Cl.5 — suicide/self-harm) ──
                     // Shown only when the author has added `@support` in the body.
                     if has_support {
                         SupportBox {}
@@ -331,7 +331,7 @@ fn LiveArticleBody(a: PublicArticle) -> Element {
                         p { class: "art-endmark", aria_hidden: "true", "◆" }
                     }
 
-                    // ── Support signpost (IMPRESS Cl.5 / IPSO Cl.9) ──
+                    // ── Support signpost (IMPRESS Cl.9 / IPSO Cl.5 — suicide/self-harm) ──
                     // Shown only when the author has added `@support` in the body.
                     if has_support {
                         SupportBox {}
